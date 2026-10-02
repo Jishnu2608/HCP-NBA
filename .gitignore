@@ -20,6 +20,11 @@ data/models/
 .env.*
 !.env.example
 
+# Local project-context files (working notes, not part of the published repository)
+Master_Build.md
+Workflow_Context.md
+TODO.md
+
 # Editors / OS
 .vscode/
 .idea/
