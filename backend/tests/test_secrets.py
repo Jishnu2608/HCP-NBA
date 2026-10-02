@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from app import bootstrap
-from app.core.config import MissingSecret, Settings
+from app.auth.rotate import apply_passwords
+from app.auth.service import ensure_system_admin
+from app.core.config import MissingSecret, Settings, get_settings
+from app.core.security import hash_password, verify_password
+from app.models import AuditLog, User
 
 REPO = Path(__file__).resolve().parents[2]
 SECRET_FIELDS = ("jwt_secret", "admin_password", "demo_password")
@@ -63,3 +67,36 @@ def test_no_credential_literal_in_tracked_files():
             if assignment.search(line) and not any(word in line for word in harmless):
                 offenders.append(f"{item}:{number}: {line.strip()}")
     assert offenders == []
+
+
+def test_rotate_applies_env_passwords_and_revokes_sessions(db, monkeypatch):
+    admin = ensure_system_admin(db)
+    kept = hash_password("their-own-choice-1")
+    demo = User(
+        username="cm01", email="cm01@nba.demo", display_name="Demo", role="care_manager",
+        password_hash=hash_password("previous-demo-value"), verified=True, status="active",
+        source="seed",
+    )  # fmt: skip
+    registered = User(
+        username="x@example.org", email="x@example.org", display_name="Registered",
+        role="patient", password_hash=kept, verified=True, status="active", source="signup",
+    )  # fmt: skip
+    db.add_all([demo, registered])
+    db.flush()
+    old_admin = get_settings().admin_password
+    versions = (admin.token_version, demo.token_version, registered.token_version)
+
+    monkeypatch.setattr(get_settings(), "admin_password", "rotated-admin-value-1")
+    monkeypatch.setattr(get_settings(), "demo_password", "rotated-demo-value-1")
+    assert apply_passwords(db) == {"system": 1, "seed": 1}
+
+    assert verify_password("rotated-admin-value-1", admin.password_hash)
+    assert not verify_password(old_admin, admin.password_hash)
+    assert verify_password("rotated-demo-value-1", demo.password_hash)
+    assert not verify_password("previous-demo-value", demo.password_hash)
+    assert registered.password_hash == kept  # sign-up accounts are not touched
+    assert (admin.token_version, demo.token_version, registered.token_version) == (
+        versions[0] + 1, versions[1] + 1, versions[2],
+    )  # fmt: skip
+    db.flush()
+    assert db.query(AuditLog).filter_by(action="passwords_rotated").count() == 1

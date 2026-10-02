@@ -54,7 +54,7 @@ Nothing in progress.
 
 ## Testing
 
-Covered today (see `Workflow_Context.md` → Testing): unit, API, RBAC, authentication and secret-hygiene tests, 264 passing.
+Covered today (see `Workflow_Context.md` → Testing): unit, API, RBAC, authentication and secret-hygiene tests, 265 passing.
 
 - [!] Live SMTP delivery of the verification code: only a fake sender is tested. Blocked on SMTP settings (see Upcoming).
 - [ ] End-to-end browser tests: none (see Upcoming).
@@ -69,7 +69,7 @@ Covered today (see `Workflow_Context.md` → Testing): unit, API, RBAC, authenti
 Security and identity
 
 - [x] No default secrets in code: `NBA_JWT_SECRET`, `NBA_ADMIN_PASSWORD`, `NBA_DEMO_PASSWORD` come only from the environment or `.env`; start-up fails without the signing secret; history rewritten to remove earlier literals. Verified by `tests/test_secrets.py` and a scan of every commit.
-- [ ] Rotate the demo and administrator passwords: the earlier values were in public history. Edit `.env`, then reseed with `python -m app.datagen`.
+- [x] Rotated the administrator and demo passwords (the earlier values were in public history). New values are only in `.env`; database hashes replaced and old sessions revoked. Verified: new passwords accepted, old ones rejected.
 - [ ] Supply secrets from the host's secret store in hosted deployments, not from a file in the image.
 - [ ] Turn `NBA_DEMO_MODE` off for hosted use (no on-screen codes) and set `NBA_SEED_DEMO_ACCOUNTS=false`.
 - [ ] Login lockout and rate limiting; rate limiting on sign-up and code resend.

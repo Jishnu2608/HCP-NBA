@@ -33,7 +33,7 @@ Landing  →  Log in or Sign up  →  (sign-up only) email code  →  role dashb
 
 The administrator is created automatically (by the data generator and again at start-up if missing). It cannot be created through sign-up. The email is `NBA_ADMIN_EMAIL`.
 
-**No password is stored in this repository.** `setup.ps1` (or `python -m app.bootstrap`) writes random values for `NBA_JWT_SECRET`, `NBA_ADMIN_PASSWORD` and `NBA_DEMO_PASSWORD` into the git-ignored `.env` file. Open `.env` to read them. To use your own, edit `.env` and reseed with `python -m app.datagen`.
+**No password is stored in this repository.** `setup.ps1` (or `python -m app.bootstrap`) writes random values for `NBA_JWT_SECRET`, `NBA_ADMIN_PASSWORD` and `NBA_DEMO_PASSWORD` into the git-ignored `.env` file. Open `.env` to read them. To change them later, edit `.env`, run `python -m app.auth.rotate` from `backend`, and restart the server. The old passwords and any open sessions stop working at once.
 
 ### Demo accounts
 
@@ -137,6 +137,7 @@ Run from `backend` with the virtual environment's Python (`.venv\Scripts\python`
 | Command | Purpose |
 |---|---|
 | `python -m app.bootstrap` | Create missing secrets in `.env` with random values. Never changes existing ones. |
+| `python -m app.auth.rotate` | Apply the passwords in `.env` to the administrator and demo accounts already in the database, and end their sessions. No reseed. |
 | `python -m app.datagen [--patients N --hcps N --seed N]` | Rebuild the synthetic population and demo accounts. Registered accounts are kept. |
 | `python -m app.cycle [--retrain]` | Refresh features, optionally retrain, generate recommendations and drafts |
 | `python -m app.pipeline` | Feature refresh and model training only, with holdout metrics |

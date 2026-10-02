@@ -34,6 +34,7 @@ Backend module map (`backend/app/`):
 | Module | Responsibility |
 |---|---|
 | `core/config.py` | Settings (`NBA_` env prefix). Secrets (`jwt_secret`, `admin_password`, `demo_password`) have **no default** and are read with `settings.secret(name)`, which raises `MissingSecret` naming the variable. Also: database URL, `admin_email`, `seed_demo_accounts`, `demo_mode`, SMTP, OTP timings, sign-up panel sizes, `llm_provider`, seed |
+| `auth/rotate.py` | `python -m app.auth.rotate`: re-hashes the administrator and seeded demo accounts from `.env` and bumps `token_version`; sign-up accounts untouched; audited as `passwords_rotated` |
 | `bootstrap.py` | `python -m app.bootstrap`: appends any missing required secret to the git-ignored `.env` with a random value; never changes existing ones |
 | `core/permissions.py` | `Permission` enum, `ROLE_PERMISSIONS`, `SIGNUP_ROLES`, `ROLE_HOME`, `can`, `can_any`. The only place roles map to abilities. |
 | `core/security.py` | scrypt `hash_password` / `verify_password` only |
@@ -198,7 +199,7 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 
 ## Testing
 
-264 pytest tests in `backend/tests/`, all passing; run with `.venv\Scripts\python -m pytest`. Lint: `ruff check .` and `ruff format`.
+265 pytest tests in `backend/tests/`, all passing; run with `.venv\Scripts\python -m pytest`. Lint: `ruff check .` and `ruff format`.
 
 | File | Covers |
 |---|---|
@@ -223,7 +224,7 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 - No browser end-to-end tests; Docker, Postgres and `setup.ps1` never run.
 - `demo_mode` is on by default (on-screen code when no SMTP) and demo accounts are seeded. Turn both off for hosted use.
 - Git history was rewritten on 2026-10-02 to remove credential literals (old hashes `c3f55df`, `6d3f691`, `541cb19` no longer exist on `main`). The earlier demo passwords were public for a time and should be treated as exposed.
-- Account passwords in the database only change on reseed (`python -m app.datagen`); editing `.env` alone does not change existing accounts.
+- Editing `.env` alone does not change existing accounts (the database stores hashes). Run `python -m app.auth.rotate` (keeps demo data) or reseed.
 - Live SMTP delivery never exercised (no mail settings on this machine); covered only by a fake sender in tests.
 - No forgot-password, password change, login lockout or rate limiting. No MFA at sign-in.
 - A claimed synthetic patient/HCP record is renamed to the account holder; if an admin later links the account to another record, the earlier record keeps that name until the next reseed.
