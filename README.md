@@ -75,6 +75,26 @@ Email only.
 - **No mail configured (default):** while `NBA_DEMO_MODE` is on, the verify page shows the code in a box labelled "Development mode: no email was sent", and the server logs it. Nothing pretends an email went out.
 - If sending fails while demo mode is on, it falls back to the development box. With demo mode off, sign-up reports that the email could not be sent.
 
+#### Setting up email delivery
+
+Any SMTP service on port 587 with STARTTLS works. With Gmail:
+
+1. Turn on 2-Step Verification for the sending account (Google Account → Security).
+2. Create an app password at https://myaccount.google.com/apppasswords (16 characters; remove the spaces).
+3. Add to `.env` at the repository root:
+
+   ```
+   NBA_SMTP_HOST=smtp.gmail.com
+   NBA_SMTP_PORT=587
+   NBA_SMTP_USER=<your address>
+   NBA_SMTP_PASSWORD=<app password>
+   NBA_SMTP_FROM=<your address>
+   ```
+
+4. Restart the server. Sign up with an inbox you can read.
+
+The verify page then says "We emailed a code" and shows no code. If it still shows the development box, the send failed; the server log names the failure type. Other providers: Brevo (`smtp-relay.brevo.com`, SMTP key), Resend (`smtp.resend.com`, user `resend`, API key, needs a verified domain).
+
 ### Role to dashboard
 
 | Role | Lands on |

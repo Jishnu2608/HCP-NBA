@@ -22,6 +22,7 @@ Nothing in progress.
 - [!] Run one live sign-up with real email delivery of the verification code. Blocked: needs the user to put `NBA_SMTP_*` values in `.env` (see `.env.example`). Then confirm the email arrives, the code is not shown on screen or returned by the API, and a failed send behaves as designed.
 - [ ] Add Playwright end-to-end tests against a freshly seeded database: sign-up → code → dashboard → sign-out → sign-in; the six NBA scenarios in `docs/demo-script.md`; Access Denied cases.
 - [ ] Choose the LLM provider (Claude, Gemini, or an org cloud model) and run it live once. The Claude provider (`backend/app/llm/claude.py`) has never been executed; no Gemini provider exists.
+- [ ] Have GitHub purge the pre-rewrite commits: they are off `main` but still fetchable by hash. Either contact GitHub Support or delete and recreate the repository. User action. The passwords they contained have been rotated and no longer work.
 - [ ] Decide product name and branding for the client-facing version.
 - [ ] Decide the first hosted target (Databricks Apps, or static frontend plus container API) and deploy.
 - [ ] Decide whether to remove the seeded demo accounts (`NBA_SEED_DEMO_ACCOUNTS=false`). The user said they will say when.
@@ -31,6 +32,8 @@ Nothing in progress.
 - [ ] Forgot-password and change-password flows.
 - [ ] Admin: delete an account (today: disable only).
 - [ ] Admin: resend or cancel a pending verification from the Users page.
+- [ ] Add a mail check command (for example `python -m app.auth.mailcheck you@example.org`) that sends a test message and prints the failure type, so SMTP can be verified without a sign-up.
+- [ ] Show on the verify page, in development delivery only, why email was not used (not configured, or send failed), instead of one generic message.
 - [ ] Exclude hero patients and HCPs from automatic sign-up panels, so a newly registered care manager or rep cannot act on demo-scenario records.
 - [ ] When an admin re-links a patient or HCP account to another record, restore the previous record's original synthetic name.
 - [ ] Bulk approve-and-send for care managers and reps on their own queue (today: admin-only demo shortcut).

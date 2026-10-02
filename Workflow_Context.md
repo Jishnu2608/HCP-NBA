@@ -4,7 +4,7 @@ Living context file. Describes what the code does **now**. Update the relevant s
 
 One of three context files: `Master_Build.md` is the specification (what the system is supposed to be, and the rules that must be preserved); this file is the implementation state; `TODO.md` is the backlog. Read all three before major work. They are deliberately not duplicates of each other.
 
-Last verified against code: 2026-10-02, at the commit "security: remove hardcoded credentials" on `main` (remote `https://github.com/Jishnu2608/HCP-NBA.git`; history rewritten that day).
+Last verified against code: 2026-10-02, at commit `6496600` ("feat: password rotation command") plus this documentation update, on `main` (remote `https://github.com/Jishnu2608/HCP-NBA.git`; history was rewritten that day to remove credential literals).
 
 ## Project Status
 
@@ -195,7 +195,7 @@ Chart colours are CSS roles in `index.css` (blue, orange, aqua from a validated 
 
 Public without a session: `/api/health`, `/api/meta`, `/api/auth/roles`, `signup`, `verify-otp`, `resend-otp`, `login`. Everything else returns 401. Interactive reference at `/api/docs`. Responses are plain dicts built in `api/serializers.py` (no response models).
 
-Command-line entry points (from `backend`): `python -m app.datagen`, `python -m app.pipeline`, `python -m app.nba`, `python -m app.cycle [--retrain]`.
+Command-line entry points (from `backend`): `python -m app.bootstrap` (create missing secrets in `.env`), `python -m app.auth.rotate` (apply `.env` passwords to admin and demo accounts), `python -m app.datagen`, `python -m app.pipeline`, `python -m app.nba`, `python -m app.cycle [--retrain]`.
 
 ## Testing
 
@@ -225,7 +225,9 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 - `demo_mode` is on by default (on-screen code when no SMTP) and demo accounts are seeded. Turn both off for hosted use.
 - Git history was rewritten on 2026-10-02 to remove credential literals (old hashes `c3f55df`, `6d3f691`, `541cb19` no longer exist on `main`). The earlier demo passwords were public for a time and should be treated as exposed.
 - Editing `.env` alone does not change existing accounts (the database stores hashes). Run `python -m app.auth.rotate` (keeps demo data) or reseed.
-- Live SMTP delivery never exercised (no mail settings on this machine); covered only by a fake sender in tests.
+- Live SMTP delivery never exercised: `.env` holds only `NBA_JWT_SECRET`, `NBA_ADMIN_PASSWORD`, `NBA_DEMO_PASSWORD`, so sign-up shows the code in the development box. Covered only by a fake sender in tests. Set-up steps are in README → "Setting up email delivery".
+- Sign-up accepts any well-formed email address; nothing proves the address exists until a real mail server is configured.
+- A user who forgets a sign-up password cannot recover the account (no reset flow, and the administrator cannot set a password).
 - No forgot-password, password change, login lockout or rate limiting. No MFA at sign-in.
 - A claimed synthetic patient/HCP record is renamed to the account holder; if an admin later links the account to another record, the earlier record keeps that name until the next reseed.
 - Admin cannot delete accounts (disable only).
