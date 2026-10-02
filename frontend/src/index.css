@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-brand-50: #eef7f7;
+  --color-brand-100: #d5ecec;
+  --color-brand-500: #14808a;
+  --color-brand-600: #0f6a73;
+  --color-brand-700: #0c555c;
+  --color-brand-900: #0a3338;
+}
+
+:root {
+  /* Chart roles (validated categorical order: blue, orange, aqua). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --chart-grid: #e7e5e4;
+  --chart-text: #52514e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #f6f7f8;
+  color: #1c1917;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
