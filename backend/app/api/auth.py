@@ -1,75 +1,116 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from collections.abc import Callable
+
+from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.core.config import get_settings
+from app.auth import service
+from app.auth.errors import AuthError
 from app.core.db import get_db
-from app.core.security import create_token, verify_password
+from app.core.permissions import SIGNUP_ROLES
 from app.models import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-ROLE_ORDER = ["care_manager", "patient", "medical_rep", "hcp", "compliance", "admin"]
-# One persona per role is enough for the switcher; staff pools are trimmed to the first.
-FEATURED = {"admin", "compliance1", "rep01", "cm01"}
+ROLE_INFO = {
+    "care_manager": ("Care Manager", "Works with assigned patient adherence cases."),
+    "medical_rep": (
+        "Medical Representative",
+        "Works with assigned HCP engagement and next-best-action recommendations.",
+    ),
+    "compliance": (
+        "Compliance / MLR Reviewer",
+        "Reviews content approval, compliance decisions and audit history.",
+    ),
+    "patient": ("Patient", "Views their own medications, adherence, consent and engagement."),
+    "hcp": (
+        "Healthcare Professional",
+        "Views their own HCP information and relevant engagement and content.",
+    ),
+}
 
 
-class DemoLogin(BaseModel):
-    username: str
+class SignupBody(BaseModel):
+    name: str = Field(max_length=128)
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=128)
+    confirm_password: str = Field(max_length=128)
+    role: str
 
 
-def user_out(user: User) -> dict:
-    return {
-        "id": user.id,
-        "username": user.username,
-        "display_name": user.display_name,
-        "role": user.role,
-        "hcp_id": user.hcp_id,
-        "patient_id": user.patient_id,
-    }
+class VerifyBody(BaseModel):
+    verification_token: str
+    code: str = Field(min_length=1, max_length=12)
 
 
-def _token_response(user: User) -> dict:
-    return {
-        "access_token": create_token(user.id, user.role),
-        "token_type": "bearer",
-        "user": user_out(user),
-    }
+class ResendBody(BaseModel):
+    verification_token: str
+
+
+def _run(db: Session, action: Callable[[], dict]) -> dict:
+    """Commits on success and also on a handled failure: a wrong code must still count as
+    an attempt, and a code issued during a refused sign-in must still exist."""
+    try:
+        result = action()
+    except AuthError:
+        db.commit()
+        raise
+    db.commit()
+    return result
+
+
+@router.get("/roles")
+def signup_roles() -> list[dict]:
+    """Roles a person may register as. The administrator is not among them."""
+    return [
+        {"role": role, "label": ROLE_INFO[role][0], "description": ROLE_INFO[role][1]}
+        for role in SIGNUP_ROLES
+    ]
+
+
+@router.post("/signup", status_code=201)
+def signup(body: SignupBody, db: Session = Depends(get_db)) -> dict:
+    """Creates an unverified account and issues a one-time code. No session yet."""
+    return _run(
+        db,
+        lambda: service.signup(
+            db,
+            name=body.name,
+            email=body.email,
+            password=body.password,
+            confirm=body.confirm_password,
+            role=body.role,
+        ),
+    )
+
+
+@router.post("/verify-otp")
+def verify_otp(body: VerifyBody, db: Session = Depends(get_db)) -> dict:
+    """Confirms the code, activates the account, assigns its data and starts a session."""
+    return _run(db, lambda: service.verify_otp(db, body.verification_token, body.code))
+
+
+@router.post("/resend-otp")
+def resend_otp(body: ResendBody, db: Session = Depends(get_db)) -> dict:
+    return _run(db, lambda: service.resend_otp(db, body.verification_token))
 
 
 @router.post("/login")
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> dict:
-    user = db.scalar(select(User).where(User.username == form.username))
-    if user is None or not user.is_active or not verify_password(form.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect username or password")
-    return _token_response(user)
+    """Email and password. The form's `username` field carries the email address."""
+    return _run(db, lambda: service.login(db, form.username, form.password))
 
 
-@router.get("/personas")
-def personas(db: Session = Depends(get_db)) -> list[dict]:
-    """Seeded demo personas for the one-click switcher. Empty outside demo mode."""
-    if not get_settings().demo_mode:
-        return []
-    users = db.scalars(select(User).where(User.is_active)).all()
-    shown = [u for u in users if u.username in FEATURED or u.hcp_id or u.patient_id]
-    shown.sort(key=lambda u: (ROLE_ORDER.index(u.role), u.username))
-    return [user_out(u) for u in shown]
-
-
-@router.post("/demo-login")
-def demo_login(body: DemoLogin, db: Session = Depends(get_db)) -> dict:
-    """Passwordless persona switch. Exists only while NBA_DEMO_MODE is on."""
-    if not get_settings().demo_mode:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
-    user = db.scalar(select(User).where(User.username == body.username, User.is_active))
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown persona")
-    return _token_response(user)
+@router.post("/logout")
+def logout(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    """Ends the session on the server: the token stops working immediately."""
+    service.logout(db, user)
+    db.commit()
+    return {"signed_out": True}
 
 
 @router.get("/me")
 def me(user: User = Depends(get_current_user)) -> dict:
-    return user_out(user)
+    return service.account_out(user)

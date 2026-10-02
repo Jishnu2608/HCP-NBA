@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { api, query } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
+import { P } from "../permissions";
 import {
   Badge,
   Card,
@@ -20,19 +21,19 @@ import {
 
 const PAGE = 25;
 const TITLE: Record<string, [string, string]> = {
-  care_manager: [
+  patients: [
     "Adherence queue",
     "Patients who need outreach now, ranked by risk and the chance the action leads to a fill.",
   ],
-  medical_rep: [
+  hcps: [
     "HCP queue",
     "Next best action for each assigned HCP, ranked by value and predicted engagement.",
   ],
-  compliance: [
+  gated: [
     "Gate outcomes",
     "Recommendations that were blocked, or where a better option was held back by a gate. Identities are hidden.",
   ],
-  admin: ["All recommendations", "Every open recommendation across both audiences."],
+  all: ["All recommendations", "Every open recommendation across both audiences."],
 };
 
 const FILTERS: Array<{ key: string; label: string; statuses: string[] }> = [
@@ -45,7 +46,7 @@ const FILTERS: Array<{ key: string; label: string; statuses: string[] }> = [
 ];
 
 export default function Queue() {
-  const { user } = useAuth();
+  const { can } = useAuth();
   const [filter, setFilter] = useState("open");
   const [audience, setAudience] = useState("");
   const [page, setPage] = useState(0);
@@ -57,7 +58,15 @@ export default function Queue() {
         `/nba${query({ status: statuses, target_type: audience, limit: PAGE, offset: page * PAGE })}`,
       ),
   });
-  const [title, subtitle] = TITLE[user!.role] ?? TITLE.admin;
+  const seesAll = can(P.NBA_READ_ALL);
+  const view = seesAll
+    ? "all"
+    : can(P.NBA_READ_GATED)
+      ? "gated"
+      : can(P.NBA_READ_HCP_ASSIGNED)
+        ? "hcps"
+        : "patients";
+  const [title, subtitle] = TITLE[view];
   const counts: Record<string, number> = list.data?.counts ?? {};
   const countFor = (keys: string[]) => keys.reduce((n, k) => n + (counts[k] ?? 0), 0);
 
@@ -83,7 +92,7 @@ export default function Queue() {
             <span className="tabular ml-1.5 opacity-70">{countFor(f.statuses)}</span>
           </button>
         ))}
-        {user!.role === "admin" && (
+        {seesAll && (
           <select
             value={audience}
             onChange={(e) => {

@@ -24,11 +24,11 @@ from app.nba.rationale import ACTION_LABEL, CHANNEL_LABEL
 
 
 def patient_name(p: Patient) -> str:
-    return f"{p.first_name} {p.last_name}"
+    return f"{p.first_name} {p.last_name}".strip()
 
 
 def hcp_name(h: Hcp) -> str:
-    return f"Dr. {h.first_name} {h.last_name}"
+    return f"Dr. {h.first_name} {h.last_name}".strip()
 
 
 def target_label(db: Session, target_type: str, target_id: str) -> tuple[str, str | None]:

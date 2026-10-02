@@ -1,9 +1,11 @@
 from logging.config import fileConfig
 
+from sqlalchemy import create_engine
+
 from alembic import context
 from app import models  # noqa: F401  (registers all tables on Base.metadata)
 from app.core.config import get_settings
-from app.core.db import Base, make_engine
+from app.core.db import Base
 
 config = context.config
 
@@ -31,7 +33,10 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = make_engine(database_url())
+    # A plain engine, not the application's: on SQLite the app turns foreign-key enforcement
+    # on per connection, but batch migrations rebuild tables (copy, drop, rename) and that
+    # cannot run while other tables hold enforced references to the one being rebuilt.
+    connectable = create_engine(database_url())
     with connectable.connect() as connection:
         # Batch mode lets SQLite handle ALTER-style migrations; harmless on Postgres.
         context.configure(

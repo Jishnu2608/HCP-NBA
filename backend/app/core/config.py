@@ -29,9 +29,35 @@ class Settings(BaseSettings):
 
     datagen_seed: int = 20260101
 
-    # Demo conveniences: one-click persona login and the shared seeded password.
-    demo_mode: bool = True
+    # Fixed administrator. Stored hashed; created by the generator and at start-up.
+    # Change both before any hosted use.
+    admin_email: str = "admin@admin.com"
+    admin_password: str = "<NBA_ADMIN_PASSWORD>"
+
+    # Seeded demo accounts (cm01@nba.demo, rep01@nba.demo, ...). Set to false to seed the
+    # administrator only.
+    seed_demo_accounts: bool = True
     demo_password: str = "<NBA_DEMO_PASSWORD>"
+    demo_email_domain: str = "nba.demo"
+
+    # Demo mode allows the on-screen one-time code when no mail server is configured.
+    demo_mode: bool = True
+
+    # One-time codes are emailed when these are set (use an app password, never commit it).
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+
+    otp_ttl_minutes: int = 10
+    otp_max_attempts: int = 5
+    otp_resend_seconds: int = 30
+    verification_token_minutes: int = 30
+
+    # What a newly verified account is given from the synthetic pool.
+    signup_panel_patients: int = 30
+    signup_panel_hcps: int = 15
 
 
 @lru_cache

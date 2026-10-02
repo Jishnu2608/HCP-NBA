@@ -1,0 +1,48 @@
+// Names of the permissions the API grants (backend/app/core/permissions.py).
+//
+// The client never decides what a role may do. It receives the signed-in account's
+// permission list from the server and uses it only to choose what to show. Every request
+// is authorised again on the server, so changing anything here grants nothing.
+
+export const P = {
+  PATIENT_READ_ALL: "patient:read:all",
+  PATIENT_READ_ASSIGNED: "patient:read:assigned",
+  HCP_READ_ALL: "hcp:read:all",
+  HCP_READ_ASSIGNED: "hcp:read:assigned",
+  NBA_READ_ALL: "nba:read:all",
+  NBA_READ_PATIENT_ASSIGNED: "nba:read:patient_assigned",
+  NBA_READ_HCP_ASSIGNED: "nba:read:hcp_assigned",
+  NBA_READ_GATED: "nba:read:gated",
+  NBA_REVIEW_PATIENT: "nba:review:patient",
+  NBA_REVIEW_HCP: "nba:review:hcp",
+  CONTENT_READ_ALL: "content:read:all",
+  CONTENT_READ_APPROVED_HCP: "content:read:approved_hcp",
+  CONTENT_READ_APPROVED_PATIENT: "content:read:approved_patient",
+  CONTENT_APPROVE: "content:approve",
+  AUDIT_READ: "audit:read",
+  ANALYTICS_READ: "analytics:read",
+  MODELS_READ: "models:read",
+  ENGINE_OPERATE: "engine:operate",
+  CONFIG_MANAGE: "config:manage",
+  USER_MANAGE: "user:manage",
+  SELF_PROFILE_READ: "self:profile:read",
+  SELF_INBOX: "self:inbox",
+  SELF_CONSENT_MANAGE: "self:consent:manage",
+  SELF_PATIENTS_READ: "self:patients:read",
+} as const;
+
+export type Permission = (typeof P)[keyof typeof P];
+
+export const NBA_READ: Permission[] = [
+  P.NBA_READ_ALL,
+  P.NBA_READ_GATED,
+  P.NBA_READ_HCP_ASSIGNED,
+  P.NBA_READ_PATIENT_ASSIGNED,
+];
+export const PATIENT_READ: Permission[] = [P.PATIENT_READ_ALL, P.PATIENT_READ_ASSIGNED];
+export const HCP_READ: Permission[] = [P.HCP_READ_ALL, P.HCP_READ_ASSIGNED];
+export const CONTENT_READ: Permission[] = [
+  P.CONTENT_READ_ALL,
+  P.CONTENT_READ_APPROVED_HCP,
+  P.CONTENT_READ_APPROVED_PATIENT,
+];

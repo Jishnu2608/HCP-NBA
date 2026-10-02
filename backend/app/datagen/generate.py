@@ -5,14 +5,17 @@ the scale or a hero record does not reshuffle everyone else.
 """
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from random import Random
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth.provisioning import assignments
+from app.auth.service import ensure_system_admin
 from app.core import clock
+from app.core.config import get_settings
 from app.core.db import Base
 from app.core.security import hash_password
 from app.datagen import behavior
@@ -34,6 +37,8 @@ from app.models import (
     User,
 )
 from app.models.enums import (
+    AccountSource,
+    AccountStatus,
     ActionType,
     Channel,
     ConsentPurpose,
@@ -64,7 +69,9 @@ class GenConfig:
     n_reps: int = 20
     n_care_managers: int = 10
     as_of: date = DEFAULT_AS_OF
-    demo_password: str = "<NBA_DEMO_PASSWORD>"
+    # Demo accounts for the seeded personas. Off = only the fixed administrator is seeded.
+    seed_demo_accounts: bool = field(default_factory=lambda: get_settings().seed_demo_accounts)
+    demo_password: str = field(default_factory=lambda: get_settings().demo_password)
 
 
 def _rng(cfg: GenConfig, *parts) -> Random:
@@ -501,13 +508,24 @@ def simulate_therapy(
 
 
 def build_users(cfg: GenConfig, hcps: list[Hcp], patients: list[Patient]):
+    """Demo accounts for the seeded personas: real accounts with an email and a password."""
     pw = hash_password(cfg.demo_password)
+    domain = get_settings().demo_email_domain
 
     def user(username, name, role, **kw):
-        return User(username=username, display_name=name, password_hash=pw, role=role, **kw)
+        return User(
+            username=username,
+            email=f"{username}@{domain}",
+            display_name=name,
+            password_hash=pw,
+            role=role,
+            verified=True,
+            status=AccountStatus.ACTIVE,
+            source=AccountSource.SEED,
+            **kw,
+        )
 
     staff = [
-        user("admin", "Alex Morgan (Admin)", Role.ADMIN),
         user("compliance1", "Priya Nair (MLR Reviewer)", Role.COMPLIANCE),
         user("compliance2", "Jon Becker (Privacy)", Role.COMPLIANCE),
     ]
@@ -575,7 +593,10 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
     cfg = cfg or GenConfig()
     if cfg.n_hcps < 12 or cfg.n_patients < len(PATIENT_HEROES):
         raise ValueError("scale too small: need at least 12 HCPs and 6 patients")
+    # Registered accounts are not demo data: carry them across the rebuild.
+    registered = assignments.snapshot(db)
     wipe(db)
+    ensure_system_admin(db)
 
     contents = build_content(cfg.as_of)
     hcps, hcp_traits = build_hcps(cfg)
@@ -702,11 +723,14 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
         for b in bundles
     )
 
-    staff, reps, cms, portal = build_users(cfg, hcps, patients)
-    db.add_all(staff + reps + cms + portal)
-    db.flush()
-    db.add_all(assign_reps(reps, hcps))
-    db.add_all(assign_care_managers(cms, patients))
+    if cfg.seed_demo_accounts:
+        staff, reps, cms, portal = build_users(cfg, hcps, patients)
+        db.add_all(staff + reps + cms + portal)
+        db.flush()
+        db.add_all(assign_reps(reps, hcps))
+        db.add_all(assign_care_managers(cms, patients))
+        db.flush()
+    assignments.restore(db, registered)
 
     clock.set_today(db, cfg.as_of)
     db.commit()

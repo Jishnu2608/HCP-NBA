@@ -1,19 +1,20 @@
-// Thin fetch wrapper. The token lives in sessionStorage so each browser tab can hold a
-// different persona, which is how the demo shows two roles side by side.
+// Thin fetch wrapper. Attaches the session token and turns API errors into ApiError.
+import { session } from "./session";
 
 // API payloads are plain JSON shaped by the backend serializers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Json = any;
 
-const TOKEN_KEY = "nba_token";
-
 export class ApiError extends Error {
   status: number;
-  detail: unknown;
+  /** Stable machine-readable code from the API, when it sent one. */
+  code: string | null;
+  detail: Json;
   constructor(status: number, detail: unknown) {
     super(describe(detail));
     this.status = status;
     this.detail = detail;
+    this.code = typeof detail === "object" && detail !== null && "code" in detail ? String((detail as Json).code) : null;
   }
 }
 
@@ -22,19 +23,25 @@ function describe(detail: unknown): string {
   if (Array.isArray(detail)) {
     return detail.map((d) => (typeof d === "string" ? d : (d?.msg ?? JSON.stringify(d)))).join("; ");
   }
+  if (typeof detail === "object" && detail !== null && "message" in detail) {
+    return String((detail as Json).message);
+  }
   return "Request failed";
 }
 
-export const getToken = () => sessionStorage.getItem(TOKEN_KEY);
-export const setToken = (token: string | null) =>
-  token ? sessionStorage.setItem(TOKEN_KEY, token) : sessionStorage.removeItem(TOKEN_KEY);
+// Called when the server says the session is no longer valid (expired, signed out
+// elsewhere, account disabled). Set by the auth provider.
+let onSessionLost: () => void = () => {};
+export const setSessionLostHandler = (handler: () => void) => {
+  onSessionLost = handler;
+};
 
 export async function api<T = Json>(
   path: string,
   options: { method?: string; body?: unknown; form?: Record<string, string> } = {},
 ): Promise<T> {
   const headers: Record<string, string> = {};
-  const token = getToken();
+  const token = session.token();
   if (token) headers.Authorization = `Bearer ${token}`;
   let body: BodyInit | undefined;
   if (options.form) {
@@ -45,14 +52,14 @@ export async function api<T = Json>(
     body = JSON.stringify(options.body);
   }
   const response = await fetch(`/api${path}`, { method: options.method ?? "GET", headers, body });
-  if (response.status === 401 && token) {
-    setToken(null);
-    window.location.assign("/login");
-  }
   const payload = response.headers.get("content-type")?.includes("json")
     ? await response.json()
     : null;
-  if (!response.ok) throw new ApiError(response.status, payload?.detail ?? response.statusText);
+  if (!response.ok) {
+    const error = new ApiError(response.status, payload?.detail ?? response.statusText);
+    if (response.status === 401 && token && error.code === "not_authenticated") onSessionLost();
+    throw error;
+  }
   return payload as T;
 }
 

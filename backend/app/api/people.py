@@ -5,9 +5,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import serializers as out
-from app.api.deps import not_found, require_roles
+from app.api.deps import not_found, require_permission
 from app.core import clock, rbac
 from app.core.db import get_db
+from app.core.permissions import Permission
 from app.models import (
     Consent,
     Content,
@@ -20,12 +21,12 @@ from app.models import (
     PatientTherapy,
     User,
 )
-from app.models.enums import NbaStatus, Role, TargetType
+from app.models.enums import NbaStatus, TargetType
 
 router = APIRouter(prefix="/api", tags=["profiles"])
 
-patient_staff = require_roles(Role.ADMIN, Role.CARE_MANAGER)
-hcp_staff = require_roles(Role.ADMIN, Role.MEDICAL_REP)
+patient_staff = require_permission(Permission.PATIENT_READ_ALL, Permission.PATIENT_READ_ASSIGNED)
+hcp_staff = require_permission(Permission.HCP_READ_ALL, Permission.HCP_READ_ASSIGNED)
 LIVE = (NbaStatus.READY_FOR_REVIEW, NbaStatus.APPROVED, NbaStatus.BLOCKED)
 
 

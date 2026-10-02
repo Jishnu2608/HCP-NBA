@@ -10,6 +10,18 @@ class Role(StrEnum):
     PATIENT = "patient"
 
 
+class AccountStatus(StrEnum):
+    PENDING = "pending"  # registered, one-time code not yet confirmed
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
+class AccountSource(StrEnum):
+    SYSTEM = "system"
+    SEED = "seed"
+    SIGNUP = "signup"
+
+
 class TargetType(StrEnum):
     HCP = "HCP"
     PATIENT = "PATIENT"

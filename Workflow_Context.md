@@ -2,15 +2,15 @@
 
 Living context file. Describes what the code does **now**. Update the relevant section in place whenever implementation changes; do not append a changelog. If this file and the code disagree, the code wins: inspect it and fix this file.
 
-Last verified against code: 2026-10-02 (commit `c3f55df` on `main`, pushed to `https://github.com/Jishnu2608/HCP-NBA.git`).
+Last verified against code: 2026-10-02, at the commit "feat: account-based authentication and permission RBAC" on `main` (remote `https://github.com/Jishnu2608/HCP-NBA.git`).
 
 ## Project Status
 
 Working end-to-end prototype. All ten planned build phases have code; the full loop (generate data, score, recommend, gate, draft, review, send, capture response, advance clock, retrain, next cycle) runs locally and was checked in the browser.
 
-Current milestone: **prototype complete, pre-hardening**. Not yet done: browser end-to-end tests, any hosted deployment, a real LLM provider in use, branding.
+Current milestone: **prototype complete with real account flow, pre-hardening**. The demo persona picker has been replaced by landing page, email + password login, sign-up with email one-time code, a fixed administrator, permission-based RBAC and admin user/assignment management. Not yet done: browser end-to-end tests, any hosted deployment, a real LLM provider in use, a live SMTP send, branding.
 
-Source documents the build is based on (outside the repo, in the user's Downloads): `Healthcare_NBA_POC_Field_Guide.docx`, `Healthcare_NBA_POC_Blueprint.docx`, `Healthcare_NBA_Report.pdf`. Approved plan: `C:\Users\Jishnudeep\.claude\plans\c-users-jishnudeep-downloads-healthcare-hidden-octopus.md`.
+Source documents the build is based on (outside the repo, in the user's Downloads): `Healthcare_NBA_POC_Field_Guide.docx`, `Healthcare_NBA_POC_Blueprint.docx`, `Healthcare_NBA_Report.pdf`. The plan file `C:\Users\Jishnudeep\.claude\plans\c-users-jishnudeep-downloads-healthcare-hidden-octopus.md` now holds the approved auth/RBAC refactor plan (it replaced the original build plan).
 
 ## Architecture
 
@@ -19,10 +19,10 @@ One process, one deployable unit: FastAPI serves the API under `/api` and, when 
 | Layer | Technology | Location |
 |---|---|---|
 | API | FastAPI, Pydantic v2 | `backend/app/api/` |
-| ORM / migrations | SQLAlchemy 2, Alembic (single initial migration) | `backend/app/models/`, `backend/alembic/` |
+| ORM / migrations | SQLAlchemy 2, Alembic (`50d7c5d998ec` initial, `a1f4c2e97b30` auth accounts and OTP) | `backend/app/models/`, `backend/alembic/` |
 | Database | SQLite file `data/nba_demo.db` (any SQLAlchemy URL via `NBA_DATABASE_URL`) | `backend/app/core/db.py` |
 | ML | pandas, scikit-learn, joblib; model files in `data/models/` | `backend/app/scoring/` |
-| Auth | PyJWT (HS256), scrypt password hashes | `backend/app/core/security.py`, `backend/app/api/deps.py` |
+| Auth | PyJWT (HS256) session tokens, scrypt password hashes, stdlib `smtplib` for verification email | `backend/app/auth/`, `backend/app/core/security.py`, `backend/app/api/deps.py` |
 | Frontend | React 18, TypeScript, Vite 6, Tailwind 4, TanStack Query, React Router 6, Recharts 2, lucide-react | `frontend/src/` |
 
 Tooling on the dev machine: `py -3.13` venv at `backend/.venv` with pip, and npm. No uv, pnpm or Docker installed.
@@ -31,10 +31,13 @@ Backend module map (`backend/app/`):
 
 | Module | Responsibility |
 |---|---|
-| `core/config.py` | Settings (`NBA_` env prefix): database URL, JWT, `demo_mode`, `llm_provider`, seed |
+| `core/config.py` | Settings (`NBA_` env prefix): database URL, JWT, admin credentials, `seed_demo_accounts`, `demo_password`, `demo_mode`, SMTP, OTP timings, sign-up panel sizes, `llm_provider`, seed |
+| `core/permissions.py` | `Permission` enum, `ROLE_PERMISSIONS`, `SIGNUP_ROLES`, `ROLE_HOME`, `can`, `can_any`. The only place roles map to abilities. |
+| `core/security.py` | scrypt `hash_password` / `verify_password` only |
+| `auth/` | `repository.py` (`UserRepository`, `SqlUserRepository`), `otp.py` (`OTPService`, `OtpSender`, `EmailOtpSender`, `LocalDemoOtpSender`), `sessions.py` (`SessionService`), `service.py` (signup, verify, resend, login, logout, `ensure_system_admin`, `account_out`), `provisioning.py` (`AssignmentService`), `errors.py` (`AuthError`) |
 | `core/clock.py` | Demo clock: the single "today", stored in `engine_config` under `demo_as_of_date` |
 | `core/engine_config.py` | Tunable policy defaults (risk weights, cut-offs, frequency caps, channel costs) with DB overrides |
-| `core/rbac.py` | Row-level filters per role; `can_review`; `shared_patient_ids` |
+| `core/rbac.py` | Data scope: SQL filters driven by permissions + assignment tables (`hcp_filter`, `patient_filter`, `nba_filter`), `can_review`, `can_see_target_profile`, `shared_patient_ids` |
 | `models/tables.py`, `models/enums.py` | All tables and enums |
 | `datagen/` | Synthetic generator (`generate.py`), hidden behaviour model (`behavior.py`), hero records (`heroes.py`), content library (`content.py`), data-quality checks (`validate.py`) |
 | `features/` | `adherence.py` (PDC, MPR, gap, lateness trend), `engagement.py` (point-in-time engagement state and feature rows), `population.py` (loader of observable data) |
@@ -46,7 +49,7 @@ Backend module map (`backend/app/`):
 | `engagement/` | `delivery.py` (channel adapters, send, capture response), `simulator.py` (clock advance) |
 | `audit/log.py` | Insert-only audit writer |
 | `analytics/queries.py` | Dashboard aggregates |
-| `api/` | Routers: `system`, `auth`, `nba`, `people`, `content`, `governance`, `me`, `analytics`; `serializers.py`; `deps.py` |
+| `api/` | Routers: `system`, `auth`, `users`, `nba`, `people`, `content`, `governance`, `me`, `analytics`; `serializers.py`; `deps.py` (`get_current_user`, `require_permission`) |
 
 ## Completed
 
@@ -55,14 +58,16 @@ Backend module map (`backend/app/`):
 - Adherence and engagement features; rule-based risk score; three propensity models with holdout metrics, baseline and boosted-tree challenger.
 - NBA engine with hard gates, ranking, rationale, kept alternatives, withheld-option reporting, audit.
 - Drafting layer: template provider (default), Claude provider (written, never run), output validator, fallback.
-- JWT auth, demo persona switcher, six roles with server-side row-level scoping.
+- Account flow: landing page, email + password login, sign-up with role cards, email one-time code (SMTP or development fallback), fixed administrator, server-side sign-out.
+- Permission-based RBAC (`require_permission`) on every protected endpoint; six roles; row-level scoping from assignments.
+- Automatic assignment on verification; admin Users and assignments page (view, change assignments, disable / re-enable).
 - Review workflow: approve, edit draft, reject, redraft, send, log outcome; gates re-checked at approval and at send.
 - Portals: patient (medications, messages, consent) and HCP (inbox, consented patients, profile).
 - Closed loop: delivery adapters, response capture, outcome simulator, clock advance with retrain, demo reset, bulk-send shortcut.
 - Analytics dashboard, including a like-for-like engine versus baseline comparison.
 - Frontend for all six roles.
-- Docs: `README.md`, `docs/demo-script.md`. Scripts: `scripts/setup.ps1`, `scripts/run.ps1`. Preview config: `.claude/launch.json` (`nba-app`, port 8000).
-- Initial commit pushed to GitHub `main`.
+- Docs: `README.md`, `docs/demo-script.md`, `docs/architecture-auth-rbac.md`, `.env.example`. Scripts: `scripts/setup.ps1`, `scripts/run.ps1`. Preview config: `.claude/launch.json` (`nba-app`, port 8000).
+- All work to date, including the auth/RBAC refactor, is committed and pushed to GitHub `main`.
 
 ## In Progress
 
@@ -75,31 +80,44 @@ Approved in the plan but not started:
 - Playwright end-to-end tests running the six demo scenarios.
 - Hosted deployment (Databricks Apps or Vercel plus container API) with Postgres.
 - Real LLM provider selection and a live run (Claude, Gemini, or an org cloud model). No Gemini provider exists.
-- OIDC/SSO behind `get_current_user`.
+- OIDC/SSO behind `sessions.resolve` / `get_current_user`; MFA at sign-in; SMS or authenticator codes (new `OtpSender`).
+- Forgot-password, password change, login lockout / rate limiting.
 - Product name and branding for a client-facing version.
 
 Written but never executed: `Dockerfile`, `docker-compose.yml`, `scripts/setup.ps1`, the Postgres path (`postgres` extra in `backend/pyproject.toml`).
 
 ## Authentication & RBAC
 
-Flow: `POST /api/auth/login` (OAuth2 password form) or `POST /api/auth/demo-login` (passwordless, only while `NBA_DEMO_MODE` is true) returns a bearer JWT. `get_current_user` in `api/deps.py` resolves it to a `user` row; this is the seam for SSO. `require_roles(...)` guards endpoints. The frontend keeps the token in `sessionStorage` (one persona per browser tab).
+Chain: **account → role → permission set → data scope → UI**. Full description in `docs/architecture-auth-rbac.md`.
 
-Seeded users (password "<NBA_DEMO_PASSWORD>"): `admin`, `compliance1`, `compliance2`, `rep01`..`rep20`, `cm01`..`cm10`, `hcp0001`..`hcp0003`, `pat00001`..`pat00006`.
+**Flow.** `POST /api/auth/signup` creates a `pending`, unverified account and issues a 6-digit code; it returns a 30-minute *verification token* (not a session). `POST /api/auth/verify-otp` activates the account, auto-assigns data and returns a session. `POST /api/auth/login` takes email + password (form field `username` carries the email). `POST /api/auth/logout` bumps `user.token_version`, killing the token server-side. `get_current_user` (`api/deps.py`) calls `sessions.resolve`, which loads the account and rejects unknown, unverified, non-active or version-mismatched ones. The role is never read from the token.
 
-| Role | Data scope | Actions |
-|---|---|---|
-| `admin` | Everything | Run cycle, advance clock, bulk send, reset, edit settings; review any recommendation |
-| `compliance` | Content library; recommendations that are blocked or have a withheld option, with identities hidden; audit log; analytics; models | Approve or reject content. Cannot review recommendations. Only this role can review content (admin cannot). |
-| `medical_rep` | HCPs in `rep_hcp`; their recommendations; usable HCP-audience content | Approve, edit, reject, send, log visit outcome |
-| `care_manager` | Patients in `care_manager_patient`; their recommendations; usable patient-audience content | Approve, edit, reject, send, log call outcome |
-| `hcp` | Own profile (no segment, value score or volume); own inbox; adherence summary of own prescribed therapies for attributed patients with provider-sharing consent in effect | Respond to inbox items |
-| `patient` | Own profile and therapies (no risk scores); own consents; own inbox | Change consent, respond, confirm refill |
+**One-time code** (`auth/otp.py`): HMAC hash only in `otp_challenge`; 10-minute expiry; 5 attempts then deleted; 30-second resend cool-down; deleted on success. Delivery is email only: `EmailOtpSender` (SMTP) when `NBA_SMTP_HOST` is set, otherwise `LocalDemoOtpSender` while `demo_mode` is on (code returned as `dev_otp` and logged; the UI states no email was sent). SMTP failure falls back to the development sender only in demo mode.
 
-Rules: scoping is applied in SQL through `rbac.hcp_filter`, `rbac.patient_filter`, `rbac.nba_filter`. Out-of-scope records return 404, wrong-role endpoints return 403. `/api/me/*` endpoints never take an id; the record is bound to the signed-in user. `/api/health` and `/api/meta` (row counts only) are public.
+**Accounts.** Fixed administrator `admin@admin.com` / `<NBA_ADMIN_PASSWORD>` (settings `admin_email`, `admin_password`; `source=system`; ensured by the generator and at start-up; never creatable by sign-up). Seeded demo accounts `<username>@nba.demo` with password `<NBA_DEMO_PASSWORD>` (`source=seed`): `compliance1`, `compliance2`, `rep01`..`rep20`, `cm01`..`cm10`, `hcp0001`..`hcp0003`, `pat00001`..`pat00006`. `NBA_SEED_DEMO_ACCOUNTS=false` seeds only the administrator (the user may ask for this later). Registered accounts have `source=signup` and `username = email`.
+
+**Permissions** (`core/permissions.py`):
+
+| Role | Permissions |
+|---|---|
+| `admin` | `patient:read:all`, `hcp:read:all`, `nba:read:all`, `nba:review:patient`, `nba:review:hcp`, `content:read:all`, `audit:read`, `analytics:read`, `models:read`, `engine:operate`, `config:manage`, `user:manage` (no `content:approve`) |
+| `compliance` | `content:read:all`, `content:approve`, `nba:read:gated`, `audit:read`, `analytics:read`, `models:read` |
+| `medical_rep` | `hcp:read:assigned`, `nba:read:hcp_assigned`, `nba:review:hcp`, `content:read:approved_hcp` |
+| `care_manager` | `patient:read:assigned`, `nba:read:patient_assigned`, `nba:review:patient`, `content:read:approved_patient` |
+| `hcp` | `self:profile:read`, `self:inbox`, `self:patients:read` |
+| `patient` | `self:profile:read`, `self:inbox`, `self:consent:manage` |
+
+**Data scope** (`core/rbac.py`): `*:read:all` = every row; `*:read:assigned` = rows in `rep_hcp` / `care_manager_patient`; `nba:read:gated` = blocked or withheld recommendations with identity hidden; `self:*` = the record in `user.patient_id` / `user.hcp_id` (`/api/me/*` takes no id). Out-of-scope returns 404; missing permission 403; no linked record 409 `no_assignment`.
+
+**Assignments** (`auth/provisioning.py`, separate from RBAC, never touch `user.role`): on verification a patient or HCP account claims one unused synthetic record (preferring one with a ready recommendation) and the record takes the account's name; a care manager gets `signup_panel_patients` (30) patients spread over risk segments; a rep gets `signup_panel_hcps` (15) HCPs spread over value. Rows are added, seeded rows are never changed. Admin edits via `PUT /api/admin/users/{id}/assignments`; the field sent must match the account's assignment kind. `generate()` snapshots `source=signup` accounts and their assignments before wiping and restores them after, so a demo reset keeps registered users; `POST /api/admin/reset` returns a fresh session for the caller.
+
+**No endpoint changes a role.** Admin may change status (`active` / `disabled`; not own account, not the system admin; cannot activate an unverified account). Disabling revokes sessions.
+
+Error shape for auth and permission failures: `detail = {code, message, ...}`. Codes: `invalid_credentials`, `verification_required`, `account_disabled`, `email_exists`, `invalid_role`, `invalid_email`, `invalid_name`, `password_mismatch`, `weak_password`, `otp_incorrect`, `otp_expired`, `otp_locked`, `otp_missing`, `otp_resend_wait`, `otp_delivery_failed`, `otp_delivery_unavailable`, `already_verified`, `verification_expired`, `not_authenticated`, `forbidden`, `no_assignment`, `invalid_assignment`, `unknown_record`, `record_in_use`, `no_assignments_for_role`, `cannot_change_self`, `system_account`, `not_verified`.
 
 ## Data & Database
 
-22 tables: `hcp`, `patient`, `patient_hcp`, `user`, `rep_hcp`, `care_manager_patient`, `patient_therapy`, `medication_fill`, `adherence_snapshot`, `consent`, `content`, `content_review`, `engine_cycle`, `nba`, `nba_candidate`, `message_draft`, `interaction`, `feature_snapshot`, `audit_log`, `model_version`, `engine_config`, `sim_latent`.
+23 tables: `hcp`, `patient`, `patient_hcp`, `user`, `otp_challenge`, `rep_hcp`, `care_manager_patient`, `patient_therapy`, `medication_fill`, `adherence_snapshot`, `consent`, `content`, `content_review`, `engine_cycle`, `nba`, `nba_candidate`, `message_draft`, `interaction`, `feature_snapshot`, `audit_log`, `model_version`, `engine_config`, `sim_latent`.
 
 Key points:
 
@@ -109,14 +127,16 @@ Key points:
 - `content` carries `mlr_status` (`approved`, `pending`, `rejected`) plus effective and expiry dates; "usable" means approved and inside its window.
 - `interaction.outcome` includes `pending` (sent by the engine, response unknown). `interaction.source` is `history` (seeded baseline) or `nba` (engine).
 - Nullable JSON columns use `JSON(none_as_null=True)` so `IS NULL` filters work.
+- `user` columns: `username` (audit actor handle), `email` (unique, lower-cased), `display_name`, `password_hash`, `role`, `hcp_id`, `patient_id`, `verified`, `status` (`pending` / `active` / `disabled`), `source` (`system` / `seed` / `signup`), `token_version`, `created_at`, `updated_at`, `last_login_at`.
+- `otp_challenge`: one active code per account, hash only, deleted when used, expired or locked.
 - `sim_latent` holds hidden ground-truth traits and each therapy's unprompted next fill date.
 - `audit_log` is insert-only.
 
 Synthetic data (`python -m app.datagen`, default seed 20260101, as-of date 2026-09-30): 3,000 patients, 300 HCPs, 20 reps, 10 care managers, about 30,000 fills, about 11,000 historical interactions, 43 content items. Patients have a hidden archetype (steady, forgetful, drifter, cost_barrier, never_starter), channel responsiveness and action effects; HCPs have topic interest, channel responsiveness and fatigue. History and the post-send simulator draw from the same traits. Synthetic NPIs start with 9 so they cannot match a real provider.
 
-Hero records (`datagen/heroes.py`): `PAT_00001` forgetful with widening gap; `PAT_00002` prefers SMS without SMS consent; `PAT_00003` adherent; `PAT_00004` opted out of everything; `PAT_00005` cost barrier; `PAT_00006` prescription never filled; `HCP_0001` cardiologist who answers email; `HCP_0002` endocrinologist whose best content is pending MLR; `HCP_0003` low-value, fatigued. All heroes are assigned to `rep01` / `cm01`.
+Hero records (`datagen/heroes.py`): `PAT_00001` forgetful with widening gap; `PAT_00002` prefers SMS without SMS consent; `PAT_00003` adherent; `PAT_00004` opted out of everything; `PAT_00005` cost barrier; `PAT_00006` prescription never filled; `HCP_0001` cardiologist who answers email; `HCP_0002` endocrinologist whose best content is pending MLR; `HCP_0003` low-value, fatigued. All heroes are assigned to `rep01` / `cm01`. A registered care manager's panel can include hero patients too (assignments are many-to-many).
 
-Schema changes so far were folded into one regenerated initial migration because nothing had been deployed. After the first deployment, add new migrations instead.
+Schema changes now go in new migrations (the repository is pushed). `alembic/env.py` uses a plain engine, because SQLite batch table rebuilds fail while the app's per-connection foreign-key enforcement is on. Migration `a1f4c2e97b30` back-fills existing users as verified, active seed accounts with `<username>@nba.demo`.
 
 ## NBA Engine
 
@@ -136,21 +156,28 @@ Cycle (`app/cycle.py` → `nba/engine.py`): expire unreviewed recommendations fr
 
 ## UI
 
-`frontend/src/App.tsx` defines navigation and routes per role. Shared components in `ui.tsx`; API wrapper in `api.ts`; auth context in `auth.tsx`.
+`frontend/src/routes.tsx` is the single route table: each route lists the permissions that allow it; the menu and the route guards are both derived from it using the permission list from `GET /api/auth/me`. `App.tsx` holds the shell and guards. `session.ts` is the only module touching browser storage (`sessionStorage`: survives refresh, one session per tab). `auth.tsx` is the auth context (`login`, `signup`, `verify`, `resend`, `logout`, `can`, `adopt`). `permissions.ts` mirrors the server's permission names. `api.ts` is the fetch wrapper (`ApiError.code`).
 
-| Page | File | Roles |
+Public pages (signed out): `/` `pages/Landing.tsx`, `/login` `pages/Login.tsx`, `/signup` `pages/Signup.tsx` (role cards from `GET /api/auth/roles`), `/signup/verify` `pages/VerifyOtp.tsx`. Shared frame: `pages/AuthLayout.tsx`.
+
+| Route | File | Needs any of |
 |---|---|---|
-| Login with persona picker | `pages/Login.tsx` | all |
-| Work queue (titled per role) | `pages/Queue.tsx` | admin, compliance, medical_rep, care_manager |
-| Recommendation detail: reasons, options considered, content, draft editor, decision, audit | `pages/NbaDetail.tsx` | same four |
-| Patient list and Patient 360 with coverage timeline | `pages/Patients.tsx` | admin, care_manager |
-| HCP list and HCP 360 | `pages/Hcps.tsx` | admin, medical_rep |
-| Content library and MLR review | `pages/Content.tsx` | admin, compliance, medical_rep, care_manager |
-| Audit log | `pages/Audit.tsx` | admin, compliance |
-| Dashboard (Recharts) | `pages/Dashboard.tsx` | admin, compliance |
-| Engine: run cycle, bulk send, advance clock, reset, settings, cycles | `pages/Admin.tsx` | admin |
-| Under the hood: loop, design rules, model metrics, row counts | `pages/UnderTheHood.tsx` | admin, compliance |
-| Portal: medications, inbox, consents, my patients, profile | `pages/Portal.tsx` | patient, hcp |
+| `/dashboard` | `pages/Dashboard.tsx` | `analytics:read` |
+| `/queue`, `/nba/:id` | `pages/Queue.tsx`, `pages/NbaDetail.tsx` | any `nba:read:*` |
+| `/patients`, `/patients/:id` | `pages/Patients.tsx` | `patient:read:*` |
+| `/hcps`, `/hcps/:id` | `pages/Hcps.tsx` | `hcp:read:*` |
+| `/content` | `pages/Content.tsx` | `content:read:*` |
+| `/audit` | `pages/Audit.tsx` | `audit:read` |
+| `/users` | `pages/Users.tsx` | `user:manage` |
+| `/admin` | `pages/Admin.tsx` | `engine:operate` |
+| `/under-the-hood` | `pages/UnderTheHood.tsx` | `models:read` |
+| `/medications`, `/consent` | `pages/Portal.tsx` | `self:consent:manage` |
+| `/inbox` | `pages/Portal.tsx` | `self:inbox` |
+| `/my-patients`, `/profile` | `pages/Portal.tsx` | `self:patients:read` |
+
+Behaviour: signed out → any app address redirects to `/login`; signed in → `/`, `/login`, `/signup` redirect to the account's `home`; an address the account may not open shows `pages/AccessDenied.tsx`; after sign-in the user returns to a remembered page only if `mayOpen` allows it; sign-out ends on `/`. The shell footer shows "Signed in as", name, role, email and Sign out. No role-name comparisons remain in pages; they use `can(...)`.
+
+Role homes (from the API): admin `/dashboard`, care_manager and medical_rep `/queue`, compliance `/content`, patient `/medications`, hcp `/inbox`.
 
 Chart colours are CSS roles in `index.css` (blue, orange, aqua from a validated palette); baseline is neutral grey. Engine bars on the dashboard appear only with at least 20 resolved sends.
 
@@ -159,7 +186,8 @@ Chart colours are CSS roles in `index.css` (blue, orange, aqua from a validated 
 | Area | Routes |
 |---|---|
 | System | `GET /api/health`, `GET /api/meta`, `GET /api/clock` |
-| Auth | `POST /api/auth/login`, `POST /api/auth/demo-login`, `GET /api/auth/personas`, `GET /api/auth/me` |
+| Auth | `GET /api/auth/roles`, `POST /api/auth/signup`, `POST /api/auth/verify-otp`, `POST /api/auth/resend-otp`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` |
+| Users (admin) | `GET /api/admin/users`, `GET /api/admin/users/{id}`, `PATCH /api/admin/users/{id}/status`, `PUT /api/admin/users/{id}/assignments` |
 | Recommendations | `GET /api/nba`, `GET /api/nba/{id}`, `POST .../approve`, `POST .../reject`, `PATCH .../drafts/{draft_id}`, `POST .../redraft`, `POST .../send`, `POST .../outcome` |
 | Profiles | `GET /api/patients`, `GET /api/patients/{id}`, `GET /api/hcps`, `GET /api/hcps/{id}` |
 | Content | `GET /api/content`, `POST /api/content/{id}/review` |
@@ -168,13 +196,13 @@ Chart colours are CSS roles in `index.css` (blue, orange, aqua from a validated 
 | Engine operations | `POST /api/admin/cycle`, `POST /api/admin/bulk-send`, `POST /api/admin/advance`, `POST /api/admin/reset` |
 | Analytics | `GET /api/analytics/overview` |
 
-Interactive reference at `/api/docs`. Responses are plain dicts built in `api/serializers.py` (no response models).
+Public without a session: `/api/health`, `/api/meta`, `/api/auth/roles`, `signup`, `verify-otp`, `resend-otp`, `login`. Everything else returns 401. Interactive reference at `/api/docs`. Responses are plain dicts built in `api/serializers.py` (no response models).
 
 Command-line entry points (from `backend`): `python -m app.datagen`, `python -m app.pipeline`, `python -m app.nba`, `python -m app.cycle [--retrain]`.
 
 ## Testing
 
-195 pytest tests in `backend/tests/`, all passing; run with `.venv\Scripts\python -m pytest`. Lint: `ruff check .` and `ruff format`.
+260 pytest tests in `backend/tests/`, all passing; run with `.venv\Scripts\python -m pytest`. Lint: `ruff check .` and `ruff format`.
 
 | File | Covers |
 |---|---|
@@ -183,10 +211,12 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 | `test_features.py` | PDC/MPR/gap arithmetic on hand-computed cases, risk score, hero segments, no look-ahead, models beat baseline, contributions sum to the prediction |
 | `test_nba.py` | Each gate, selection logic, invariants on the real seeded dataset, the scenario behaviours, MLR approval unlocking content, engine without models, static check that engine code never references `sim_latent` |
 | `test_llm.py` | Template output validity per channel, validator rejections, fallback, edited drafts preserved |
-| `test_api.py` | Login, token rejection, role × endpoint matrix, row scoping, compliance view, review workflow, consent re-check at approval, MLR review, config |
+| `test_api.py` | Login, token rejection, persona endpoints gone, role × endpoint matrix, row scoping, compliance view, review workflow, consent re-check at approval, MLR review (admin refused), config |
+| `test_auth.py` | Sign-up validation, duplicate email, code success / wrong / locked / expired / resend / single use, email delivery with a fake sender and fallback, admin login, full flow, forged tokens, auto-assignment per role, admin user management, assignment edits leave role and permissions unchanged, disable, reset preserves accounts |
+| `test_permissions.py` | Role → permission sets, admin lacks content approval, every `/api` route outside a public allow-list refuses anonymous callers, no role-name authorization in routers or `rbac.py` |
 | `test_loop.py` | Send, pending semantics, patient and HCP inbox, send blocked after consent withdrawal, outcome logging, bulk send, clock advance, analytics, reset |
 
-`tests/conftest.py` redirects model files to a temp directory. `test_nba.py` scenario tests use the default seed and scale, so generator changes can break them. No frontend tests. Frontend checks: `npm run typecheck`, `npm run build`.
+`tests/conftest.py` redirects model files to a temp directory and provides `sign_in` / `auth` (real email + password login, token cached per client). `test_nba.py` scenario tests use the default seed and scale, so generator changes can break them. No frontend tests. Frontend checks: `npm run typecheck`, `npm run build`.
 
 ## Known Issues / Limitations
 
@@ -194,7 +224,11 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 - Delivery adapters only record the hand-off; no message leaves the system. "I have refilled" in the patient portal stands in for a pharmacy fill.
 - Claude provider untested (no key). It enables server-side refusal fallback by default.
 - No browser end-to-end tests; Docker, Postgres and `setup.ps1` never run.
-- `demo_mode` is on by default: passwordless persona login, shared password "<NBA_DEMO_PASSWORD>", placeholder JWT secret. Must change before any hosted use.
+- Defaults are demo-grade: documented admin and demo passwords, placeholder JWT secret, `demo_mode` on (on-screen code when no SMTP). Must change before any hosted use.
+- Live SMTP delivery never exercised (no mail settings on this machine); covered only by a fake sender in tests.
+- No forgot-password, password change, login lockout or rate limiting. No MFA at sign-in.
+- A claimed synthetic patient/HCP record is renamed to the account holder; if an admin later links the account to another record, the earlier record keeps that name until the next reseed.
+- Admin cannot delete accounts (disable only).
 - Interaction timestamps combine the demo date with wall-clock time of day.
 - `POST /api/admin/reset` and `advance` are synchronous and take 15 to 30 seconds at full scale.
 - Patients with several therapies get one recommendation per cycle, for the highest-risk therapy.
@@ -210,13 +244,21 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 4. **Hidden traits live only in `sim_latent`** and are read only by `datagen` and `engagement/simulator.py`. A test enforces that `nba`, `features`, `scoring`, `audit` and `pipeline.py` do not reference it.
 5. **Point-in-time features:** training rows and live scoring share the same code in `features/engagement.py`.
 6. **Out-of-scope returns 404**, so ids cannot be probed; compliance sees gate outcomes without identities.
-7. **Only compliance approves content** (separation of duties); admin cannot.
+7. **Only compliance approves content** (separation of duties); admin cannot. Confirmed again by the user during the auth refactor, despite "admin = full access".
 8. **Vite SPA served by FastAPI** rather than Next.js, to keep one deployable unit for a laptop, a container or Databricks Apps.
 9. **Patient adherence is the lead story**; HCP engagement stays in scope as the second audience.
 10. **Fair comparison on the dashboard:** engine versus baseline is shown only for touches made while the patient was already in a gap, because the engine targets harder cases.
 11. **One recommendation per target per cycle**; older unreviewed ones are superseded.
 12. Simulator and seeded history must keep the same crediting rule for prompted fills, or engine-versus-baseline numbers become misleading.
+13. **Authorize by permission, never by role name.** Role names appear only in `core/permissions.py`, the sign-up role list (`api/auth.py` `ROLE_INFO`) and seed data. A test enforces this for routers and `rbac.py`.
+14. **Assignments are separate from RBAC** and never change role or permissions. There is no role-change endpoint.
+15. **Accounts stay server-side** (hashed passwords in the database). The browser holds only a session token, through `session.ts`.
+16. **OTP is email only**; SMS deferred until the user asks. Never claim an email was sent when it was not.
+17. **Seeded demo accounts are kept for now**; the user may ask to remove them (`NBA_SEED_DEMO_ACCOUNTS=false`).
+18. **Registered accounts survive a demo reset**; synthetic data and demo accounts are rebuilt.
 
 ## Next Recommended Task
 
-Add Playwright end-to-end tests that drive the six scenarios in `docs/demo-script.md` against a freshly seeded database. It is the main unfinished item from the approved plan and protects the demo against regressions before any further feature work. After that: choose the LLM provider and run it live, then the first hosted deployment.
+1. Put SMTP settings in `.env` (the user does this; see `.env.example`) and run one live sign-up to confirm real email delivery of the verification code. It is the only part of the auth refactor not exercised end to end.
+2. Add Playwright end-to-end tests driving the flows in `docs/demo-script.md` (sign-up → code → dashboard, the six NBA scenarios, access-denied cases) against a freshly seeded database. Still the main unfinished item from the original plan.
+3. Then: choose the LLM provider and run it live; first hosted deployment (set `NBA_JWT_SECRET`, change admin credentials, `NBA_SEED_DEMO_ACCOUNTS=false`, `NBA_DEMO_MODE=false`).

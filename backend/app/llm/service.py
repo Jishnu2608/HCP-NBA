@@ -44,7 +44,7 @@ def build_request(db: Session, nba: Nba) -> DraftRequest:
         content_title=content.title,
         content_body=content.body,
         first_name=person.first_name,
-        last_name=person.last_name,
+        last_name=person.last_name or person.first_name,
         drug_name=drug,
         specialty=specialty,
         reasons=[r["text"] for r in nba.reason_codes],

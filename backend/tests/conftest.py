@@ -10,6 +10,30 @@ from app.features.population import load_population
 from app.main import app
 from app.scoring import propensity
 
+ADMIN_LOGIN = ("admin@admin.com", "<NBA_ADMIN_PASSWORD>")
+DEMO_PASSWORD = "<NBA_DEMO_PASSWORD>"
+
+
+def sign_in(client, username: str) -> str:
+    """Session token for a seeded account, obtained through the real email + password login.
+
+    Tokens are cached on the client so a test module signs each account in once.
+    """
+    cache = client.__dict__.setdefault("_tokens", {})
+    if username not in cache:
+        email, password = (
+            ADMIN_LOGIN if username == "admin" else (f"{username}@nba.demo", DEMO_PASSWORD)
+        )
+        response = client.post("/api/auth/login", data={"username": email, "password": password})
+        assert response.status_code == 200, response.text
+        cache[username] = response.json()["access_token"]
+    return cache[username]
+
+
+def auth(client, username: str) -> dict:
+    return {"Authorization": f"Bearer {sign_in(client, username)}"}
+
+
 MEDIUM = GenConfig(seed=11, n_patients=900, n_hcps=90, n_reps=6, n_care_managers=3)
 
 

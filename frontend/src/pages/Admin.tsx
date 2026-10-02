@@ -3,6 +3,7 @@ import { FastForward, Play, RotateCcw, Send } from "lucide-react";
 import { useState } from "react";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
+import { useAuth } from "../auth";
 import { Button, Card, ErrorNote, Loading, PageHeader, Table, fmtDate, fmtDateTime, titleCase } from "../ui";
 
 const CONFIG_HELP: Record<string, string> = {
@@ -61,6 +62,7 @@ function ConfigRow({ name, entry }: { name: string; entry: Json }) {
 
 export default function Admin() {
   const client = useQueryClient();
+  const { adopt } = useAuth();
   const config = useQuery({ queryKey: ["config"], queryFn: () => api("/admin/config") });
   const cycles = useQuery({ queryKey: ["cycles"], queryFn: () => api<Json[]>("/admin/cycles") });
   const [result, setResult] = useState<Json | null>(null);
@@ -68,7 +70,9 @@ export default function Admin() {
   const run = useMutation({
     mutationFn: (fn: () => Promise<Json>) => fn(),
     onSuccess: (data) => {
-      setResult(data);
+      const { access_token, user, ...shown } = data;
+      if (access_token) adopt({ access_token, user });
+      setResult(shown);
       setConfirmReset(false);
       void client.invalidateQueries();
     },
@@ -116,8 +120,8 @@ export default function Admin() {
         </Card>
         <Card title="Reset the demo">
           <p className="mb-3 text-sm text-stone-600">
-            Deletes everything and rebuilds the seeded dataset at its starting date. Takes about half a
-            minute.
+            Rebuilds the synthetic dataset at its starting date. Registered accounts and their
+            assignments are kept. Takes about half a minute.
           </p>
           {confirmReset ? (
             <div className="flex gap-2">

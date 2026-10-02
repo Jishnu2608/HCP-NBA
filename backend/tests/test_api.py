@@ -1,13 +1,12 @@
 """API behaviour, with the emphasis on who is allowed to see and do what."""
 
 import pytest
-from conftest import new_session
+from conftest import new_session, sign_in
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import cycle
 from app.core.db import get_db
-from app.core.security import create_token, decode_token
 from app.datagen.generate import GenConfig, generate
 from app.main import app
 from app.models import AuditLog, CareManagerPatient, Content, Nba, RepHcp, User
@@ -33,10 +32,7 @@ def env():
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
     client = TestClient(app)
-    tokens = {
-        role: client.post("/api/auth/demo-login", json={"username": name}).json()["access_token"]
-        for role, name in PERSONAS.items()
-    }
+    tokens = {role: sign_in(client, name) for role, name in PERSONAS.items()}
     yield client, db, tokens
     app.dependency_overrides.clear()
     db.close()
@@ -59,35 +55,38 @@ def open_nba(db, target_type, target_id=None, status=NbaStatus.READY_FOR_REVIEW)
 
 def test_login_with_password_and_reject_bad_credentials(env):
     client, *_ = env
-    ok = client.post("/api/auth/login", data={"username": "cm01", "password": "<NBA_DEMO_PASSWORD>"})
-    assert ok.status_code == 200 and ok.json()["user"]["role"] == "care_manager"
-    bad = client.post("/api/auth/login", data={"username": "cm01", "password": "wrong"})
-    assert bad.status_code == 401
-    assert (
-        client.post("/api/auth/login", data={"username": "nobody", "password": "<NBA_DEMO_PASSWORD>"}).status_code
-        == 401
-    )
+    ok = client.post("/api/auth/login", data={"username": "cm01@nba.demo", "password": "<NBA_DEMO_PASSWORD>"})
+    assert ok.status_code == 200
+    assert ok.json()["user"]["role"] == "care_manager" and ok.json()["user"]["home"] == "/queue"
+    bad = client.post("/api/auth/login", data={"username": "cm01@nba.demo", "password": "wrong"})
+    unknown = client.post("/api/auth/login", data={"username": "nobody@nba.demo", "password": "x"})
+    # Same answer for a wrong password and an unknown email: nothing reveals which it was.
+    assert bad.status_code == unknown.status_code == 401
+    assert bad.json() == unknown.json()
+    assert bad.json()["detail"]["code"] == "invalid_credentials"
 
 
 def test_requests_without_a_valid_token_are_refused(env):
     client, *_ = env
     assert client.get("/api/nba").status_code == 401
     assert client.get("/api/nba", headers={"Authorization": "Bearer nonsense"}).status_code == 401
-    forged = create_token(1, "admin")[:-3] + "abc"
-    assert decode_token(forged) is None
+    forged = env[2]["admin"][:-3] + "abc"
     assert client.get("/api/nba", headers={"Authorization": f"Bearer {forged}"}).status_code == 401
 
 
-def test_personas_cover_every_role(env):
+def test_persona_picker_endpoints_are_gone(env):
     client, *_ = env
-    roles = {p["role"] for p in client.get("/api/auth/personas").json()}
-    assert roles == {"admin", "compliance", "medical_rep", "care_manager", "hcp", "patient"}
+    assert client.get("/api/auth/personas").status_code in (404, 405)
+    assert client.post("/api/auth/demo-login", json={"username": "admin"}).status_code in (404, 405)
 
 
 # --- Role by endpoint matrix -----------------------------------------------------
 
 ALLOWED = {
-    ("GET", "/api/nba"): {"admin", "compliance", "rep", "cm", "hcp", "patient"},
+    ("GET", "/api/nba"): {"admin", "compliance", "rep", "cm"},
+    ("GET", "/api/admin/users"): {"admin"},
+    ("GET", "/api/analytics/overview"): {"admin", "compliance"},
+    ("GET", "/api/clock"): {"admin", "compliance", "rep", "cm", "hcp", "patient"},
     ("GET", "/api/patients"): {"admin", "cm"},
     ("GET", "/api/patients/PAT_00001"): {"admin", "cm"},
     ("GET", "/api/hcps"): {"admin", "rep"},
@@ -153,8 +152,8 @@ def test_out_of_scope_records_look_missing(env):
         == 404
     )
     for role in ("hcp", "patient"):
-        assert call(env, role, "GET", "/api/nba").json()["items"] == []
-        assert call(env, role, "GET", f"/api/nba/{patient_nba.id}").status_code == 404
+        assert call(env, role, "GET", "/api/nba").status_code == 403
+        assert call(env, role, "GET", f"/api/nba/{patient_nba.id}").status_code == 403
 
 
 def test_compliance_sees_gate_outcomes_but_not_identities_and_cannot_review(env):
@@ -219,7 +218,7 @@ def test_hcp_sees_patient_adherence_only_with_sharing_consent(env):
     }
 
     # PAT_00002 is treated by HCP_0001 but never consented to sharing.
-    cardiologist = client.post("/api/auth/demo-login", json={"username": "hcp0001"}).json()
+    cardiologist = {"access_token": sign_in(client, "hcp0001")}
     seen = client.get(
         "/api/me/patients", headers={"Authorization": f"Bearer {cardiologist['access_token']}"}
     ).json()
@@ -298,7 +297,7 @@ def test_approval_rechecks_consent_withdrawn_after_generation(env):
     nba = open_nba(db, "PATIENT", "PAT_00005")
     assert nba is not None
     client, _, tokens = env
-    rosa = client.post("/api/auth/demo-login", json={"username": "pat00005"}).json()["access_token"]
+    rosa = sign_in(client, "pat00005")
     off = client.put(
         f"/api/me/consents/outreach/{nba.channel}",
         json={"granted": False},

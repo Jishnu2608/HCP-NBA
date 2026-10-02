@@ -13,10 +13,11 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.api import serializers as out
-from app.api.deps import require_roles
+from app.api.deps import require_permission
 from app.api.people import consent_out
 from app.core import clock, rbac
 from app.core.db import get_db
+from app.core.permissions import Permission
 from app.engagement import delivery, simulator
 from app.models import (
     Consent,
@@ -29,12 +30,38 @@ from app.models import (
     PatientTherapy,
     User,
 )
-from app.models.enums import Channel, ConsentPurpose, Outcome, Role, TargetType
+from app.models.enums import Channel, ConsentPurpose, Outcome, TargetType
 
 router = APIRouter(prefix="/api/me", tags=["portal"])
 
-patient_only = require_roles(Role.PATIENT)
-hcp_only = require_roles(Role.HCP)
+profile_readers = require_permission(Permission.SELF_PROFILE_READ)
+consent_managers = require_permission(Permission.SELF_CONSENT_MANAGE)
+panel_readers = require_permission(Permission.SELF_PATIENTS_READ)
+portal_users = require_permission(Permission.SELF_INBOX)
+
+
+def no_assignment() -> HTTPException:
+    return HTTPException(
+        status.HTTP_409_CONFLICT,
+        {
+            "code": "no_assignment",
+            "message": "No record is linked to this account yet. Ask an administrator.",
+        },
+    )
+
+
+def own_patient_id(user: User) -> str:
+    if user.patient_id is None:
+        raise no_assignment()
+    return user.patient_id
+
+
+def own_hcp_id(user: User) -> str:
+    if user.hcp_id is None:
+        raise no_assignment()
+    return user.hcp_id
+
+
 OUTREACH_CHANNELS = (Channel.SMS, Channel.EMAIL, Channel.PORTAL, Channel.PHONE)
 
 
@@ -43,11 +70,11 @@ class ConsentChange(BaseModel):
 
 
 @router.get("/profile")
-def my_profile(
-    user: User = Depends(require_roles(Role.PATIENT, Role.HCP)), db: Session = Depends(get_db)
-) -> dict:
+def my_profile(user: User = Depends(profile_readers), db: Session = Depends(get_db)) -> dict:
     today = clock.get_today(db)
-    if user.role == Role.HCP:
+    if user.hcp_id is None and user.patient_id is None:
+        raise no_assignment()
+    if user.hcp_id is not None:
         h = db.get(Hcp, user.hcp_id)
         # Commercial fields (segment, value score, prescribing volume) are not shown to the HCP.
         return {
@@ -99,9 +126,11 @@ def _current_consents(db: Session, patient_id: str, today) -> dict[tuple, Consen
 
 
 @router.get("/consents")
-def my_consents(user: User = Depends(patient_only), db: Session = Depends(get_db)) -> list[dict]:
+def my_consents(
+    user: User = Depends(consent_managers), db: Session = Depends(get_db)
+) -> list[dict]:
     today = clock.get_today(db)
-    current = _current_consents(db, user.patient_id, today)
+    current = _current_consents(db, own_patient_id(user), today)
     keys = [(ConsentPurpose.OUTREACH, ch) for ch in OUTREACH_CHANNELS]
     keys.append((ConsentPurpose.PROVIDER_SHARING, None))
     return [
@@ -114,7 +143,7 @@ def my_consents(user: User = Depends(patient_only), db: Session = Depends(get_db
 
 def _change_consent(db: Session, user: User, purpose: str, channel: str | None, granted: bool):
     today = clock.get_today(db)
-    existing = _current_consents(db, user.patient_id, today).get((purpose, channel))
+    existing = _current_consents(db, own_patient_id(user), today).get((purpose, channel))
     if existing and existing.granted == granted:
         return consent_out(existing, today)
     # Consent history is kept: close the old record and open a new one from today.
@@ -150,7 +179,7 @@ def _change_consent(db: Session, user: User, purpose: str, channel: str | None, 
 def set_outreach_consent(
     channel: str,
     body: ConsentChange,
-    user: User = Depends(patient_only),
+    user: User = Depends(consent_managers),
     db: Session = Depends(get_db),
 ) -> dict:
     if channel not in OUTREACH_CHANNELS:
@@ -160,17 +189,17 @@ def set_outreach_consent(
 
 @router.put("/consents/provider-sharing")
 def set_sharing_consent(
-    body: ConsentChange, user: User = Depends(patient_only), db: Session = Depends(get_db)
+    body: ConsentChange, user: User = Depends(consent_managers), db: Session = Depends(get_db)
 ) -> dict:
     return _change_consent(db, user, ConsentPurpose.PROVIDER_SHARING, None, body.granted)
 
 
 @router.get("/patients")
-def my_patients(user: User = Depends(hcp_only), db: Session = Depends(get_db)) -> list[dict]:
+def my_patients(user: User = Depends(panel_readers), db: Session = Depends(get_db)) -> list[dict]:
     """Adherence summary for this HCP's patients who consent to sharing with their provider."""
     today = clock.get_today(db)
     result = []
-    for pid in rbac.shared_patient_ids(db, user.hcp_id, today):
+    for pid in rbac.shared_patient_ids(db, own_hcp_id(user), today):
         p = db.get(Patient, pid)
         therapies = db.scalars(
             select(PatientTherapy).where(
@@ -190,7 +219,6 @@ def my_patients(user: User = Depends(hcp_only), db: Session = Depends(get_db)) -
     return result
 
 
-portal_users = require_roles(Role.PATIENT, Role.HCP)
 # Messages a person would actually receive. Calls and visits are not inbox items.
 INBOX_CHANNELS = (Channel.PORTAL, Channel.EMAIL, Channel.SMS)
 
@@ -200,9 +228,10 @@ class InboxResponse(BaseModel):
 
 
 def _me(user: User) -> tuple[str, str]:
-    if user.role == Role.PATIENT:
+    """The single record this account is linked to. Never taken from the request."""
+    if user.patient_id is not None:
         return TargetType.PATIENT, user.patient_id
-    return TargetType.HCP, user.hcp_id
+    return TargetType.HCP, own_hcp_id(user)
 
 
 def _inbox_item(db: Session, i: Interaction) -> dict:
@@ -260,7 +289,7 @@ def respond(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
     when = delivery.now_on(db)
     if body.response == "refill":
-        if user.role != Role.PATIENT or i.therapy_id is None:
+        if target_type != TargetType.PATIENT or i.therapy_id is None:
             raise HTTPException(status.HTTP_409_CONFLICT, "This message has no refill action")
         if i.outcome == Outcome.FILLED:
             raise HTTPException(status.HTTP_409_CONFLICT, "Refill already recorded")

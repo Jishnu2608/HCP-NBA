@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 import pytest
-from conftest import new_session
+from conftest import auth, new_session
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -35,8 +35,7 @@ def env():
 
 def call(env, username, method, path, **kw):
     client, _ = env
-    token = client.post("/api/auth/demo-login", json={"username": username}).json()["access_token"]
-    return client.request(method, path, headers={"Authorization": f"Bearer {token}"}, **kw)
+    return client.request(method, path, headers=auth(client, username), **kw)
 
 
 def ready(db, target_id) -> Nba:
@@ -356,6 +355,11 @@ def test_reset_restores_the_seeded_starting_point(env):
     done = call(env, "admin", "POST", "/api/admin/reset", json={"patients": 60, "hcps": 12})
     assert done.status_code == 200, done.text
     assert done.json()["as_of_date"] == DEFAULT_AS_OF.isoformat()
+    # Every account row was re-created, so earlier tokens are void; the caller gets a new one.
+    env[0].__dict__["_tokens"].clear()
+    fresh = done.json()["access_token"]
+    me = env[0].get("/api/auth/me", headers={"Authorization": f"Bearer {fresh}"})
+    assert me.status_code == 200 and me.json()["role"] == "admin"
     assert len(db.scalars(select(Patient.patient_id)).all()) == 60
     assert db.scalars(select(Interaction).where(Interaction.source == "nba")).all() == []
     assert ready(db, "PAT_00001") is not None

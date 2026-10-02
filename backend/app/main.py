@@ -1,13 +1,33 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.api import analytics, auth, content, governance, me, nba, people, system
+from app.api import analytics, auth, content, governance, me, nba, people, system, users
+from app.auth.service import ensure_system_admin
 from app.core.config import REPO_ROOT, get_settings
+from app.core.db import SessionLocal
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Make sure the fixed administrator account exists before the first request."""
+    try:
+        with SessionLocal() as db:
+            ensure_system_admin(db)
+            db.commit()
+    except SQLAlchemyError:
+        logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title=settings.app_name,
     version="0.1.0",
     description="Explainable, compliance-gated next-best-action engine "
@@ -16,7 +36,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-for module in (system, auth, nba, people, content, governance, me, analytics):
+for module in (system, auth, users, nba, people, content, governance, me, analytics):
     app.include_router(module.router)
 
 # One deployable unit: when the frontend has been built, this process serves it too.

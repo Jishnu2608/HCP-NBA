@@ -9,20 +9,26 @@ from sqlalchemy.orm import Session
 
 from app import audit, cycle
 from app.api import serializers as out
-from app.api.deps import require_roles
+from app.api.deps import get_current_user, require_permission
+from app.auth.repository import SqlUserRepository
+from app.auth.service import account_out
+from app.auth.sessions import sessions
 from app.core import clock
 from app.core.db import get_db
 from app.core.engine_config import DEFAULTS, get_config, set_config
+from app.core.permissions import Permission
 from app.datagen.generate import GenConfig, generate
 from app.engagement import delivery, simulator
 from app.models import AuditLog, EngineCycle, ModelVersion, Nba, User
-from app.models.enums import NbaStatus, Role
+from app.models.enums import NbaStatus
 from app.models.tables import utcnow
 
 router = APIRouter(prefix="/api", tags=["governance"])
 
-auditors = require_roles(Role.ADMIN, Role.COMPLIANCE)
-admin = require_roles(Role.ADMIN)
+auditors = require_permission(Permission.AUDIT_READ)
+configurer = require_permission(Permission.CONFIG_MANAGE)
+admin = require_permission(Permission.ENGINE_OPERATE)
+model_readers = require_permission(Permission.MODELS_READ)
 
 
 class AdvanceBody(BaseModel):
@@ -71,7 +77,7 @@ def audit_log(
 
 
 @router.get("/admin/config")
-def read_config(_: User = Depends(admin), db: Session = Depends(get_db)) -> dict:
+def read_config(_: User = Depends(configurer), db: Session = Depends(get_db)) -> dict:
     return {
         key: {"value": get_config(db, key), "default": default} for key, default in DEFAULTS.items()
     }
@@ -79,7 +85,7 @@ def read_config(_: User = Depends(admin), db: Session = Depends(get_db)) -> dict
 
 @router.put("/admin/config/{key}")
 def write_config(
-    key: str, body: ConfigValue, user: User = Depends(admin), db: Session = Depends(get_db)
+    key: str, body: ConfigValue, user: User = Depends(configurer), db: Session = Depends(get_db)
 ) -> dict:
     if key not in DEFAULTS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown setting")
@@ -140,7 +146,7 @@ def list_cycles(_: User = Depends(admin), db: Session = Depends(get_db)) -> list
 
 
 @router.get("/admin/models")
-def list_models(_: User = Depends(auditors), db: Session = Depends(get_db)) -> list[dict]:
+def list_models(_: User = Depends(model_readers), db: Session = Depends(get_db)) -> list[dict]:
     rows = db.scalars(select(ModelVersion).order_by(ModelVersion.name, ModelVersion.version.desc()))
     return [
         {
@@ -158,7 +164,7 @@ def list_models(_: User = Depends(auditors), db: Session = Depends(get_db)) -> l
 
 
 @router.get("/clock")
-def read_clock(_: User = Depends(require_roles(*Role)), db: Session = Depends(get_db)) -> dict:
+def read_clock(_: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     return {"as_of_date": clock.get_today(db)}
 
 
@@ -187,6 +193,7 @@ def reset_demo(
 ) -> dict:
     """Throw everything away and rebuild the seeded demo dataset from scratch."""
     body = body or ResetBody()
+    actor_email = user.email
     generate(db, GenConfig(n_patients=body.patients, n_hcps=body.hcps))
     result = cycle.run(db, retrain=True)
     audit.record(
@@ -199,10 +206,14 @@ def reset_demo(
         detail={"patients": body.patients, "hcps": body.hcps},
     )
     db.commit()
+    # The rebuild re-creates every account row, so the caller's session is re-issued.
+    me = SqlUserRepository(db).get_by_email(actor_email)
     return {
         "as_of_date": result.cycle.as_of_date,
         "cycle_id": result.cycle.id,
         "stats": result.stats,
+        "access_token": sessions.issue(me),
+        "user": account_out(me),
     }
 
 

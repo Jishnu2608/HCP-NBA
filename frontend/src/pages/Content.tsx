@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, post } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
+import { P } from "../permissions";
 import {
   Badge,
   Button,
@@ -24,10 +25,10 @@ const VIEWS = [
 ];
 
 export default function ContentLibrary() {
-  const { user } = useAuth();
+  const { can } = useAuth();
   const client = useQueryClient();
-  const canReview = user!.role === "compliance";
-  const governance = canReview || user!.role === "admin";
+  const canReview = can(P.CONTENT_APPROVE);
+  const governance = can(P.CONTENT_READ_ALL);
   const [view, setView] = useState(governance ? "attention" : "all");
   const [open, setOpen] = useState<string | null>(null);
   const [comment, setComment] = useState("");

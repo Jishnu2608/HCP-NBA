@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
+import { P } from "../permissions";
 import {
   Badge,
   Button,
@@ -94,7 +95,7 @@ export function MyMedications() {
 }
 
 export function MyInbox() {
-  const { user } = useAuth();
+  const { can } = useAuth();
   const client = useQueryClient();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: () => api<Json[]>("/me/inbox") });
   const respond = useMutation({
@@ -105,7 +106,7 @@ export function MyInbox() {
       void client.invalidateQueries({ queryKey: ["me"] });
     },
   });
-  const isPatient = user!.role === "patient";
+  const isPatient = can(P.SELF_CONSENT_MANAGE);
   if (inbox.isLoading) return <Loading />;
   if (inbox.error) return <ErrorNote error={inbox.error} />;
   return (

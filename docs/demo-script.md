@@ -1,16 +1,18 @@
 # Demo script
 
-About 12 minutes. Start from the seeded state (Engine page, "Reset to seeded data", or `python -m app.datagen` then `python -m app.cycle --retrain`). Demo date starts at 30 September 2026.
+About 14 minutes. Start from the seeded state (Engine page, "Reset to seeded data", or `python -m app.datagen` then `python -m app.cycle --retrain`). Demo date starts at 30 September 2026.
 
-Tip: each browser tab holds its own persona. Keep two tabs open (for example care manager and patient) to show both sides of one interaction.
+Every step signs in with a real account: email and password, no role picker. Demo accounts share the password `<NBA_DEMO_PASSWORD>`; the administrator is `admin@admin.com` / `<NBA_ADMIN_PASSWORD>`.
+
+Tip: each browser tab holds its own session. Keep two tabs open (for example care manager and patient) to show both sides of one interaction.
 
 ## 1. The problem and the idea (1 minute)
 
-Login page. One engine, two audiences, six roles. Everything is synthetic.
+Landing page. One engine, two audiences, six roles. Everything is synthetic. The account you sign in with decides what you see.
 
 ## 2. Patient adherence: the lead story (4 minutes)
 
-Persona: **Care Manager 01**
+Log in: `cm01@nba.demo` (Care Manager)
 
 1. *Adherence queue.* Patients who need outreach now, ranked. Point at the counts: ready, blocked.
 2. Open *My patients*, search **Margaret Doyle** (PAT_00001), open the profile.
@@ -23,12 +25,12 @@ Persona: **Care Manager 01**
    - Edit the draft. Try typing a link or the word "cure": the same wording checks that apply to the model apply to a person.
    - **Approve and send.** Audit trail now shows generated, approved, sent.
 
-Persona (second tab): **Margaret Doyle**
+Log in (second tab): `pat00001@nba.demo` (Margaret Doyle, Patient)
 
 4. *Messages*: the text is there. Press **I have refilled**.
 5. *My medications*: gap closed.
 
-Contrast patients, all assigned to Care Manager 01:
+Contrast patients, all assigned to `cm01`:
 
 | Patient | What it shows |
 |---|---|
@@ -40,31 +42,31 @@ Contrast patients, all assigned to Care Manager 01:
 
 ## 3. Consent is a hard gate (1 minute)
 
-Persona: **Rosa Delgado**. *Consent & preferences*: switch off phone contact.
+Log in: `pat00005@nba.demo` (Rosa Delgado). *Consent & preferences*: switch off phone contact.
 
-Persona: **Care Manager 01**. Open Rosa's recommendation and approve. It is refused and becomes blocked, because consent is re-checked at approval and again at send.
+Back as `cm01@nba.demo`: open Rosa's recommendation and approve. It is refused and becomes blocked, because consent is re-checked at approval and again at send.
 
 ## 4. HCP engagement and MLR (3 minutes)
 
-Persona: **Medical Rep 01**
+Log in: `rep01@nba.demo` (Medical Representative)
 
 1. *HCP queue.* Open **Dr. Elena Marsh** (HCP_0001): cardiologist, high value, answers email, declines rep visits. Recommendation: an approved study summary by email. Approve and send.
 2. Open **Dr. Rajan Iyer** (HCP_0002): endocrinologist who engaged with the diabetes outcomes summary. The recommendation carries a warning: a better option was held back because the updated summary is still pending MLR.
 
-Persona: **Priya Nair (MLR Reviewer)**
+Log in: `compliance1@nba.demo` (Compliance / MLR Reviewer)
 
 3. *Content & MLR* → *Needs attention*. The pending summary shows how many recommendations are waiting on it. Review and **approve**.
 4. *Gate outcomes*: blocked and held-back recommendations with identities hidden. Compliance sees outcomes, not people.
 
-Persona: **Alex Morgan (Admin)** → *Engine* → **Run cycle now**.
+Log in: `admin@admin.com` (Administrator) → *Engine* → **Run cycle now**.
 
-Persona: **Medical Rep 01**: Dr. Iyer's recommendation is now the newly approved summary.
+As `rep01@nba.demo`: Dr. Iyer's recommendation is now the newly approved summary.
 
-Persona: **Dr. Elena Marsh**: *Inbox* shows the email; *My patients* shows adherence only for patients who consented to sharing.
+Log in: `hcp0001@nba.demo` (Dr. Elena Marsh): *Inbox* shows the email; *My patients* shows adherence only for patients who consented to sharing.
 
 ## 5. The loop closes (2 minutes)
 
-Persona: **Alex Morgan (Admin)**
+Log in: `admin@admin.com`
 
 1. *Engine* → **Send top 400** (a team working its queues), then **Advance 7 days**.
 2. *Dashboard*:
@@ -78,9 +80,19 @@ Persona: **Alex Morgan (Admin)**
 
 *Under the hood*: the loop, the design rules, model holdout metrics against a no-model baseline and a boosted-tree challenger, live API reference.
 
+## 7. Accounts and access (2 minutes)
+
+1. Sign out. *Sign up* as a new **Care Manager** with any email. The verify page shows the code in a development box (or emails it, if SMTP is configured). Enter it.
+2. You land on the adherence queue with a panel of 30 patients. No role was chosen after signing in; it came from the account.
+3. Type `/admin` or `/hcps` in the address bar: Access Denied. The API refuses the data too.
+4. Log in as `admin@admin.com` → *Users & assignments*. Open the new account: role and permissions are shown but locked; assignments and status are editable. Remove some patients and save, or disable the account.
+5. Note what the administrator cannot do: approve content. Only Compliance can.
+
 ## Role access proof
 
-- Medical Rep 02 cannot open HCP_0001 (returns "not found"); no rep can open any patient.
+- `rep02@nba.demo` cannot open HCP_0001 (returns "not found"); no rep can open any patient.
 - A patient sees only their own record, without internal risk scores.
 - An HCP sees their own profile without commercial fields (segment, value score).
-- Compliance cannot approve a recommendation; only compliance can approve content.
+- Compliance cannot approve a recommendation; only Compliance can approve content; the administrator cannot.
+- Changing an account's assignments never changes its role or permissions.
+- A signed-out or disabled account's token stops working immediately.

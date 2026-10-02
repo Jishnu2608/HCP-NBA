@@ -1,110 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  Activity,
-  BarChart3,
-  CalendarDays,
-  ClipboardList,
-  Cpu,
-  FileCheck2,
-  Inbox,
-  LogOut,
-  Pill,
-  ScrollText,
-  Settings2,
-  ShieldCheck,
-  Stethoscope,
-  UserRound,
-  Users,
-} from "lucide-react";
+import { Activity, CalendarDays, LogOut } from "lucide-react";
 import type { ReactNode } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import { ROLE_LABEL, useAuth } from "./auth";
-import type { Role } from "./auth";
-import Admin from "./pages/Admin";
-import Audit from "./pages/Audit";
-import ContentLibrary from "./pages/Content";
-import Dashboard from "./pages/Dashboard";
-import { HcpList, HcpProfile } from "./pages/Hcps";
+import AccessDenied from "./pages/AccessDenied";
+import Landing from "./pages/Landing";
 import Login from "./pages/Login";
-import NbaDetail from "./pages/NbaDetail";
-import { PatientList, PatientProfile } from "./pages/Patients";
-import { MyConsents, MyInbox, MyMedications, MyPatients, MyProfile } from "./pages/Portal";
-import Queue from "./pages/Queue";
-import UnderTheHood from "./pages/UnderTheHood";
+import Signup from "./pages/Signup";
+import VerifyOtp from "./pages/VerifyOtp";
+import type { Permission } from "./permissions";
+import { ROUTES } from "./routes";
 import { Loading, cx, fmtDate } from "./ui";
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: ReactNode;
-  element: ReactNode;
-}
-
-const icon = (Icon: typeof Activity) => <Icon className="h-4 w-4" />;
-
-// Navigation is role-driven, and mirrors what the API will actually allow.
-const NAV: Record<Role, NavItem[]> = {
-  care_manager: [
-    { to: "/queue", label: "Adherence queue", icon: icon(ClipboardList), element: <Queue /> },
-    { to: "/patients", label: "My patients", icon: icon(Users), element: <PatientList /> },
-    { to: "/content", label: "Approved content", icon: icon(FileCheck2), element: <ContentLibrary /> },
-  ],
-  medical_rep: [
-    { to: "/queue", label: "HCP queue", icon: icon(ClipboardList), element: <Queue /> },
-    { to: "/hcps", label: "My HCPs", icon: icon(Stethoscope), element: <HcpList /> },
-    { to: "/content", label: "Approved content", icon: icon(FileCheck2), element: <ContentLibrary /> },
-  ],
-  compliance: [
-    { to: "/content", label: "Content & MLR", icon: icon(FileCheck2), element: <ContentLibrary /> },
-    { to: "/queue", label: "Gate outcomes", icon: icon(ShieldCheck), element: <Queue /> },
-    { to: "/audit", label: "Audit log", icon: icon(ScrollText), element: <Audit /> },
-    { to: "/dashboard", label: "Metrics", icon: icon(BarChart3), element: <Dashboard /> },
-    { to: "/under-the-hood", label: "Under the hood", icon: icon(Cpu), element: <UnderTheHood /> },
-  ],
-  hcp: [
-    { to: "/inbox", label: "Inbox", icon: icon(Inbox), element: <MyInbox /> },
-    { to: "/my-patients", label: "My patients", icon: icon(Users), element: <MyPatients /> },
-    { to: "/profile", label: "Profile", icon: icon(UserRound), element: <MyProfile /> },
-  ],
-  patient: [
-    { to: "/medications", label: "My medications", icon: icon(Pill), element: <MyMedications /> },
-    { to: "/inbox", label: "Messages", icon: icon(Inbox), element: <MyInbox /> },
-    { to: "/consent", label: "Consent & preferences", icon: icon(ShieldCheck), element: <MyConsents /> },
-  ],
-  admin: [
-    { to: "/dashboard", label: "Dashboard", icon: icon(BarChart3), element: <Dashboard /> },
-    { to: "/queue", label: "All recommendations", icon: icon(ClipboardList), element: <Queue /> },
-    { to: "/patients", label: "Patients", icon: icon(Users), element: <PatientList /> },
-    { to: "/hcps", label: "HCPs", icon: icon(Stethoscope), element: <HcpList /> },
-    { to: "/content", label: "Content", icon: icon(FileCheck2), element: <ContentLibrary /> },
-    { to: "/audit", label: "Audit log", icon: icon(ScrollText), element: <Audit /> },
-    { to: "/admin", label: "Engine", icon: icon(Settings2), element: <Admin /> },
-    { to: "/under-the-hood", label: "Under the hood", icon: icon(Cpu), element: <UnderTheHood /> },
-  ],
-};
-
-const DETAIL_ROUTES: Partial<Record<Role, Array<{ path: string; element: ReactNode }>>> = {
-  care_manager: [
-    { path: "/nba/:id", element: <NbaDetail /> },
-    { path: "/patients/:id", element: <PatientProfile /> },
-  ],
-  medical_rep: [
-    { path: "/nba/:id", element: <NbaDetail /> },
-    { path: "/hcps/:id", element: <HcpProfile /> },
-  ],
-  compliance: [{ path: "/nba/:id", element: <NbaDetail /> }],
-  admin: [
-    { path: "/nba/:id", element: <NbaDetail /> },
-    { path: "/patients/:id", element: <PatientProfile /> },
-    { path: "/hcps/:id", element: <HcpProfile /> },
-  ],
-};
+const PUBLIC_PATHS = ["/", "/login", "/signup", "/signup/verify"];
 
 function Shell({ children }: { children: ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, can, logout } = useAuth();
+  const navigate = useNavigate();
   const clock = useQuery({ queryKey: ["clock"], queryFn: () => api("/clock") });
   if (!user) return null;
+  const nav = ROUTES.filter((r) => r.label && can(...r.anyOf));
   return (
     <div className="flex h-full">
       <aside className="flex w-60 shrink-0 flex-col border-r border-stone-200 bg-white">
@@ -117,11 +33,11 @@ function Shell({ children }: { children: ReactNode }) {
             <div className="text-[11px] leading-tight text-stone-500">Healthcare engagement</div>
           </div>
         </div>
-        <nav className="flex-1 space-y-0.5 px-3 py-2">
-          {NAV[user.role].map((item) => (
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
+          {nav.map((item) => (
             <NavLink
-              key={item.to}
-              to={item.to}
+              key={item.path}
+              to={item.path}
               className={({ isActive }) =>
                 cx(
                   "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium",
@@ -130,27 +46,35 @@ function Shell({ children }: { children: ReactNode }) {
               }
             >
               {item.icon}
-              {item.label}
+              {item.label!(can)}
             </NavLink>
           ))}
         </nav>
         <div className="border-t border-stone-200 p-3">
-          <div className="px-2 pb-2">
-            <div className="truncate text-sm font-medium text-stone-900">{user.display_name}</div>
-            <div className="text-xs text-stone-500">{ROLE_LABEL[user.role]}</div>
+          <div className="rounded-lg bg-stone-50 px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+              Signed in as
+            </div>
+            <div className="mt-0.5 truncate text-sm font-semibold text-stone-900">{user.name}</div>
+            <div className="text-xs font-medium text-brand-700">{ROLE_LABEL[user.role]}</div>
+            <div className="mt-0.5 truncate text-xs text-stone-500">{user.email}</div>
           </div>
           <button
-            onClick={logout}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
+            onClick={() =>
+              // End on the landing page, so the next person to sign in is not sent to
+              // whatever page this account had open.
+              void logout().then(() => navigate("/", { replace: true }))
+            }
+            className="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
           >
-            <LogOut className="h-4 w-4" /> Switch persona
+            <LogOut className="h-4 w-4" /> Sign out
           </button>
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-stone-200 bg-white px-6 py-2.5">
           <div className="text-xs text-stone-500">
-            Synthetic demonstration data. No real patient or HCP information.
+            You see what your role and assignments allow. Synthetic demonstration data only.
           </div>
           <div className="flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700">
             <CalendarDays className="h-3.5 w-3.5" />
@@ -163,24 +87,43 @@ function Shell({ children }: { children: ReactNode }) {
   );
 }
 
+/** Renders the page only if the signed-in account holds one of the permissions. */
+function Guard({ anyOf, children }: { anyOf: Permission[]; children: ReactNode }) {
+  const { can } = useAuth();
+  return can(...anyOf) ? <>{children}</> : <AccessDenied />;
+}
+
 export default function App() {
   const { user, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <Loading label="Signing in" />;
+  if (loading) return <Loading label="Restoring your session" />;
+
   if (!user) {
-    return location.pathname === "/login" ? <Login /> : <Navigate to="/login" replace />;
+    // Signed out: only the public pages exist. Anything else goes to sign-in, and the
+    // address asked for is remembered so sign-in can return there if the role allows it.
+    return (
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/signup/verify" element={<VerifyOtp />} />
+        <Route path="*" element={<Navigate to="/login" replace state={{ from: location.pathname }} />} />
+      </Routes>
+    );
   }
-  const items = NAV[user.role];
+
   return (
     <Shell>
       <Routes>
-        {items.map((item) => (
-          <Route key={item.to} path={item.to} element={item.element} />
+        {/* Signed in: the public pages lead straight to the account's own dashboard. */}
+        {PUBLIC_PATHS.map((path) => (
+          <Route key={path} path={path} element={<Navigate to={user.home} replace />} />
         ))}
-        {(DETAIL_ROUTES[user.role] ?? []).map((r) => (
-          <Route key={r.path} path={r.path} element={r.element} />
+        {ROUTES.map((r) => (
+          <Route key={r.path} path={r.path} element={<Guard anyOf={r.anyOf}>{r.element}</Guard>} />
         ))}
-        <Route path="*" element={<Navigate to={items[0].to} replace />} />
+        <Route path="/denied" element={<AccessDenied />} />
+        <Route path="*" element={<AccessDenied missing />} />
       </Routes>
     </Shell>
   );

@@ -79,14 +79,41 @@ class User(Base):
     __tablename__ = "user"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    username: Mapped[str] = mapped_column(String(64), unique=True)
+    # Internal handle, used as the actor name in the audit log. Equals the email for sign-ups.
+    username: Mapped[str] = mapped_column(String(254), unique=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True)
     display_name: Mapped[str] = mapped_column(String(128))
     password_hash: Mapped[str] = mapped_column(String(255))
+    # The role decides permissions. It is set at account creation and no endpoint changes it.
     role: Mapped[str] = mapped_column(String(32), index=True)
-    # Set only for the HCP and patient roles: the single record that user may see as "self".
+    # Assignments decide data scope and are independent of the role. For the HCP and
+    # patient roles this is the single record the account may see as "self".
     hcp_id: Mapped[str | None] = mapped_column(ForeignKey("hcp.hcp_id"))
     patient_id: Mapped[str | None] = mapped_column(ForeignKey("patient.patient_id"))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    # system = the fixed admin, seed = demo accounts from the generator, signup = registered.
+    source: Mapped[str] = mapped_column(String(16), default="signup")
+    # Bumped on logout or disable: every token issued before the bump stops working.
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class OtpChallenge(Base):
+    """A one-time code awaiting entry. Holds only a hash, and is deleted once used."""
+
+    __tablename__ = "otp_challenge"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    purpose: Mapped[str] = mapped_column(String(16), default="signup")
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    resend_available_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class RepHcp(Base):

@@ -1,11 +1,13 @@
-"""Row-level access rules. Every data endpoint goes through these; the UI only mirrors them.
+"""Data scope: which rows a user may see, given their permissions and their assignments.
 
-admin         all HCPs, all patients, all recommendations
-compliance    no profiles; recommendations that are blocked or have a withheld option
-medical_rep   assigned HCPs and their recommendations; no patients
-care_manager  assigned patients and their recommendations; no HCPs
-hcp           own profile; adherence summary of attributed patients who consent to sharing
-patient       own record only
+Permissions (core/permissions.py) say what kind of thing a user may do. This module turns
+that into SQL filters using the assignment tables, so scope is enforced in the query and
+the UI only mirrors it.
+
+  *_READ_ALL         every row
+  *_READ_ASSIGNED    rows linked to the user in rep_hcp / care_manager_patient
+  NBA_READ_GATED     blocked or held-back recommendations, identity hidden
+  SELF_*             the single record in user.patient_id / user.hcp_id (see api/me.py)
 """
 
 from datetime import date
@@ -14,20 +16,17 @@ from sqlalchemy import and_, false, or_, select, true
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.permissions import Permission as P
+from app.core.permissions import can, can_any
 from app.models import CareManagerPatient, Consent, Nba, PatientHcp, RepHcp, User
-from app.models.enums import ConsentPurpose, NbaStatus, Role, TargetType
-
-REVIEWER_ROLES = {
-    TargetType.HCP: (Role.ADMIN, Role.MEDICAL_REP),
-    TargetType.PATIENT: (Role.ADMIN, Role.CARE_MANAGER),
-}
+from app.models.enums import ConsentPurpose, NbaStatus, TargetType
 
 
-def _rep_hcps(user: User):
+def assigned_hcp_ids(user: User):
     return select(RepHcp.hcp_id).where(RepHcp.rep_user_id == user.id)
 
 
-def _managed_patients(user: User):
+def assigned_patient_ids(user: User):
     return select(CareManagerPatient.patient_id).where(
         CareManagerPatient.care_manager_user_id == user.id
     )
@@ -35,47 +34,50 @@ def _managed_patients(user: User):
 
 def hcp_filter(user: User, column) -> ColumnElement[bool]:
     """WHERE clause limiting an HCP id column to what the user may see in full."""
-    if user.role == Role.ADMIN:
+    if can(user, P.HCP_READ_ALL):
         return true()
-    if user.role == Role.MEDICAL_REP:
-        return column.in_(_rep_hcps(user))
-    if user.role == Role.HCP:
-        return column == user.hcp_id
+    if can(user, P.HCP_READ_ASSIGNED):
+        return column.in_(assigned_hcp_ids(user))
     return false()
 
 
 def patient_filter(user: User, column) -> ColumnElement[bool]:
     """WHERE clause limiting a patient id column to what the user may see in full."""
-    if user.role == Role.ADMIN:
+    if can(user, P.PATIENT_READ_ALL):
         return true()
-    if user.role == Role.CARE_MANAGER:
-        return column.in_(_managed_patients(user))
-    if user.role == Role.PATIENT:
-        return column == user.patient_id
+    if can(user, P.PATIENT_READ_ASSIGNED):
+        return column.in_(assigned_patient_ids(user))
     return false()
 
 
 def nba_filter(user: User) -> ColumnElement[bool]:
-    if user.role == Role.ADMIN:
+    if can(user, P.NBA_READ_ALL):
         return true()
-    if user.role == Role.COMPLIANCE:
-        return or_(Nba.status == NbaStatus.BLOCKED, Nba.withheld.is_not(None))
-    if user.role == Role.MEDICAL_REP:
-        return and_(Nba.target_type == TargetType.HCP, Nba.target_id.in_(_rep_hcps(user)))
-    if user.role == Role.CARE_MANAGER:
-        return and_(
-            Nba.target_type == TargetType.PATIENT, Nba.target_id.in_(_managed_patients(user))
+    clauses = []
+    if can(user, P.NBA_READ_GATED):
+        clauses.append(or_(Nba.status == NbaStatus.BLOCKED, Nba.withheld.is_not(None)))
+    if can(user, P.NBA_READ_HCP_ASSIGNED):
+        clauses.append(
+            and_(Nba.target_type == TargetType.HCP, Nba.target_id.in_(assigned_hcp_ids(user)))
         )
-    return false()
+    if can(user, P.NBA_READ_PATIENT_ASSIGNED):
+        clauses.append(
+            and_(
+                Nba.target_type == TargetType.PATIENT,
+                Nba.target_id.in_(assigned_patient_ids(user)),
+            )
+        )
+    return or_(*clauses) if clauses else false()
 
 
 def can_review(user: User, nba: Nba) -> bool:
-    return user.role in REVIEWER_ROLES[nba.target_type]
+    needed = P.NBA_REVIEW_HCP if nba.target_type == TargetType.HCP else P.NBA_REVIEW_PATIENT
+    return can(user, needed)
 
 
 def can_see_target_profile(user: User) -> bool:
-    """Compliance sees recommendations and gate results but not the person behind them."""
-    return user.role != Role.COMPLIANCE
+    """Gate-outcome readers see recommendations and gate results, not the person behind them."""
+    return can_any(user, P.NBA_READ_ALL, P.NBA_READ_HCP_ASSIGNED, P.NBA_READ_PATIENT_ASSIGNED)
 
 
 def shared_patient_ids(db: Session, hcp_id: str, day: date) -> list[str]:

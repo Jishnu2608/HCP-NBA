@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.api import serializers as out
-from app.api.deps import get_current_user, not_found
+from app.api.deps import not_found, require_permission
 from app.core import clock, rbac
 from app.core.db import get_db
+from app.core.permissions import Permission
 from app.engagement import delivery
 from app.llm import service as drafting
 from app.llm.base import DraftOutput, MessageVariant
@@ -23,6 +24,15 @@ from app.nba.revalidate import current_failures
 router = APIRouter(prefix="/api/nba", tags=["recommendations"])
 
 OPEN = (NbaStatus.READY_FOR_REVIEW, NbaStatus.APPROVED, NbaStatus.BLOCKED)
+
+# Any recommendation endpoint needs a recommendation-read permission; which rows are
+# visible is then decided by rbac.nba_filter, and acting on one by rbac.can_review.
+readers = require_permission(
+    Permission.NBA_READ_ALL,
+    Permission.NBA_READ_GATED,
+    Permission.NBA_READ_HCP_ASSIGNED,
+    Permission.NBA_READ_PATIENT_ASSIGNED,
+)
 
 
 class ApproveBody(BaseModel):
@@ -53,7 +63,10 @@ def _scoped(db: Session, user: User, nba_id: int) -> Nba:
 def _reviewable(db: Session, user: User, nba_id: int) -> Nba:
     nba = _scoped(db, user, nba_id)
     if not rbac.can_review(user, nba):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "This role cannot review recommendations")
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {"code": "forbidden", "message": "Your account cannot review this recommendation."},
+        )
     return nba
 
 
@@ -71,7 +84,7 @@ def list_recommendations(
     target_type: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(readers),
     db: Session = Depends(get_db),
 ) -> dict:
     """The work queue: recommendations this user may see, highest priority first."""
@@ -99,7 +112,7 @@ def list_recommendations(
 
 @router.get("/{nba_id}")
 def get_recommendation(
-    nba_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    nba_id: int, user: User = Depends(readers), db: Session = Depends(get_db)
 ) -> dict:
     nba = _scoped(db, user, nba_id)
     detail = out.nba_detail(
@@ -113,7 +126,7 @@ def get_recommendation(
 def approve(
     nba_id: int,
     body: ApproveBody,
-    user: User = Depends(get_current_user),
+    user: User = Depends(readers),
     db: Session = Depends(get_db),
 ) -> dict:
     nba = _reviewable(db, user, nba_id)
@@ -167,7 +180,7 @@ def approve(
 def reject(
     nba_id: int,
     body: RejectBody,
-    user: User = Depends(get_current_user),
+    user: User = Depends(readers),
     db: Session = Depends(get_db),
 ) -> dict:
     nba = _reviewable(db, user, nba_id)
@@ -193,7 +206,7 @@ def edit_draft(
     nba_id: int,
     draft_id: int,
     body: DraftEdit,
-    user: User = Depends(get_current_user),
+    user: User = Depends(readers),
     db: Session = Depends(get_db),
 ) -> dict:
     """A reviewer's edit goes through the same wording checks as model output."""
@@ -230,7 +243,7 @@ def edit_draft(
 
 @router.post("/{nba_id}/redraft")
 def redraft(
-    nba_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    nba_id: int, user: User = Depends(readers), db: Session = Depends(get_db)
 ) -> list[dict]:
     """Ask the configured model provider for fresh wording. Falls back to templates on failure."""
     nba = _reviewable(db, user, nba_id)
@@ -244,9 +257,7 @@ def redraft(
 
 
 @router.post("/{nba_id}/send")
-def send(
-    nba_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
-) -> dict:
+def send(nba_id: int, user: User = Depends(readers), db: Session = Depends(get_db)) -> dict:
     """Deliver an approved recommendation. Every gate is checked once more at this moment."""
     nba = _reviewable(db, user, nba_id)
     _require_status(nba, NbaStatus.APPROVED)
@@ -263,7 +274,7 @@ def send(
 def log_outcome(
     nba_id: int,
     body: OutcomeBody,
-    user: User = Depends(get_current_user),
+    user: User = Depends(readers),
     db: Session = Depends(get_db),
 ) -> dict:
     """Staff feedback for human channels: how the call or visit went."""

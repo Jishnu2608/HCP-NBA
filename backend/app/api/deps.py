@@ -2,31 +2,40 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
+from app.auth.sessions import sessions
 from app.core.db import get_db
-from app.core.security import decode_token
+from app.core.permissions import Permission, can_any
 from app.models import User
 
-# The identity seam: swap this dependency for an OIDC/SSO validator in production and
-# nothing downstream changes, because every endpoint only depends on a User row.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    user_id = decode_token(token)
-    user = db.get(User, user_id) if user_id is not None else None
-    if user is None or not user.is_active:
+    """The identity seam. Everything downstream depends only on the returned account, so an
+    enterprise identity provider replaces `sessions.resolve` and nothing else changes."""
+    user = sessions.resolve(db, token)
+    if user is None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
-            "Invalid or expired token",
+            {"code": "not_authenticated", "message": "Sign in to continue."},
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
 
 
-def require_roles(*roles: str):
+def require_permission(*permissions: Permission):
+    """Endpoint guard: the account must hold at least one of the given permissions.
+
+    The role is looked up on the account loaded from the database and mapped through
+    core/permissions.py. Nothing sent by the client takes part in the decision.
+    """
+
     def dependency(user: User = Depends(get_current_user)) -> User:
-        if user.role not in roles:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this role")
+        if not can_any(user, *permissions):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                {"code": "forbidden", "message": "Your account is not permitted to do this."},
+            )
         return user
 
     return dependency
