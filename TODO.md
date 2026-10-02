@@ -50,10 +50,11 @@ Nothing in progress.
 - [ ] Session token is stateless with a per-account version counter: sign-out ends every session of the account, not just one device. Move to server-side sessions if per-device sign-out is needed.
 - [ ] Pytest emits `ResourceWarning` for unclosed SQLite connections in module-scoped fixtures. Dispose engines in fixture teardown.
 - [ ] Line endings: Git warns LF will be replaced by CRLF on Windows. Add `.gitattributes`.
+- [ ] Add a pre-commit secret scanner (for example gitleaks) so a credential cannot be committed even if the test is skipped.
 
 ## Testing
 
-Covered today (see `Workflow_Context.md` → Testing): unit, API, RBAC and authentication tests, 260 passing.
+Covered today (see `Workflow_Context.md` → Testing): unit, API, RBAC, authentication and secret-hygiene tests, 264 passing.
 
 - [!] Live SMTP delivery of the verification code: only a fake sender is tested. Blocked on SMTP settings (see Upcoming).
 - [ ] End-to-end browser tests: none (see Upcoming).
@@ -61,14 +62,15 @@ Covered today (see `Workflow_Context.md` → Testing): unit, API, RBAC and authe
 - [ ] Run the suite against PostgreSQL. Never done; SQLite only.
 - [ ] Execute `Dockerfile` and `docker-compose.yml`. Written, never run (no Docker on the dev machine).
 - [ ] Execute `scripts/setup.ps1` on a clean checkout. Written, never run end to end.
-- [ ] Add a test that the administrator and seeded demo passwords cannot be used when a "hosted" environment flag is set (once that flag exists; see Production Readiness).
 - [ ] Add CI (GitHub Actions): ruff, pytest, `alembic check`, frontend type-check and build.
 
 ## Production Readiness
 
 Security and identity
 
-- [ ] Replace default `NBA_JWT_SECRET`, administrator credentials and demo password; fail start-up in a hosted environment if defaults are still in place.
+- [x] No default secrets in code: `NBA_JWT_SECRET`, `NBA_ADMIN_PASSWORD`, `NBA_DEMO_PASSWORD` come only from the environment or `.env`; start-up fails without the signing secret; history rewritten to remove earlier literals. Verified by `tests/test_secrets.py` and a scan of every commit.
+- [ ] Rotate the demo and administrator passwords: the earlier values were in public history. Edit `.env`, then reseed with `python -m app.datagen`.
+- [ ] Supply secrets from the host's secret store in hosted deployments, not from a file in the image.
 - [ ] Turn `NBA_DEMO_MODE` off for hosted use (no on-screen codes) and set `NBA_SEED_DEMO_ACCOUNTS=false`.
 - [ ] Login lockout and rate limiting; rate limiting on sign-up and code resend.
 - [ ] Enterprise SSO / OIDC behind `sessions.resolve` (`backend/app/auth/sessions.py`).

@@ -245,7 +245,7 @@ Landing page → Log in or Sign up → (first sign-up only) one-time code → ro
 | **Login** | Email and password only. The stored role decides the dashboard. No role or persona choice after signing in. A wrong password and an unknown email are indistinguishable. |
 | **Signup** | Name, email, password, confirm password, role. Five selectable roles; ADMIN is never selectable or self-creatable. |
 | **OTP verification** | A new account is unverified until a one-time code is entered. Codes expire, are single use, are attempt-limited, are stored only as a hash and are removed once used. Delivery is by email; without a mail server a clearly labelled development fallback shows the code and states that nothing was sent. SMS is deferred. |
-| **Administrator** | One fixed system account, created by the system, never by sign-up. |
+| **Administrator** | One fixed system account, created by the system, never by sign-up. Its password is supplied through configuration, never hardcoded. |
 | **Local POC authentication** | Accounts live server-side in the application database with hashed passwords. The browser holds only a session token. |
 | **Session management** | Survives a page refresh. Sign-out ends the session on the server. Disabling an account ends its sessions. The role is read from the account on every request, never from the token or the client. |
 | **Role-based routing** | After sign-in each role lands on its own dashboard. Signed-in users are redirected away from login and sign-up. |
@@ -351,3 +351,4 @@ Future work must preserve these.
 20. **One recommendation per person per cycle.**
 21. **One deployable unit**, and every external dependency behind an interface, so the POC stays production-migratable.
 22. **One-time codes by email only** until SMS is explicitly requested; never claim a message was sent when it was not.
+23. **No secret in the repository.** Passwords, signing secrets and API keys have no default in code and never appear in source, tests, documentation or commit history. They come from the environment or a git-ignored `.env`; documentation names the variable, not the value.

@@ -44,5 +44,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# Test secrets must be put in the environment before the application is imported.
+"tests/conftest.py" = ["E402"]
+
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "app.api.deps.require_permission"]

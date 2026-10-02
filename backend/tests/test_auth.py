@@ -1,10 +1,11 @@
 """Accounts: sign-up, one-time code, sign-in, sign-out, assignments, administration."""
 
+import secrets
 from datetime import timedelta
 
 import jwt
 import pytest
-from conftest import auth, new_session, sign_in
+from conftest import ADMIN_LOGIN, auth, new_session, sign_in
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -19,7 +20,8 @@ from app.main import app
 from app.models import AuditLog, CareManagerPatient, OtpChallenge, Patient, RepHcp, User
 from app.models.tables import utcnow
 
-PASSWORD = "<test-password>"
+# Generated per run. Satisfies the sign-up policy: 8+ characters, a letter and a digit.
+PASSWORD = f"Pw-{secrets.token_urlsafe(8)}7"
 
 
 @pytest.fixture(scope="module")
@@ -243,7 +245,7 @@ def test_email_message_content():
 
 def test_admin_signs_in_with_the_fixed_credentials(env):
     client, _ = env
-    response = login(client, "admin@admin.com", "<NBA_ADMIN_PASSWORD>")
+    response = login(client, *ADMIN_LOGIN)
     assert response.status_code == 200
     user = response.json()["user"]
     assert (user["role"], user["home"]) == ("admin", "/dashboard")

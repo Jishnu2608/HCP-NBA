@@ -71,7 +71,8 @@ class GenConfig:
     as_of: date = DEFAULT_AS_OF
     # Demo accounts for the seeded personas. Off = only the fixed administrator is seeded.
     seed_demo_accounts: bool = field(default_factory=lambda: get_settings().seed_demo_accounts)
-    demo_password: str = field(default_factory=lambda: get_settings().demo_password)
+    # None = read NBA_DEMO_PASSWORD when demo accounts are actually built.
+    demo_password: str | None = None
 
 
 def _rng(cfg: GenConfig, *parts) -> Random:
@@ -509,7 +510,7 @@ def simulate_therapy(
 
 def build_users(cfg: GenConfig, hcps: list[Hcp], patients: list[Patient]):
     """Demo accounts for the seeded personas: real accounts with an email and a password."""
-    pw = hash_password(cfg.demo_password)
+    pw = hash_password(cfg.demo_password or get_settings().secret("demo_password"))
     domain = get_settings().demo_email_domain
 
     def user(username, name, role, **kw):

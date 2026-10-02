@@ -1,3 +1,20 @@
+import os
+import secrets
+
+# Test-run secrets: generated here, set before the application is imported, and never read
+# from the developer's .env. Mail delivery is forced off so no test can send a real email.
+TEST_ADMIN_PASSWORD = f"Adm-{secrets.token_urlsafe(8)}7"
+TEST_DEMO_PASSWORD = f"Dem-{secrets.token_urlsafe(8)}7"
+os.environ.update(
+    NBA_JWT_SECRET=secrets.token_urlsafe(48),
+    NBA_ADMIN_PASSWORD=TEST_ADMIN_PASSWORD,
+    NBA_DEMO_PASSWORD=TEST_DEMO_PASSWORD,
+    NBA_ADMIN_EMAIL="admin@admin.com",
+    NBA_SMTP_HOST="",
+    NBA_DEMO_MODE="true",
+    NBA_SEED_DEMO_ACCOUNTS="true",
+)
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
@@ -10,8 +27,8 @@ from app.features.population import load_population
 from app.main import app
 from app.scoring import propensity
 
-ADMIN_LOGIN = ("admin@admin.com", "<NBA_ADMIN_PASSWORD>")
-DEMO_PASSWORD = "<NBA_DEMO_PASSWORD>"
+ADMIN_LOGIN = ("admin@admin.com", TEST_ADMIN_PASSWORD)
+DEMO_PASSWORD = TEST_DEMO_PASSWORD
 
 
 def sign_in(client, username: str) -> str:

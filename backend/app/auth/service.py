@@ -194,7 +194,7 @@ def ensure_system_admin(db: Session) -> User:
             username="admin",
             email=email,
             display_name="Administrator",
-            password_hash=hash_password(settings.admin_password),
+            password_hash=hash_password(settings.secret("admin_password")),
             role=Role.ADMIN,
             verified=True,
             status=AccountStatus.ACTIVE,

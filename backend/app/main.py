@@ -17,6 +17,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Make sure the fixed administrator account exists before the first request."""
+    settings.secret("jwt_secret")  # refuse to start without a signing secret
     try:
         with SessionLocal() as db:
             ensure_system_admin(db)

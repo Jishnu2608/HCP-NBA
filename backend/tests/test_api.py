@@ -1,7 +1,7 @@
 """API behaviour, with the emphasis on who is allowed to see and do what."""
 
 import pytest
-from conftest import new_session, sign_in
+from conftest import DEMO_PASSWORD, new_session, sign_in
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -55,7 +55,9 @@ def open_nba(db, target_type, target_id=None, status=NbaStatus.READY_FOR_REVIEW)
 
 def test_login_with_password_and_reject_bad_credentials(env):
     client, *_ = env
-    ok = client.post("/api/auth/login", data={"username": "cm01@nba.demo", "password": "<NBA_DEMO_PASSWORD>"})
+    ok = client.post(
+        "/api/auth/login", data={"username": "cm01@nba.demo", "password": DEMO_PASSWORD}
+    )
     assert ok.status_code == 200
     assert ok.json()["user"]["role"] == "care_manager" and ok.json()["user"]["home"] == "/queue"
     bad = client.post("/api/auth/login", data={"username": "cm01@nba.demo", "password": "wrong"})

@@ -1,10 +1,11 @@
 # App plus Postgres. Untested on this machine (no Docker); see README "Deployment".
+# No secret is written here: compose reads them from .env in this folder.
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: nba
-      POSTGRES_PASSWORD: <POSTGRES_PASSWORD>
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: nba
     volumes:
       - nba_pg:/var/lib/postgresql/data
@@ -19,8 +20,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      NBA_DATABASE_URL: postgresql+psycopg://nba:<POSTGRES_PASSWORD>@db:5432/nba
-      NBA_JWT_SECRET: <NBA_JWT_SECRET>
+      NBA_DATABASE_URL: postgresql+psycopg://nba:${POSTGRES_PASSWORD}@db:5432/nba
+      NBA_JWT_SECRET: ${NBA_JWT_SECRET:?run python -m app.bootstrap}
+      NBA_ADMIN_PASSWORD: ${NBA_ADMIN_PASSWORD:?run python -m app.bootstrap}
+      NBA_DEMO_PASSWORD: ${NBA_DEMO_PASSWORD:?run python -m app.bootstrap}
       NBA_ENVIRONMENT: container
     ports:
       - "8000:8000"

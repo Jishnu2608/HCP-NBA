@@ -5,14 +5,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data"
+ENV_FILE = REPO_ROOT / ".env"
+
+
+class MissingSecret(RuntimeError):
+    def __init__(self, env_name: str) -> None:
+        super().__init__(
+            f"{env_name} is not set. Run `python -m app.bootstrap` from the backend folder to "
+            f"create it in {ENV_FILE.name}, or set it in the environment."
+        )
 
 
 class Settings(BaseSettings):
-    """Runtime configuration. Override any field with an NBA_-prefixed env var or .env entry."""
+    """Runtime configuration. Override any field with an NBA_-prefixed env var or .env entry.
 
-    model_config = SettingsConfigDict(
-        env_prefix="NBA_", env_file=REPO_ROOT / ".env", extra="ignore"
-    )
+    No secret has a default in code. Secrets live only in the environment or in the
+    git-ignored .env file, which `python -m app.bootstrap` creates with random values.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="NBA_", env_file=ENV_FILE, extra="ignore")
 
     app_name: str = "Healthcare NBA"
     environment: str = "local"
@@ -20,7 +31,13 @@ class Settings(BaseSettings):
     # SQLite for the laptop demo; any SQLAlchemy URL (Postgres) for hosted deployments.
     database_url: str = f"sqlite:///{(DATA_DIR / 'nba_demo.db').as_posix()}"
 
-    jwt_secret: str = "<NBA_JWT_SECRET>"
+    # --- Secrets: no defaults. Read them through `secret()`. ---
+    jwt_secret: str | None = None
+    # Password of the fixed administrator account (created by the generator and at start-up).
+    admin_password: str | None = None
+    # Shared password of the seeded demo accounts (cm01@nba.demo, rep01@nba.demo, ...).
+    demo_password: str | None = None
+
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 480
 
@@ -29,15 +46,9 @@ class Settings(BaseSettings):
 
     datagen_seed: int = 20260101
 
-    # Fixed administrator. Stored hashed; created by the generator and at start-up.
-    # Change both before any hosted use.
     admin_email: str = "admin@admin.com"
-    admin_password: str = "<NBA_ADMIN_PASSWORD>"
-
-    # Seeded demo accounts (cm01@nba.demo, rep01@nba.demo, ...). Set to false to seed the
-    # administrator only.
+    # Set to false to seed the administrator only.
     seed_demo_accounts: bool = True
-    demo_password: str = "<NBA_DEMO_PASSWORD>"
     demo_email_domain: str = "nba.demo"
 
     # Demo mode allows the on-screen one-time code when no mail server is configured.
@@ -58,6 +69,13 @@ class Settings(BaseSettings):
     # What a newly verified account is given from the synthetic pool.
     signup_panel_patients: int = 30
     signup_panel_hcps: int = 15
+
+    def secret(self, name: str) -> str:
+        """A required secret, or a clear error naming the variable that is missing."""
+        value = getattr(self, name)
+        if not value:
+            raise MissingSecret(f"NBA_{name.upper()}")
+        return value
 
 
 @lru_cache

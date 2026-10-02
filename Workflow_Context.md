@@ -4,7 +4,7 @@ Living context file. Describes what the code does **now**. Update the relevant s
 
 One of three context files: `Master_Build.md` is the specification (what the system is supposed to be, and the rules that must be preserved); this file is the implementation state; `TODO.md` is the backlog. Read all three before major work. They are deliberately not duplicates of each other.
 
-Last verified against code: 2026-10-02, at the commit "feat: account-based authentication and permission RBAC" on `main` (remote `https://github.com/Jishnu2608/HCP-NBA.git`).
+Last verified against code: 2026-10-02, at the commit "security: remove hardcoded credentials" on `main` (remote `https://github.com/Jishnu2608/HCP-NBA.git`; history rewritten that day).
 
 ## Project Status
 
@@ -33,7 +33,8 @@ Backend module map (`backend/app/`):
 
 | Module | Responsibility |
 |---|---|
-| `core/config.py` | Settings (`NBA_` env prefix): database URL, JWT, admin credentials, `seed_demo_accounts`, `demo_password`, `demo_mode`, SMTP, OTP timings, sign-up panel sizes, `llm_provider`, seed |
+| `core/config.py` | Settings (`NBA_` env prefix). Secrets (`jwt_secret`, `admin_password`, `demo_password`) have **no default** and are read with `settings.secret(name)`, which raises `MissingSecret` naming the variable. Also: database URL, `admin_email`, `seed_demo_accounts`, `demo_mode`, SMTP, OTP timings, sign-up panel sizes, `llm_provider`, seed |
+| `bootstrap.py` | `python -m app.bootstrap`: appends any missing required secret to the git-ignored `.env` with a random value; never changes existing ones |
 | `core/permissions.py` | `Permission` enum, `ROLE_PERMISSIONS`, `SIGNUP_ROLES`, `ROLE_HOME`, `can`, `can_any`. The only place roles map to abilities. |
 | `core/security.py` | scrypt `hash_password` / `verify_password` only |
 | `auth/` | `repository.py` (`UserRepository`, `SqlUserRepository`), `otp.py` (`OTPService`, `OtpSender`, `EmailOtpSender`, `LocalDemoOtpSender`), `sessions.py` (`SessionService`), `service.py` (signup, verify, resend, login, logout, `ensure_system_admin`, `account_out`), `provisioning.py` (`AssignmentService`), `errors.py` (`AuthError`) |
@@ -89,7 +90,7 @@ Chain: **account → role → permission set → data scope → UI**. Full descr
 
 **One-time code** (`auth/otp.py`): HMAC hash only in `otp_challenge`; 10-minute expiry; 5 attempts then deleted; 30-second resend cool-down; deleted on success. Delivery is email only: `EmailOtpSender` (SMTP) when `NBA_SMTP_HOST` is set, otherwise `LocalDemoOtpSender` while `demo_mode` is on (code returned as `dev_otp` and logged; the UI states no email was sent). SMTP failure falls back to the development sender only in demo mode.
 
-**Accounts.** Fixed administrator `admin@admin.com` / `<NBA_ADMIN_PASSWORD>` (settings `admin_email`, `admin_password`; `source=system`; ensured by the generator and at start-up; never creatable by sign-up). Seeded demo accounts `<username>@nba.demo` with password `<NBA_DEMO_PASSWORD>` (`source=seed`): `compliance1`, `compliance2`, `rep01`..`rep20`, `cm01`..`cm10`, `hcp0001`..`hcp0003`, `pat00001`..`pat00006`. `NBA_SEED_DEMO_ACCOUNTS=false` seeds only the administrator (the user may ask for this later). Registered accounts have `source=signup` and `username = email`.
+**Accounts.** Fixed administrator `admin@admin.com` (email from `admin_email`, password from `NBA_ADMIN_PASSWORD` in `.env`; `source=system`; ensured by the generator and at start-up; never creatable by sign-up). Seeded demo accounts `<username>@nba.demo` sharing the password in `NBA_DEMO_PASSWORD` (`source=seed`): `compliance1`, `compliance2`, `rep01`..`rep20`, `cm01`..`cm10`, `hcp0001`..`hcp0003`, `pat00001`..`pat00006`. `NBA_SEED_DEMO_ACCOUNTS=false` seeds only the administrator (the user may ask for this later). Registered accounts have `source=signup` and `username = email`.
 
 **Permissions** (`core/permissions.py`):
 
@@ -197,7 +198,7 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 
 ## Testing
 
-260 pytest tests in `backend/tests/`, all passing; run with `.venv\Scripts\python -m pytest`. Lint: `ruff check .` and `ruff format`.
+264 pytest tests in `backend/tests/`, all passing; run with `.venv\Scripts\python -m pytest`. Lint: `ruff check .` and `ruff format`.
 
 | File | Covers |
 |---|---|
@@ -208,10 +209,11 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 | `test_llm.py` | Template output validity per channel, validator rejections, fallback, edited drafts preserved |
 | `test_api.py` | Login, token rejection, persona endpoints gone, role × endpoint matrix, row scoping, compliance view, review workflow, consent re-check at approval, MLR review (admin refused), config |
 | `test_auth.py` | Sign-up validation, duplicate email, code success / wrong / locked / expired / resend / single use, email delivery with a fake sender and fallback, admin login, full flow, forged tokens, auto-assignment per role, admin user management, assignment edits leave role and permissions unchanged, disable, reset preserves accounts |
+| `test_secrets.py` | Secrets have no default, missing secret raises, bootstrap creates only what is missing, `.env` is git-ignored, no credential literal in tracked files |
 | `test_permissions.py` | Role → permission sets, admin lacks content approval, every `/api` route outside a public allow-list refuses anonymous callers, no role-name authorization in routers or `rbac.py` |
 | `test_loop.py` | Send, pending semantics, patient and HCP inbox, send blocked after consent withdrawal, outcome logging, bulk send, clock advance, analytics, reset |
 
-`tests/conftest.py` redirects model files to a temp directory and provides `sign_in` / `auth` (real email + password login, token cached per client). `test_nba.py` scenario tests use the default seed and scale, so generator changes can break them. No frontend tests. Frontend checks: `npm run typecheck`, `npm run build`.
+`tests/conftest.py` sets random test secrets in the environment before importing the app, forces mail delivery off (so a developer's `.env` SMTP settings can never send from a test), redirects model files to a temp directory and provides `sign_in` / `auth` (real email + password login, token cached per client). `test_nba.py` scenario tests use the default seed and scale, so generator changes can break them. No frontend tests. Frontend checks: `npm run typecheck`, `npm run build`.
 
 ## Known Issues / Limitations
 
@@ -219,7 +221,9 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 - Delivery adapters only record the hand-off; no message leaves the system. "I have refilled" in the patient portal stands in for a pharmacy fill.
 - Claude provider untested (no key). It enables server-side refusal fallback by default.
 - No browser end-to-end tests; Docker, Postgres and `setup.ps1` never run.
-- Defaults are demo-grade: documented admin and demo passwords, placeholder JWT secret, `demo_mode` on (on-screen code when no SMTP). Must change before any hosted use.
+- `demo_mode` is on by default (on-screen code when no SMTP) and demo accounts are seeded. Turn both off for hosted use.
+- Git history was rewritten on 2026-10-02 to remove credential literals (old hashes `c3f55df`, `6d3f691`, `541cb19` no longer exist on `main`). The earlier demo passwords were public for a time and should be treated as exposed.
+- Account passwords in the database only change on reseed (`python -m app.datagen`); editing `.env` alone does not change existing accounts.
 - Live SMTP delivery never exercised (no mail settings on this machine); covered only by a fake sender in tests.
 - No forgot-password, password change, login lockout or rate limiting. No MFA at sign-in.
 - A claimed synthetic patient/HCP record is renamed to the account holder; if an admin later links the account to another record, the earlier record keeps that name until the next reseed.
@@ -244,6 +248,7 @@ Product and architecture decisions are in `Master_Build.md` section 13 and are n
 7. Seeded demo accounts are kept for now; the user may ask to remove them (`NBA_SEED_DEMO_ACCOUNTS=false`).
 8. One-time codes are email only; SMS is deferred until the user asks.
 9. Vite SPA served by FastAPI (not Next.js) to keep one deployable unit.
+10. No secret in the repository: `tests/test_secrets.py` fails if a password, secret, key or token is assigned a string literal in a tracked file. Docs name the `.env` variable, never a value.
 
 ## Next Recommended Task
 

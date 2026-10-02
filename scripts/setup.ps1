@@ -15,9 +15,11 @@ npm run build
 Pop-Location
 
 Push-Location "$root\backend"
+& .venv\Scripts\python -m app.bootstrap
 & .venv\Scripts\alembic upgrade head
 & .venv\Scripts\python -m app.datagen
 & .venv\Scripts\python -m app.cycle --retrain
 Pop-Location
 
 Write-Host "`nReady. Start the app with .\scripts\run.ps1 and open http://localhost:8000"
+Write-Host "Account passwords are in .env (NBA_ADMIN_PASSWORD, NBA_DEMO_PASSWORD)."

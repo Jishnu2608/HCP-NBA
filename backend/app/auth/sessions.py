@@ -25,13 +25,15 @@ def _encode(user: User, kind: str, minutes: int) -> str:
         "ver": user.token_version,
         "exp": datetime.now(UTC) + timedelta(minutes=minutes),
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.secret("jwt_secret"), algorithm=settings.jwt_algorithm)
 
 
 def _decode(token: str, kind: str) -> dict | None:
     settings = get_settings()
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(
+            token, settings.secret("jwt_secret"), algorithms=[settings.jwt_algorithm]
+        )
     except jwt.PyJWTError:
         return None
     return payload if payload.get("typ") == kind else None

@@ -2,7 +2,7 @@
 
 About 14 minutes. Start from the seeded state (Engine page, "Reset to seeded data", or `python -m app.datagen` then `python -m app.cycle --retrain`). Demo date starts at 30 September 2026.
 
-Every step signs in with a real account: email and password, no role picker. Demo accounts share the password `<NBA_DEMO_PASSWORD>`; the administrator is `admin@admin.com` / `<NBA_ADMIN_PASSWORD>`.
+Every step signs in with a real account: email and password, no role picker. Demo accounts share the password in `NBA_DEMO_PASSWORD`; the administrator is `admin@admin.com` with the password in `NBA_ADMIN_PASSWORD`. Both are in the git-ignored `.env` file, not in this repository.
 
 Tip: each browser tab holds its own session. Keep two tabs open (for example care manager and patient) to show both sides of one interaction.
 

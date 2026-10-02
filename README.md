@@ -29,13 +29,15 @@ Landing  →  Log in or Sign up  →  (sign-up only) email code  →  role dashb
 
 | Email | Password | Role |
 |---|---|---|
-| `admin@admin.com` | `<NBA_ADMIN_PASSWORD>` | Administrator |
+| `admin@admin.com` | value of `NBA_ADMIN_PASSWORD` in `.env` | Administrator |
 
-The administrator is created automatically (by the data generator and again at start-up if missing). It cannot be created through sign-up. Change `NBA_ADMIN_EMAIL` and `NBA_ADMIN_PASSWORD` before any hosted use.
+The administrator is created automatically (by the data generator and again at start-up if missing). It cannot be created through sign-up. The email is `NBA_ADMIN_EMAIL`.
+
+**No password is stored in this repository.** `setup.ps1` (or `python -m app.bootstrap`) writes random values for `NBA_JWT_SECRET`, `NBA_ADMIN_PASSWORD` and `NBA_DEMO_PASSWORD` into the git-ignored `.env` file. Open `.env` to read them. To use your own, edit `.env` and reseed with `python -m app.datagen`.
 
 ### Demo accounts
 
-Seeded with the synthetic data so each role can be shown immediately. All share the password `<NBA_DEMO_PASSWORD>`.
+Seeded with the synthetic data so each role can be shown immediately. All share one password: the value of `NBA_DEMO_PASSWORD` in `.env`.
 
 | Email | Role | What it is linked to |
 |---|---|---|
@@ -134,6 +136,7 @@ Run from `backend` with the virtual environment's Python (`.venv\Scripts\python`
 
 | Command | Purpose |
 |---|---|
+| `python -m app.bootstrap` | Create missing secrets in `.env` with random values. Never changes existing ones. |
 | `python -m app.datagen [--patients N --hcps N --seed N]` | Rebuild the synthetic population and demo accounts. Registered accounts are kept. |
 | `python -m app.cycle [--retrain]` | Refresh features, optionally retrain, generate recommendations and drafts |
 | `python -m app.pipeline` | Feature refresh and model training only, with holdout metrics |
@@ -151,10 +154,11 @@ Settings are in `backend/app/core/config.py` and can be overridden with `NBA_`-p
 | Variable | Default | Notes |
 |---|---|---|
 | `NBA_DATABASE_URL` | SQLite file in `data/` | Any SQLAlchemy URL, for example `postgresql+psycopg://user:pass@host/db` (install the `postgres` extra) |
-| `NBA_JWT_SECRET` | Local-only placeholder | Set a long random value for anything hosted |
-| `NBA_ADMIN_EMAIL`, `NBA_ADMIN_PASSWORD` | `admin@admin.com`, `<NBA_ADMIN_PASSWORD>` | The fixed administrator |
+| `NBA_JWT_SECRET` | none (required) | Signs session tokens. Created by `python -m app.bootstrap`. |
+| `NBA_ADMIN_EMAIL` | `admin@admin.com` | The fixed administrator's email |
+| `NBA_ADMIN_PASSWORD` | none (required) | The fixed administrator's password. Created by `python -m app.bootstrap`. |
 | `NBA_SEED_DEMO_ACCOUNTS` | `true` | `false` seeds only the administrator |
-| `NBA_DEMO_PASSWORD` | `<NBA_DEMO_PASSWORD>` | Shared password of the seeded demo accounts |
+| `NBA_DEMO_PASSWORD` | none (required while demo accounts are seeded) | Shared password of the seeded demo accounts |
 | `NBA_DEMO_MODE` | `true` | Allows the on-screen code when no mail server is configured |
 | `NBA_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | unset | When set, verification codes are emailed |
 | `NBA_LLM_PROVIDER` | `template` | `claude` uses the Anthropic SDK (`pip install -e ".[claude]"`) |
@@ -206,7 +210,7 @@ This is a proof of concept. What is in place and what is not:
 | Role and permissions decided on the server | Single sign-on |
 | Audit entries for account creation, verification, status and assignment changes | Security monitoring and alerting |
 
-The administrator and demo passwords are documented above on purpose, for the demo. They and the JWT secret are defaults in configuration and must be changed for anything hosted.
+No password or signing secret has a default in code or appears in this repository. They are read from the environment or the git-ignored `.env`, and the application refuses to start without the signing secret.
 
 ### Moving to production authentication
 
@@ -230,7 +234,7 @@ The API serves the built frontend, so the whole product is one process and one c
 - **Databricks Apps:** the same single process fits the Apps model. Point `NBA_DATABASE_URL` at a Lakebase Postgres instance and start with `uvicorn app.main:app`. Not yet tried.
 - **Vercel:** host `frontend/dist` as a static site with `/api` rewritten to the API on a container host, and use a managed Postgres. Not yet tried.
 
-Before any hosted use: set `NBA_JWT_SECRET`, change the administrator credentials, set `NBA_SEED_DEMO_ACCOUNTS=false`, configure SMTP and turn `NBA_DEMO_MODE` off.
+Before any hosted use: provide the secrets through the host's secret store (not a file in the image), set `NBA_SEED_DEMO_ACCOUNTS=false`, configure SMTP and turn `NBA_DEMO_MODE` off.
 
 ## Known limits
 

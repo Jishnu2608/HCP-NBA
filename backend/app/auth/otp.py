@@ -95,7 +95,7 @@ class Issued:
 
 
 def _hash(user: User, code: str) -> str:
-    key = get_settings().jwt_secret.encode()
+    key = get_settings().secret("jwt_secret").encode()
     return hmac.new(key, f"{user.id}:{code}".encode(), hashlib.sha256).hexdigest()
 
 
