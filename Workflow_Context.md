@@ -2,6 +2,8 @@
 
 Living context file. Describes what the code does **now**. Update the relevant section in place whenever implementation changes; do not append a changelog. If this file and the code disagree, the code wins: inspect it and fix this file.
 
+One of three context files: `Master_Build.md` is the specification (what the system is supposed to be, and the rules that must be preserved); this file is the implementation state; `TODO.md` is the backlog. Read all three before major work. They are deliberately not duplicates of each other.
+
 Last verified against code: 2026-10-02, at the commit "feat: account-based authentication and permission RBAC" on `main` (remote `https://github.com/Jishnu2608/HCP-NBA.git`).
 
 ## Project Status
@@ -66,7 +68,7 @@ Backend module map (`backend/app/`):
 - Closed loop: delivery adapters, response capture, outcome simulator, clock advance with retrain, demo reset, bulk-send shortcut.
 - Analytics dashboard, including a like-for-like engine versus baseline comparison.
 - Frontend for all six roles.
-- Docs: `README.md`, `docs/demo-script.md`, `docs/architecture-auth-rbac.md`, `.env.example`. Scripts: `scripts/setup.ps1`, `scripts/run.ps1`. Preview config: `.claude/launch.json` (`nba-app`, port 8000).
+- Docs: `README.md`, `docs/demo-script.md`, `docs/architecture-auth-rbac.md`, `.env.example`. Context files: `Master_Build.md`, `Workflow_Context.md`, `TODO.md`, with the workflow rule in `CLAUDE.md`. Scripts: `scripts/setup.ps1`, `scripts/run.ps1`. Preview config: `.claude/launch.json` (`nba-app`, port 8000).
 - All work to date, including the auth/RBAC refactor, is committed and pushed to GitHub `main`.
 
 ## In Progress
@@ -75,16 +77,9 @@ Nothing partially implemented.
 
 ## Planned
 
-Approved in the plan but not started:
+The backlog lives in `TODO.md` (Upcoming, Enhancements, Technical Debt, Testing, Production Readiness). Not repeated here.
 
-- Playwright end-to-end tests running the six demo scenarios.
-- Hosted deployment (Databricks Apps or Vercel plus container API) with Postgres.
-- Real LLM provider selection and a live run (Claude, Gemini, or an org cloud model). No Gemini provider exists.
-- OIDC/SSO behind `sessions.resolve` / `get_current_user`; MFA at sign-in; SMS or authenticator codes (new `OtpSender`).
-- Forgot-password, password change, login lockout / rate limiting.
-- Product name and branding for a client-facing version.
-
-Written but never executed: `Dockerfile`, `docker-compose.yml`, `scripts/setup.ps1`, the Postgres path (`postgres` extra in `backend/pyproject.toml`).
+Written but never executed, so not counted as implemented: `Dockerfile`, `docker-compose.yml`, `scripts/setup.ps1`, the PostgreSQL path (`postgres` extra in `backend/pyproject.toml`), the Claude drafting provider, live SMTP delivery.
 
 ## Authentication & RBAC
 
@@ -238,27 +233,18 @@ Command-line entry points (from `backend`): `python -m app.datagen`, `python -m 
 
 ## Important Decisions
 
-1. **Gates are deterministic code**, evaluated at generation, approval and send. No model or prompt can override them.
-2. **The LLM only words** an already-eligible action. Bulk drafting always uses templates so a cycle never depends on or pays for model calls.
-3. **Logistic regression is the champion model** because its contributions are exact; the challenger is for comparison only.
-4. **Hidden traits live only in `sim_latent`** and are read only by `datagen` and `engagement/simulator.py`. A test enforces that `nba`, `features`, `scoring`, `audit` and `pipeline.py` do not reference it.
-5. **Point-in-time features:** training rows and live scoring share the same code in `features/engagement.py`.
-6. **Out-of-scope returns 404**, so ids cannot be probed; compliance sees gate outcomes without identities.
-7. **Only compliance approves content** (separation of duties); admin cannot. Confirmed again by the user during the auth refactor, despite "admin = full access".
-8. **Vite SPA served by FastAPI** rather than Next.js, to keep one deployable unit for a laptop, a container or Databricks Apps.
-9. **Patient adherence is the lead story**; HCP engagement stays in scope as the second audience.
-10. **Fair comparison on the dashboard:** engine versus baseline is shown only for touches made while the patient was already in a gap, because the engine targets harder cases.
-11. **One recommendation per target per cycle**; older unreviewed ones are superseded.
-12. Simulator and seeded history must keep the same crediting rule for prompted fills, or engine-versus-baseline numbers become misleading.
-13. **Authorize by permission, never by role name.** Role names appear only in `core/permissions.py`, the sign-up role list (`api/auth.py` `ROLE_INFO`) and seed data. A test enforces this for routers and `rbac.py`.
-14. **Assignments are separate from RBAC** and never change role or permissions. There is no role-change endpoint.
-15. **Accounts stay server-side** (hashed passwords in the database). The browser holds only a session token, through `session.ts`.
-16. **OTP is email only**; SMS deferred until the user asks. Never claim an email was sent when it was not.
-17. **Seeded demo accounts are kept for now**; the user may ask to remove them (`NBA_SEED_DEMO_ACCOUNTS=false`).
-18. **Registered accounts survive a demo reset**; synthetic data and demo accounts are rebuilt.
+Product and architecture decisions are in `Master_Build.md` section 13 and are not repeated here. Implementation-level facts a new session needs:
+
+1. Role names may appear only in `core/permissions.py`, the sign-up role list (`api/auth.py` `ROLE_INFO`) and seed data. `tests/test_permissions.py` fails otherwise, and also fails if any `/api` route outside its public allow-list answers an anonymous caller.
+2. `sim_latent` may be read only by `datagen/` and `engagement/simulator.py`. `tests/test_nba.py` fails if `nba`, `features`, `scoring`, `audit` or `pipeline.py` reference it.
+3. Simulator and seeded history must keep the same crediting rule for prompted fills (outreach is resolved before natural fills), or engine-versus-baseline numbers become misleading.
+4. Scenario tests in `tests/test_nba.py` run on the default seed and scale; changing generator behaviour can change which action or channel the heroes get.
+5. Content approval is guarded by `Permission.CONTENT_APPROVE`, held only by `compliance`. `tests/test_api.py` asserts the administrator gets 403.
+6. `alembic/env.py` must keep using a plain engine (no foreign-key pragma) for SQLite batch migrations.
+7. Seeded demo accounts are kept for now; the user may ask to remove them (`NBA_SEED_DEMO_ACCOUNTS=false`).
+8. One-time codes are email only; SMS is deferred until the user asks.
+9. Vite SPA served by FastAPI (not Next.js) to keep one deployable unit.
 
 ## Next Recommended Task
 
-1. Put SMTP settings in `.env` (the user does this; see `.env.example`) and run one live sign-up to confirm real email delivery of the verification code. It is the only part of the auth refactor not exercised end to end.
-2. Add Playwright end-to-end tests driving the flows in `docs/demo-script.md` (sign-up → code → dashboard, the six NBA scenarios, access-denied cases) against a freshly seeded database. Still the main unfinished item from the original plan.
-3. Then: choose the LLM provider and run it live; first hosted deployment (set `NBA_JWT_SECRET`, change admin credentials, `NBA_SEED_DEMO_ACCOUNTS=false`, `NBA_DEMO_MODE=false`).
+See `TODO.md` → Upcoming. First unblocked item: Playwright end-to-end tests. First item overall: a live sign-up with real email delivery, blocked until the user adds SMTP settings to `.env`.
