@@ -13,20 +13,32 @@ The interface is aimed at enterprise healthcare and pharma users in the United S
 
 ## Colour
 
-Colours are semantic tokens defined as CSS variables: light values on `:root`, dark values on `:root[data-theme="dark"]`. They are mapped into Tailwind as `bg-surface`, `text-ink-muted`, `bg-primary` and so on. The dark set is designed separately (its own surfaces, text, status and chart colours), not an inversion or a filter. A brand or theme change is an edit to these tokens only.
+A refined clinical blue on cool slate, in both themes. Colours are semantic tokens defined as CSS variables: light values on `:root`, dark values on `:root[data-theme="dark"]`. They are mapped into Tailwind as `bg-surface`, `text-ink-muted`, `bg-primary` and so on. The dark set is designed separately (deep blue-slate surfaces, restrained blue), not an inversion or a filter. A brand or theme change is an edit to these tokens only.
 
-| Token | Use |
-|---|---|
-| `canvas`, `surface`, `subtle`, `sunken` | Page background (warm ivory), cards, insets, tracks |
-| `line`, `line-strong` | Borders and dividers |
-| `ink`, `ink-muted`, `ink-subtle` | Body text, secondary text, captions (all at least 4.5:1 on their surfaces) |
-| `primary` (eucalyptus) | Primary buttons, active navigation, links, the brand mark |
-| `sage` | Secondary chips and quiet highlights |
-| `accent` (coral) | Used sparingly: the landing page's main call to action and "new" or attention dots |
-| `nav` | Dark charcoal-eucalyptus sidebar and dark bands |
-| `ok`, `warn`, `bad`, `info`, `neutral` | Status only. Each has `-soft` (background) and `-line` (border) variants |
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `canvas` | #F6F8FB | #0D1520 | Page background |
+| `subtle` | #EEF2F7 | #1B2A3B | Secondary background, insets, fact tiles |
+| `surface` | #FFFFFF | #162231 | Cards, panels, menus, drawers |
+| `ink` / `ink-muted` / `ink-subtle` / `ink-disabled` | #172033 / #526174 / #5D6B80 / #A8B1BD | #E8EEF5 / #B5C1CF / #8795A6 / #5F6C7B | Text |
+| `line` / `line-strong` | #D8E0E8 / #C3CED9 | #29394A / #3A4B5D | Borders |
+| `primary` (hover, active) | #2563A6 (#1F5792, #194A7D) | #4C8CCB (#62A0DA, #3D78B0) | Primary actions, active navigation, links, selected states, the key action of a recommendation |
+| `on-primary` | #FFFFFF | #08121D | Text on primary |
+| `primary-soft` | #E8F1FA | #1A334C | Selected rows, informational highlights |
+| `sage` / `sage-ink` | #EEF2F7 / #456A8E | #1B2A3B / #789AB8 | Secondary blue on a neutral: secondary chips, non-primary states |
+| `nav` (hover, active) | #132238 (#1B3049, #214B73) | #0A121C (#142333, #193A58) | Sidebar and dark bands |
+| `ok` / `warn` / `bad` / `info` | text #2B7553 / #8F5E15 / #A8403E / #2F6FA3 | #68B58D / #D5A34D / #E27673 / #68A4D4 | Status text and icons |
+| `*-fill` | #2F7D5A / #B7791F / #B94A48 / #2F6FA3 | same as text | Status bars, dots, segments |
+| `*-soft` | #E8F4EE / #FFF5DE / #FBEAEA / #E8F2FA | #153328 / #352B18 / #3A2021 / #152D43 | Status backgrounds |
 
-Coral is never used for risk or errors, so it cannot be mistaken for a status.
+`accent` exists for compatibility and equals `primary`: there is one call-to-action colour.
+
+Rules:
+
+- Blue is reserved for primary actions, active navigation, important links, selected states and the core action of a recommendation. Cards, tables, forms and analytics containers stay neutral. A recommendation card is neutral with a blue key action and a thin blue top rule; its "Why this action?" tiles are neutral with a soft-blue icon tile.
+- Status colours carry meaning only: green success / low risk / approved; amber warning / medium risk / pending; red error / blocked / high risk / rejected; blue information.
+- Contrast: every text token passes WCAG AA (4.5:1) on the surfaces and tints it is used on, in both themes (checked for 24 pairs; lowest 4.72 light, 4.77 dark). In light mode the reference values for warning (#B7791F), error (#B94A48) and muted text (#7A8798) fall below 4.5:1 as small text on their own tinted backgrounds, so the text tokens use darker shades of the same hues and the reference values are used for fills.
+- Charts: `--series-1` clinical blue (also the engine), `--series-2` amber, `--series-3` slate teal, neutral `--series-baseline`.
 
 ### Status semantics
 

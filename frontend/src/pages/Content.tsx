@@ -39,9 +39,9 @@ const VIEWS: Array<{ key: View; label: string }> = [
 ];
 
 function rail(c: Json) {
-  if (c.is_expired || c.mlr_status === "rejected") return "bg-bad";
-  if (c.mlr_status === "pending") return "bg-warn";
-  return "bg-ok";
+  if (c.is_expired || c.mlr_status === "rejected") return "bg-bad-fill";
+  if (c.mlr_status === "pending") return "bg-warn-fill";
+  return "bg-ok-fill";
 }
 
 export default function ContentLibrary() {

@@ -166,7 +166,7 @@ export function BarRow({
   tone?: "brand" | "ok" | "warn" | "bad" | "neutral";
   sub?: ReactNode;
 }) {
-  const fill = { brand: "bg-primary", ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", neutral: "bg-line-strong" }[tone];
+  const fill = { brand: "bg-primary", ok: "bg-ok-fill", warn: "bg-warn-fill", bad: "bg-bad-fill", neutral: "bg-line-strong" }[tone];
   const v = Math.max(0, Math.min(1, value));
   return (
     <li>

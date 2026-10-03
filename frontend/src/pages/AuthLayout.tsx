@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { ThemeToggle } from "../theme";
 import { cx } from "../ui";
 
-/** The product mark: a pulse line in a rounded eucalyptus tile. */
+/** The product mark: a pulse line in a rounded clinical-blue tile. */
 export function BrandMark({ small = false }: { small?: boolean }) {
   return (
     <span
@@ -53,14 +53,6 @@ export default function AuthLayout({
   return (
     <div className="min-h-dvh bg-canvas lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
       <aside className="relative hidden overflow-hidden bg-nav lg:flex lg:flex-col lg:justify-between lg:p-10 xl:p-14">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-primary/40 blur-3xl"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -bottom-40 -left-24 h-96 w-96 rounded-full bg-accent/15 blur-3xl"
-        />
         <div className="relative flex items-center justify-between">
           <Brand light />
         </div>

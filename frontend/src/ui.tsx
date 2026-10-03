@@ -168,11 +168,11 @@ export function Divider({ className }: { className?: string }) {
 type Variant = "primary" | "accent" | "secondary" | "ghost" | "danger" | "quiet-danger";
 type Size = "sm" | "md" | "lg";
 const VARIANT: Record<Variant, string> = {
-  primary: "bg-primary text-on-primary shadow-card hover:bg-primary-hover",
+  primary: "bg-primary text-on-primary shadow-card hover:bg-primary-hover active:bg-primary-active",
   accent: "bg-accent text-on-accent shadow-card hover:bg-accent-hover",
   secondary: "border border-line-strong bg-surface text-ink shadow-card hover:bg-subtle",
   ghost: "text-ink-muted hover:bg-subtle hover:text-ink",
-  danger: "bg-bad text-surface shadow-card hover:opacity-90",
+  danger: "bg-bad-fill text-ink-inverse shadow-card hover:opacity-90",
   "quiet-danger": "border border-bad-line bg-surface text-bad hover:bg-bad-soft",
 };
 const SIZE: Record<Size, string> = {
@@ -561,9 +561,9 @@ export function Meter({
 }) {
   const fill = {
     brand: "bg-primary",
-    ok: "bg-ok",
-    warn: "bg-warn",
-    bad: "bg-bad",
+    ok: "bg-ok-fill",
+    warn: "bg-warn-fill",
+    bad: "bg-bad-fill",
     neutral: "bg-line-strong",
   };
   const v = Math.max(0, Math.min(1, value ?? 0));

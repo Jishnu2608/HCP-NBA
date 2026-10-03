@@ -94,11 +94,11 @@ function count(rows: Json[], target: string, status: string) {
 
 /** Order and colour of recommendation states in the distribution bars. */
 const STATUS_ORDER: Array<{ key: string; fill: string }> = [
-  { key: "ready_for_review", fill: "bg-info" },
+  { key: "ready_for_review", fill: "bg-info-fill" },
   { key: "approved", fill: "bg-primary" },
   { key: "sent", fill: "bg-sage-ink" },
-  { key: "responded", fill: "bg-ok" },
-  { key: "blocked", fill: "bg-bad" },
+  { key: "responded", fill: "bg-ok-fill" },
+  { key: "blocked", fill: "bg-bad-fill" },
   { key: "rejected", fill: "bg-line-strong" },
   { key: "expired", fill: "bg-neutral-line" },
 ];

@@ -376,11 +376,11 @@ export function OpenNba({ nba }: { nba: Json | null }) {
         blocked ? "border-bad-line" : "border-primary-line",
       )}
     >
-      <div className={cx("h-1", blocked ? "bg-bad" : "bg-primary")} aria-hidden />
+      <div className={cx("h-1", blocked ? "bg-bad-fill" : "bg-primary")} aria-hidden />
       <div className="p-5">
         <div className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
-            <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad" : "bg-accent")} aria-hidden /> Next best action
+            <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad-fill" : "bg-primary")} aria-hidden /> Next best action
           </span>
           <StatusBadge status={nba.status} />
         </div>

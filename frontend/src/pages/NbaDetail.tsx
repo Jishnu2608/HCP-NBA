@@ -315,11 +315,11 @@ export default function NbaDetail() {
               blocked ? "border-bad-line" : "border-primary-line",
             )}
           >
-            <div className={cx("h-1", blocked ? "bg-bad" : "bg-primary")} aria-hidden />
+            <div className={cx("h-1", blocked ? "bg-bad-fill" : "bg-primary")} aria-hidden />
             <div className="px-5 pb-6 pt-5 sm:px-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
-                  <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad" : "bg-accent")} aria-hidden />
+                  <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad-fill" : "bg-primary")} aria-hidden />
                   Next best action
                 </span>
                 <span className="tabular text-[13px] text-ink-subtle">Priority {n.priority.toFixed(1)}</span>
