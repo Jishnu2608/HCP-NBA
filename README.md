@@ -163,7 +163,7 @@ One process and one deployable unit: the API also serves the built web applicati
 | Database | SQLAlchemy, Alembic; SQLite locally, PostgreSQL-ready |
 | Features and models | pandas, scikit-learn |
 | Authentication | Server-side accounts, scrypt password hashes, signed session tokens |
-| Frontend | React, TypeScript, Vite, Tailwind, TanStack Query, Recharts |
+| Frontend | React, TypeScript, Vite, Tailwind, TanStack Query, Recharts; one design system with light and dark themes ([docs/design-system.md](docs/design-system.md)) |
 
 ```
 backend/app/core        configuration, database, permissions, data scope, demo clock
@@ -179,7 +179,7 @@ backend/app/analytics   dashboard queries
 backend/app/api         routers
 backend/tests           test suite
 frontend/src            web application
-docs/                   demo walkthrough, access architecture
+docs/                   demo walkthrough, access architecture, design system
 scripts/                setup and run
 ```
 

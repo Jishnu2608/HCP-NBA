@@ -3,8 +3,8 @@ import type { FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { isChallenge, useAuth } from "../auth";
 import { mayOpen } from "../routes";
-import { Button, ErrorNote } from "../ui";
-import AuthLayout, { TextField } from "./AuthLayout";
+import { Button, ErrorNote, PasswordField, TextField } from "../ui";
+import AuthLayout from "./AuthLayout";
 
 export default function Login() {
   const { login } = useAuth();
@@ -38,38 +38,40 @@ export default function Login() {
 
   return (
     <AuthLayout
-      title="Log in"
-      subtitle="Your account decides which dashboard you see. There is nothing to choose after signing in."
+      title="Sign in"
+      subtitle="Your account decides which workspace opens. There is nothing to choose after signing in."
+      footer={
+        <>
+          New to Next Best Action?{" "}
+          <Link to="/signup" className="font-semibold text-primary-ink underline-offset-4 hover:underline">
+            Create an account
+          </Link>
+        </>
+      }
     >
-      <form onSubmit={submit} className="space-y-4">
+      <form onSubmit={submit} className="space-y-5">
         <TextField
-          label="Email"
+          label="Work email"
           type="email"
           autoComplete="email"
+          inputMode="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
           autoFocus
         />
-        <TextField
+        <PasswordField
           label="Password"
-          type="password"
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
         />
         <ErrorNote error={error} />
-        <Button type="submit" variant="primary" busy={busy} className="w-full">
-          Sign in
+        <Button type="submit" variant="primary" size="lg" busy={busy} className="w-full">
+          {busy ? "Signing in" : "Sign in"}
         </Button>
       </form>
-      <p className="mt-5 text-center text-sm text-stone-600">
-        New here?{" "}
-        <Link to="/signup" className="font-medium text-brand-700 hover:underline">
-          Create an account
-        </Link>
-      </p>
     </AuthLayout>
   );
 }

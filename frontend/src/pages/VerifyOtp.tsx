@@ -1,15 +1,103 @@
-import { MailCheck, TerminalSquare } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import { MailCheck, TerminalSquare, TimerReset } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { ClipboardEvent, FormEvent, KeyboardEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { pendingSignup } from "../session";
 import type { Challenge } from "../session";
-import { Button, ErrorNote } from "../ui";
+import { Alert, Button, ErrorNote, cx } from "../ui";
 import AuthLayout from "./AuthLayout";
 
+const LENGTH = 6;
 const seconds = (until: number, now: number) => Math.max(0, Math.ceil((until - now) / 1000));
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+/**
+ * Six single-digit boxes that behave like one field: typing advances, Backspace goes back,
+ * pasting or SMS/email autofill of the whole code fills every box.
+ */
+function CodeInput({
+  value,
+  onChange,
+  invalid,
+  disabled,
+}: {
+  value: string;
+  onChange: (code: string) => void;
+  invalid: boolean;
+  disabled: boolean;
+}) {
+  const boxes = useRef<Array<HTMLInputElement | null>>([]);
+  const digits = Array.from({ length: LENGTH }, (_, i) => value[i] ?? "");
+  const focus = (i: number) => boxes.current[Math.max(0, Math.min(LENGTH - 1, i))]?.focus();
+
+  function write(index: number, raw: string) {
+    let typed = raw.replace(/\D/g, "");
+    if (!typed) return;
+    // Typing into a filled box (caret after the old digit) replaces it with the new one.
+    if (digits[index] && typed.length === 2) typed = typed.startsWith(digits[index]) ? typed[1] : typed[0];
+    const chars = [...digits];
+    [...typed].forEach((c, k) => {
+      if (index + k < LENGTH) chars[index + k] = c;
+    });
+    const next = chars.join("");
+    onChange(next);
+    focus(Math.min(index + typed.length, LENGTH - 1));
+  }
+
+  function onKey(index: number, e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      if (digits[index]) onChange(value.slice(0, index) + value.slice(index + 1));
+      else if (index > 0) {
+        onChange(value.slice(0, index - 1) + value.slice(index));
+        focus(index - 1);
+      }
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      focus(index - 1);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      focus(index + 1);
+    }
+  }
+
+  function onPaste(e: ClipboardEvent<HTMLInputElement>) {
+    e.preventDefault();
+    write(0, e.clipboardData.getData("text"));
+  }
+
+  return (
+    <div role="group" aria-label="Verification code" className="flex justify-between gap-2 sm:gap-3">
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={(el) => {
+            boxes.current[i] = el;
+          }}
+          value={d}
+          onChange={(e) => write(i, e.target.value)}
+          onKeyDown={(e) => onKey(i, e)}
+          onPaste={onPaste}
+          onFocus={(e) => e.target.select()}
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete={i === 0 ? "one-time-code" : "off"}
+          autoFocus={i === 0}
+          disabled={disabled}
+          aria-label={`Digit ${i + 1} of ${LENGTH}`}
+          aria-invalid={invalid || undefined}
+          maxLength={LENGTH}
+          className={cx(
+            "tabular h-14 w-full min-w-0 max-w-14 rounded-lg border bg-surface text-center text-2xl font-semibold text-ink shadow-card",
+            "transition-[border-color,box-shadow] focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/20",
+            invalid ? "border-bad" : d ? "border-primary-line" : "border-line-strong",
+          )}
+        />
+      ))}
+    </div>
+  );
+}
 
 export default function VerifyOtp() {
   const { verify, resend } = useAuth();
@@ -18,6 +106,7 @@ export default function VerifyOtp() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<"verify" | "resend" | null>(null);
+  const [sent, setSent] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -31,8 +120,9 @@ export default function VerifyOtp() {
   const resendIn = seconds(challenge.resendAt, now);
   const development = challenge.delivery === "development";
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  async function submit(event?: FormEvent) {
+    event?.preventDefault();
+    if (code.length !== LENGTH) return;
     setBusy("verify");
     setError(null);
     try {
@@ -49,9 +139,11 @@ export default function VerifyOtp() {
   async function again() {
     setBusy("resend");
     setError(null);
+    setSent(false);
     try {
       setChallenge(await resend());
       setCode("");
+      setSent(true);
     } catch (e) {
       setError(e);
     } finally {
@@ -61,76 +153,86 @@ export default function VerifyOtp() {
 
   return (
     <AuthLayout
-      title="Verify your email"
+      title="Check your email"
       subtitle={
         <>
-          Enter the 6-digit code for <span className="font-medium text-stone-800">{challenge.email}</span>{" "}
-          to finish creating your account.
+          Enter the 6-digit code for{" "}
+          <span className="break-all font-semibold text-ink">{challenge.email}</span> to finish setting up your
+          account.
         </>
+      }
+      footer={
+        <Link
+          to="/login"
+          className="font-semibold text-primary-ink underline-offset-4 hover:underline"
+          onClick={() => pendingSignup.clear()}
+        >
+          Back to sign in
+        </Link>
       }
     >
       {development ? (
-        <div className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-          <div className="flex items-center gap-2 font-semibold">
-            <TerminalSquare className="h-4 w-4" /> Development mode: no email was sent
-          </div>
-          <p className="mt-1">
-            No mail server is configured for this environment, so the code is shown here instead.
-            In production it is delivered only to your inbox.
-          </p>
+        <Alert
+          tone="warn"
+          icon={<TerminalSquare className="h-5 w-5" aria-hidden />}
+          title="Development mode: no email was sent"
+          className="mb-6"
+        >
+          No mail server is configured here, so the code is shown below instead. In production it goes only to the
+          inbox.
           {challenge.dev_otp ? (
-            <div className="tabular mt-3 select-all rounded-lg bg-white px-3 py-2 text-center text-2xl font-semibold tracking-[0.4em] text-stone-900 ring-1 ring-amber-200">
+            <div className="tabular mt-3 select-all rounded-lg border border-warn-line bg-surface px-3 py-2 text-center text-2xl font-semibold tracking-[0.4em] text-ink">
               {challenge.dev_otp}
             </div>
           ) : (
-            <p className="mt-2 font-medium">Request a new code below to display it.</p>
+            <div className="mt-2 font-medium text-warn">Request a new code below to display it.</div>
           )}
-        </div>
+        </Alert>
       ) : (
-        <div className="mb-5 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-          <MailCheck className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>We emailed a code to {challenge.email}. Check your inbox and spam folder.</span>
-        </div>
+        <Alert tone="ok" icon={<MailCheck className="h-5 w-5" aria-hidden />} className="mb-6">
+          <span className="text-ok">We emailed a code to {challenge.email}. Check your inbox and spam folder.</span>
+        </Alert>
       )}
 
-      <form onSubmit={submit} className="space-y-4">
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-stone-600">Verification code</span>
-          <input
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            autoFocus
-            placeholder="000000"
-            className="tabular w-full rounded-lg border border-stone-300 px-3 py-3 text-center text-2xl tracking-[0.5em] outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-          />
-        </label>
-        <div className="flex items-center justify-between text-xs text-stone-500">
-          <span>
+      <form onSubmit={submit} className="space-y-5">
+        <CodeInput
+          value={code}
+          onChange={(next) => {
+            setCode(next);
+            setError(null);
+          }}
+          invalid={Boolean(error)}
+          disabled={busy === "verify"}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-subtle" aria-live="polite">
+          <span className={cx("tabular", expiresIn === 0 && "font-medium text-bad")}>
             {expiresIn > 0 ? `Code expires in ${clock(expiresIn)}` : "This code has expired. Request a new one."}
           </span>
-          <span>Single use</span>
+          <span>Single use · 5 attempts</span>
         </div>
         <ErrorNote error={error} />
+        {sent && !error && (
+          <p role="status" className="text-[13px] font-medium text-ok">
+            A new code is on its way. Earlier codes no longer work.
+          </p>
+        )}
         <Button
           type="submit"
           variant="primary"
+          size="lg"
           className="w-full"
           busy={busy === "verify"}
-          disabled={code.length !== 6}
+          disabled={code.length !== LENGTH}
         >
-          Verify and continue
+          {busy === "verify" ? "Verifying" : "Verify and continue"}
         </Button>
       </form>
 
-      <div className="mt-5 flex items-center justify-between text-sm">
+      <div className="mt-4 flex justify-center">
         <Button variant="ghost" onClick={() => void again()} busy={busy === "resend"} disabled={resendIn > 0}>
-          {resendIn > 0 ? `Send a new code in ${resendIn}s` : "Send a new code"}
+          <TimerReset className="h-4 w-4" aria-hidden />
+          {resendIn > 0 ? <span className="tabular">Send a new code in {resendIn}s</span> : "Send a new code"}
         </Button>
-        <Link to="/login" className="text-stone-500 hover:underline" onClick={() => pendingSignup.clear()}>
-          Back to log in
-        </Link>
       </div>
     </AuthLayout>
   );

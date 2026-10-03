@@ -1,87 +1,369 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, CalendarDays, LogOut } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
+  LogOut,
+  Menu,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import { ROLE_LABEL, useAuth } from "./auth";
 import AccessDenied from "./pages/AccessDenied";
+import { BrandMark } from "./pages/AuthLayout";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import VerifyOtp from "./pages/VerifyOtp";
 import type { Permission } from "./permissions";
-import { ROUTES } from "./routes";
-import { Loading, cx, fmtDate } from "./ui";
+import { NAV_GROUPS, ROUTES } from "./routes";
+import { Avatar, IconButton, Loading, Skeleton, cx, fmtDate } from "./ui";
 
 const PUBLIC_PATHS = ["/", "/login", "/signup", "/signup/verify"];
+const COLLAPSE_KEY = "nba.nav.collapsed";
 
-function Shell({ children }: { children: ReactNode }) {
-  const { user, can, logout } = useAuth();
-  const navigate = useNavigate();
-  const clock = useQuery({ queryKey: ["clock"], queryFn: () => api("/clock") });
-  if (!user) return null;
-  const nav = ROUTES.filter((r) => r.label && can(...r.anyOf));
+function readCollapsed() {
+  try {
+    return window.localStorage.getItem(COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Menu entries come from the route table, filtered by the account's permissions. */
+function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
+  const { can } = useAuth();
+  const items = ROUTES.filter((r) => r.label && can(...r.anyOf));
   return (
-    <div className="flex h-full">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-stone-200 bg-white">
-        <div className="flex items-center gap-2 px-5 py-4">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">
-            <Activity className="h-4 w-4" />
+    <nav aria-label="Main" className="scroll-quiet flex-1 overflow-y-auto px-3 py-2">
+      {NAV_GROUPS.map((group) => {
+        const entries = items.filter((r) => r.group === group.key);
+        if (!entries.length) return null;
+        return (
+          <div key={group.key} className="mb-4">
+            {collapsed ? (
+              <div className="mx-auto mb-2 h-px w-6 bg-nav-line" aria-hidden />
+            ) : (
+              <div className="px-3 pb-1.5 text-xs font-medium text-nav-ink-muted">{group.label}</div>
+            )}
+            <ul className="space-y-0.5">
+              {entries.map((item) => {
+                const label = item.label!(can);
+                return (
+                  <li key={item.path}>
+                    <NavLink
+                      to={item.path}
+                      onClick={onNavigate}
+                      title={collapsed ? label : undefined}
+                      className={({ isActive }) =>
+                        cx(
+                          "group relative flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
+                          collapsed && "justify-center px-0",
+                          isActive
+                            ? "bg-nav-active text-white"
+                            : "text-nav-ink hover:bg-nav-raised hover:text-white",
+                        )
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {isActive && (
+                            <span
+                              aria-hidden
+                              className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-nav-indicator"
+                            />
+                          )}
+                          <span className={cx("shrink-0", isActive ? "text-nav-indicator" : "text-nav-ink-muted group-hover:text-nav-ink")}>
+                            {item.icon}
+                          </span>
+                          <span className={cx("truncate", collapsed && "sr-only")}>{label}</span>
+                        </>
+                      )}
+                    </NavLink>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
-          <div>
-            <div className="text-sm font-semibold leading-tight text-stone-900">Next Best Action</div>
-            <div className="text-[11px] leading-tight text-stone-500">Healthcare engagement</div>
-          </div>
-        </div>
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
-          {nav.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                cx(
-                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium",
-                  isActive ? "bg-brand-50 text-brand-700" : "text-stone-600 hover:bg-stone-100",
-                )
-              }
-            >
-              {item.icon}
-              {item.label!(can)}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="border-t border-stone-200 p-3">
-          <div className="rounded-lg bg-stone-50 px-3 py-2.5">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">
-              Signed in as
+        );
+      })}
+    </nav>
+  );
+}
+
+function AccountBlock({ collapsed }: { collapsed: boolean }) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  if (!user) return null;
+  const signOut = () =>
+    // End on the landing page, so the next person to sign in is not sent to whatever page
+    // this account had open.
+    void logout().then(() => navigate("/", { replace: true }));
+  return (
+    <div className="border-t border-nav-line p-3">
+      <div className={cx("flex items-center gap-3 rounded-lg px-2 py-2", collapsed && "justify-center px-0")}>
+        <span className="[&>span]:bg-nav-raised [&>span]:text-nav-ink [&>span]:ring-nav-line">
+          <Avatar name={user.name} size="sm" />
+        </span>
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-white" title={user.name}>
+              {user.name}
             </div>
-            <div className="mt-0.5 truncate text-sm font-semibold text-stone-900">{user.name}</div>
-            <div className="text-xs font-medium text-brand-700">{ROLE_LABEL[user.role]}</div>
-            <div className="mt-0.5 truncate text-xs text-stone-500">{user.email}</div>
+            <div className="truncate text-xs text-nav-ink-muted" title={ROLE_LABEL[user.role]}>
+              {ROLE_LABEL[user.role]}
+            </div>
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={signOut}
+        title={collapsed ? "Sign out" : undefined}
+        className={cx(
+          "mt-1 flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-nav-ink transition-colors hover:bg-nav-raised hover:text-white",
+          collapsed && "justify-center px-0",
+        )}
+      >
+        <LogOut className="h-4 w-4 shrink-0" aria-hidden />
+        <span className={cx(collapsed && "sr-only")}>Sign out</span>
+      </button>
+    </div>
+  );
+}
+
+function SidebarBrand({ collapsed }: { collapsed: boolean }) {
+  return (
+    <div className={cx("flex h-16 shrink-0 items-center gap-3 px-5", collapsed && "justify-center px-0")}>
+      <BrandMark />
+      {!collapsed && (
+        <div className="min-w-0 leading-tight">
+          <div className="truncate text-[15px] font-semibold text-white">Next Best Action</div>
+          <div className="truncate text-xs text-nav-ink-muted">Engagement intelligence</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Account menu in the top bar: who is signed in, with which role, and sign-out. */
+function AccountMenu() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  if (!user) return null;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex min-h-10 items-center gap-2.5 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-subtle"
+      >
+        <Avatar name={user.name} size="sm" />
+        <span className="hidden min-w-0 text-left leading-tight md:block">
+          <span className="block max-w-44 truncate text-sm font-semibold text-ink">{user.name}</span>
+          <span className="block max-w-44 truncate text-xs text-ink-subtle">{ROLE_LABEL[user.role]}</span>
+        </span>
+        <ChevronDown className="h-4 w-4 text-ink-subtle" aria-hidden />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="animate-rise absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line bg-surface shadow-overlay"
+          style={{ zIndex: "var(--z-drawer)" }}
+        >
+          <div className="border-b border-line px-4 py-3">
+            <div className="text-xs text-ink-subtle">Signed in as</div>
+            <div className="mt-0.5 truncate text-sm font-semibold text-ink" title={user.name}>
+              {user.name}
+            </div>
+            <div className="truncate text-[13px] text-ink-muted" title={user.email}>
+              {user.email}
+            </div>
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary-soft px-2 py-0.5 text-xs font-semibold text-primary-ink">
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> {ROLE_LABEL[user.role]}
+            </div>
           </div>
           <button
-            onClick={() =>
-              // End on the landing page, so the next person to sign in is not sent to
-              // whatever page this account had open.
-              void logout().then(() => navigate("/", { replace: true }))
-            }
-            className="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
+            type="button"
+            role="menuitem"
+            onClick={() => void logout().then(() => navigate("/", { replace: true }))}
+            className="flex w-full items-center gap-2.5 px-4 py-3 text-sm font-medium text-ink hover:bg-subtle"
           >
-            <LogOut className="h-4 w-4" /> Sign out
+            <LogOut className="h-4 w-4 text-ink-subtle" aria-hidden /> Sign out
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+function DemoDate() {
+  const clock = useQuery({ queryKey: ["clock"], queryFn: () => api("/clock") });
+  return (
+    <div
+      className="flex min-h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-xs font-medium text-ink-muted"
+      title="The demonstration runs on its own calendar"
+    >
+      <CalendarDays className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="hidden sm:inline">Demo date</span>
+      {clock.data ? (
+        <span className="tabular whitespace-nowrap text-ink">{fmtDate(clock.data.as_of_date)}</span>
+      ) : (
+        <Skeleton className="h-3 w-20" />
+      )}
+    </div>
+  );
+}
+
+function Shell({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const location = useLocation();
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [drawer, setDrawer] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+
+  // Close the mobile drawer and move focus to the page on every navigation.
+  useEffect(() => {
+    setDrawer(false);
+    window.scrollTo({ top: 0 });
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(false);
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [drawer]);
+
+  const toggle = () =>
+    setCollapsed((v) => {
+      try {
+        window.localStorage.setItem(COLLAPSE_KEY, v ? "0" : "1");
+      } catch {
+        /* storage unavailable: keep the choice for this visit only */
+      }
+      return !v;
+    });
+
+  if (!user) return null;
+  return (
+    <div className="min-h-dvh lg:flex">
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
+
+      {/* Desktop sidebar */}
+      <aside
+        aria-label="Application"
+        className={cx(
+          "sticky top-0 hidden h-dvh shrink-0 flex-col bg-nav transition-[width] duration-200 lg:flex",
+          collapsed ? "w-[76px]" : "w-64",
+        )}
+        style={{ zIndex: "var(--z-nav)" }}
+      >
+        <SidebarBrand collapsed={collapsed} />
+        <Navigation collapsed={collapsed} />
+        <div className={cx("px-3 pb-1", collapsed && "flex justify-center")}>
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+            title={collapsed ? "Expand navigation" : "Collapse navigation"}
+            className={cx(
+              "flex min-h-9 items-center gap-3 rounded-lg px-3 text-xs font-medium text-nav-ink-muted transition-colors hover:bg-nav-raised hover:text-white",
+              collapsed ? "justify-center px-0 w-10" : "w-full",
+            )}
+          >
+            {collapsed ? <ChevronsRight className="h-4 w-4" aria-hidden /> : <ChevronsLeft className="h-4 w-4" aria-hidden />}
+            {!collapsed && "Collapse"}
+          </button>
+        </div>
+        <AccountBlock collapsed={collapsed} />
       </aside>
+
+      {/* Mobile and tablet drawer */}
+      {drawer && (
+        <div className="lg:hidden" style={{ zIndex: "var(--z-drawer)", position: "relative" }}>
+          <div className="animate-fade fixed inset-0 bg-black/45" aria-hidden onClick={() => setDrawer(false)} />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation"
+            className="animate-drawer-left fixed inset-y-0 left-0 flex w-[min(20rem,86vw)] flex-col bg-nav shadow-overlay"
+          >
+            <div className="flex items-center justify-between pr-3">
+              <SidebarBrand collapsed={false} />
+              <button
+                type="button"
+                aria-label="Close navigation"
+                autoFocus
+                onClick={() => setDrawer(false)}
+                className="grid h-10 w-10 place-items-center rounded-lg text-nav-ink hover:bg-nav-raised"
+              >
+                <X className="h-5 w-5" aria-hidden />
+              </button>
+            </div>
+            <Navigation collapsed={false} onNavigate={() => setDrawer(false)} />
+            <AccountBlock collapsed={false} />
+          </aside>
+        </div>
+      )}
+
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-stone-200 bg-white px-6 py-2.5">
-          <div className="text-xs text-stone-500">
-            You see what your role and assignments allow. Synthetic demonstration data only.
+        <header
+          className="sticky top-0 flex h-16 items-center gap-3 border-b border-line bg-canvas/85 px-4 backdrop-blur-md sm:px-6 lg:px-8"
+          style={{ zIndex: "var(--z-sticky)" }}
+        >
+          <IconButton label="Open navigation" className="-ml-2 lg:hidden" onClick={() => setDrawer(true)}>
+            <Menu className="h-5 w-5" aria-hidden />
+          </IconButton>
+          <div className="flex min-w-0 items-center gap-2.5 lg:hidden">
+            <BrandMark small />
+            <span className="hidden truncate text-[15px] font-semibold text-ink sm:inline">Next Best Action</span>
           </div>
-          <div className="flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700">
-            <CalendarDays className="h-3.5 w-3.5" />
-            Demo date {fmtDate(clock.data?.as_of_date)}
+          <p className="hidden min-w-0 truncate text-[13px] text-ink-subtle xl:block">
+            Access follows your role and assignments. All records are synthetic.
+          </p>
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <DemoDate />
+            <AccountMenu />
           </div>
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</main>
+        <main
+          id="main"
+          ref={mainRef}
+          tabIndex={-1}
+          className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 outline-none sm:px-6 sm:py-8 lg:px-8"
+        >
+          <div key={location.pathname} className="animate-rise">
+            <Suspense fallback={<Loading />}>{children}</Suspense>
+          </div>
+        </main>
       </div>
     </div>
   );
@@ -93,10 +375,21 @@ function Guard({ anyOf, children }: { anyOf: Permission[]; children: ReactNode }
   return can(...anyOf) ? <>{children}</> : <AccessDenied />;
 }
 
+function Restoring() {
+  return (
+    <div role="status" className="grid min-h-dvh place-items-center bg-canvas">
+      <div className="flex flex-col items-center gap-4 text-sm text-ink-subtle">
+        <BrandMark />
+        Restoring your session
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { user, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <Loading label="Restoring your session" />;
+  if (loading) return <Restoring />;
 
   if (!user) {
     // Signed out: only the public pages exist. Anything else goes to sign-in, and the

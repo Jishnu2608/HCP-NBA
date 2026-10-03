@@ -1,97 +1,181 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, X } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarX2,
+  Check,
+  Gauge,
+  HeartPulse,
+  MessageCircleMore,
+  Pill,
+  ShieldAlert,
+  ShieldCheck,
+  Stethoscope,
+  Users,
+  X,
+} from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, query } from "../api";
 import type { Json } from "../api";
 import {
+  Avatar,
   Badge,
+  Button,
   Card,
-  Empty,
-  ErrorNote,
-  Field,
+  ChannelIcon,
+  DataTable,
+  EmptyState,
+  ErrorState,
   Loading,
+  LoadingRows,
+  Meter,
   PageHeader,
+  RISK,
+  SearchInput,
+  Segmented,
   SegmentBadge,
+  Stat,
   StatusBadge,
-  Table,
+  Toolbar,
   channelName,
   cx,
   fmtDate,
+  num,
   pct,
   titleCase,
 } from "../ui";
+import type { Column } from "../ui";
 
 const DAY = 86_400_000;
 const WINDOW_DAYS = 365;
 
+type RiskFilter = "" | "high" | "medium" | "low";
+
 export function PatientList() {
-  const [risk, setRisk] = useState("");
+  const navigate = useNavigate();
+  const [risk, setRisk] = useState<RiskFilter>("");
   const [q, setQ] = useState("");
   const list = useQuery({
     queryKey: ["patients", risk, q],
     queryFn: () => api(`/patients${query({ risk, q, limit: 100 })}`),
+    placeholderData: (previous) => previous,
   });
   const byRisk: Record<string, number> = list.data?.by_risk ?? {};
+  const total = Object.values(byRisk).reduce((a, b) => a + b, 0);
+
+  const columns: Column<Json>[] = [
+    {
+      key: "patient",
+      header: "Patient",
+      primary: true,
+      className: "min-w-56",
+      cell: (p) => (
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar name={p.name} size="sm" />
+          <div className="min-w-0">
+            <Link
+              to={`/patients/${p.patient_id}`}
+              tabIndex={-1}
+              onClick={(e) => e.stopPropagation()}
+              className="block font-semibold text-ink [overflow-wrap:anywhere] hover:text-primary-ink hover:underline"
+              title={p.name}
+            >
+              {p.name}
+            </Link>
+            <div className="tabular text-xs text-ink-subtle">{p.patient_id}</div>
+          </div>
+        </div>
+      ),
+    },
+    { key: "risk", header: "Adherence risk", hideOnMobile: true, cell: (p) => <SegmentBadge value={p.risk_segment} /> },
+    { key: "plan", header: "Plan", cell: (p) => <span className="text-ink-muted">{p.plan_type}</span> },
+    {
+      key: "location",
+      header: "Location",
+      cell: (p) => (
+        <span className="text-ink-muted">
+          {p.city}, {p.state}
+        </span>
+      ),
+    },
+    {
+      key: "channel",
+      header: "Preferred channel",
+      cell: (p) => (
+        <span className="inline-flex items-center gap-1.5 text-ink-muted">
+          <ChannelIcon channel={p.preferred_channel} className="h-3.5 w-3.5" />
+          {channelName(p.preferred_channel)}
+        </span>
+      ),
+    },
+  ];
+
   return (
     <>
       <PageHeader
         title="Patients"
-        subtitle="Risk is recalculated every cycle from days covered, the current gap and the refill trend."
+        subtitle="Adherence risk is recalculated every cycle from days covered, the current gap and the refill trend."
       />
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        {["", "high", "medium", "low"].map((r) => (
-          <button
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Patients" value={num(total)} icon={<Users className="h-4 w-4" aria-hidden />} />
+        {(["high", "medium", "low"] as const).map((r) => (
+          <Stat
             key={r}
-            onClick={() => setRisk(r)}
-            className={cx(
-              "rounded-full px-3 py-1.5 text-sm font-medium",
-              risk === r
-                ? "bg-brand-600 text-white"
-                : "bg-white text-stone-600 ring-1 ring-inset ring-stone-200 hover:bg-stone-50",
-            )}
-          >
-            {r ? `${titleCase(r)} risk` : "All"}
-            <span className="tabular ml-1.5 opacity-70">
-              {r ? (byRisk[r] ?? 0) : Object.values(byRisk).reduce((a, b) => a + b, 0)}
-            </span>
-          </button>
+            label={RISK[r].label}
+            value={num(byRisk[r] ?? 0)}
+            hint={total ? `${pct((byRisk[r] ?? 0) / total)} of patients` : undefined}
+            tone={r === "high" ? "bad" : r === "medium" ? "warn" : "ok"}
+            icon={RISK[r].icon}
+          />
         ))}
-        <input
+      </div>
+      <Toolbar>
+        <Segmented
+          label="Filter by risk"
+          value={risk}
+          onChange={setRisk}
+          options={[
+            { value: "", label: "All", count: total },
+            { value: "high", label: "High risk", count: byRisk.high ?? 0 },
+            { value: "medium", label: "Medium risk", count: byRisk.medium ?? 0 },
+            { value: "low", label: "Low risk", count: byRisk.low ?? 0 },
+          ]}
+        />
+        <SearchInput
+          label="Search patients"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search name or ID"
-          className="ml-auto w-56 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm"
+          className="w-full lg:w-72"
         />
-      </div>
-      <Card>
+      </Toolbar>
+      <Card flush>
         {list.isLoading ? (
-          <Loading />
+          <div className="p-5">
+            <LoadingRows rows={8} label="Loading patients" />
+          </div>
         ) : list.error ? (
-          <ErrorNote error={list.error} />
+          <ErrorState error={list.error} title="Patients could not be loaded" />
         ) : !list.data.items.length ? (
-          <Empty>No patients match.</Empty>
+          <EmptyState title={q ? "No patients match your search" : "No patients in this view"} icon={<Users className="h-5 w-5" />}>
+            {q ? "Check the spelling, or search by patient ID." : risk === "high" ? "No high-risk patients are currently assigned." : undefined}
+          </EmptyState>
         ) : (
-          <Table head={["Patient", "Risk", "Plan", "Location", "Preferred channel"]}>
-            {list.data.items.map((p: Json) => (
-              <tr key={p.patient_id} className="hover:bg-stone-50">
-                <td className="px-3 py-2.5">
-                  <Link to={`/patients/${p.patient_id}`} className="font-medium text-brand-700 hover:underline">
-                    {p.name}
-                  </Link>
-                  <span className="ml-2 text-xs text-stone-400">{p.patient_id}</span>
-                </td>
-                <td className="px-3 py-2.5">
-                  <SegmentBadge value={p.risk_segment} />
-                </td>
-                <td className="px-3 py-2.5 text-stone-600">{p.plan_type}</td>
-                <td className="px-3 py-2.5 text-stone-600">
-                  {p.city}, {p.state}
-                </td>
-                <td className="px-3 py-2.5 text-stone-600">{channelName(p.preferred_channel)}</td>
-              </tr>
-            ))}
-          </Table>
+          <>
+            <DataTable
+              caption="Patients"
+              columns={columns}
+              rows={list.data.items}
+              rowKey={(p) => p.patient_id}
+              onRowClick={(p) => navigate(`/patients/${p.patient_id}`)}
+              mobileAside={(p) => <SegmentBadge value={p.risk_segment} />}
+            />
+            {list.data.total > list.data.items.length && (
+              <p className="border-t border-line px-6 py-3 text-[13px] text-ink-subtle">
+                Showing the first {list.data.items.length} of {num(list.data.total)}. Search to narrow the list.
+              </p>
+            )}
+          </>
         )}
       </Card>
     </>
@@ -110,6 +194,8 @@ function coverage(fills: Json[]): Array<[number, number]> {
   return out;
 }
 
+const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
+
 export function CoverageTimeline({ fills, asOf }: { fills: Json[]; asOf: string }) {
   const end = Date.parse(asOf) + DAY;
   const start = end - WINDOW_DAYS * DAY;
@@ -121,13 +207,20 @@ export function CoverageTimeline({ fills, asOf }: { fills: Json[]; asOf: string 
     months.push(d.getTime());
   }
   return (
-    <div>
-      <div className="relative h-7 overflow-hidden rounded-md bg-red-50 ring-1 ring-inset ring-red-100">
+    <figure aria-label="Medication supply over the last 12 months">
+      <div
+        className="relative h-8 overflow-hidden rounded-md ring-1 ring-inset ring-bad-line"
+        style={{
+          backgroundColor: "var(--bad-soft)",
+          backgroundImage:
+            "repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--bad) 14%, transparent) 5px 6px)",
+        }}
+      >
         {intervals.map(([s, e], i) => (
           <div
             key={i}
-            title={`Covered ${fmtDate(new Date(s).toISOString().slice(0, 10))} to ${fmtDate(new Date(e - DAY).toISOString().slice(0, 10))}`}
-            className="absolute inset-y-0 border-r-2 border-white bg-brand-500"
+            title={`Covered ${fmtDate(iso(s))} to ${fmtDate(iso(e - DAY))}`}
+            className="absolute inset-y-0 border-r-2 border-surface bg-primary"
             style={{ left: `${x(s)}%`, width: `${Math.max(x(e) - x(s), 0)}%` }}
           />
         ))}
@@ -137,171 +230,337 @@ export function CoverageTimeline({ fills, asOf }: { fills: Json[]; asOf: string 
             <div
               key={i}
               title={`Filled ${fmtDate(f.fill_date)} (${f.days_supply} days)`}
-              className="absolute inset-y-0 w-0.5 bg-brand-900"
+              className="absolute inset-y-0 w-0.5 bg-ink"
               style={{ left: `${x(Date.parse(f.fill_date))}%` }}
             />
           ))}
       </div>
-      <div className="relative mt-1 h-4 text-[10px] text-stone-400">
-        {months.map((m) => (
-          <span key={m} className="absolute" style={{ left: `${x(m)}%` }}>
-            {new Date(m).toLocaleDateString("en-GB", { month: "short" })}
+      <div className="relative mt-1.5 h-4 text-[11px] text-ink-subtle" aria-hidden>
+        {months.map((m, i) => (
+          <span
+            key={m}
+            className={cx("absolute -translate-x-1/2", i % 2 === 1 && "hidden sm:inline")}
+            style={{ left: `${x(m)}%` }}
+          >
+            {new Date(m).toLocaleDateString("en-US", { month: "short" })}
           </span>
         ))}
       </div>
-      <div className="mt-1 flex gap-4 text-xs text-stone-500">
+      <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-subtle">
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-brand-500" /> Medication on hand
+          <span className="h-2.5 w-3 rounded-sm bg-primary" aria-hidden /> Medication on hand
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-red-100 ring-1 ring-red-200" /> No supply
+          <span
+            className="h-2.5 w-3 rounded-sm ring-1 ring-bad-line"
+            style={{
+              backgroundColor: "var(--bad-soft)",
+              backgroundImage:
+                "repeating-linear-gradient(135deg, transparent 0 2px, color-mix(in srgb, var(--bad) 30%, transparent) 2px 3px)",
+            }}
+            aria-hidden
+          />
+          No supply
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-0.5 bg-brand-900" /> Fill
+          <span className="h-2.5 w-0.5 bg-ink" aria-hidden /> Refill
         </span>
-      </div>
-    </div>
+      </figcaption>
+    </figure>
   );
 }
 
+/** Response rate per channel as labelled bars. */
 export function ChannelTable({ channels }: { channels: Record<string, Json> }) {
+  const entries = Object.entries(channels);
+  if (!entries.length) return <p className="text-sm text-ink-subtle">No outreach history yet.</p>;
   return (
-    <Table head={["Channel", "Sent", "Responded", "Response rate (smoothed)"]}>
-      {Object.entries(channels).map(([name, c]) => (
-        <tr key={name}>
-          <td className="px-3 py-2">{channelName(name)}</td>
-          <td className="tabular px-3 py-2">{c.sent}</td>
-          <td className="tabular px-3 py-2">{c.engaged}</td>
-          <td className="tabular px-3 py-2">{c.sent ? pct(c.rate) : "No history"}</td>
-        </tr>
+    <ul className="space-y-3.5">
+      {entries.map(([name, c]) => (
+        <li key={name}>
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="flex min-w-0 items-center gap-2 text-ink">
+              <ChannelIcon channel={name} className="h-4 w-4 shrink-0 text-ink-subtle" />
+              <span className="truncate">{channelName(name)}</span>
+            </span>
+            <span className="tabular shrink-0 font-semibold text-ink">{c.sent ? pct(c.rate) : "—"}</span>
+          </div>
+          <Meter value={c.sent ? c.rate : 0} className="mt-1.5" label={`${channelName(name)} response rate`} />
+          <div className="tabular mt-1 text-xs text-ink-subtle">
+            {c.sent ? `${c.engaged} of ${c.sent} responded` : "No history on this channel"}
+          </div>
+        </li>
       ))}
-    </Table>
+      <li className="text-xs text-ink-subtle">Rates are smoothed toward the average, so one response is not over-read.</li>
+    </ul>
   );
 }
 
+const OUTCOME_TONE = (outcome: string) =>
+  outcome === "filled"
+    ? "ok"
+    : ["no_response", "declined"].includes(outcome)
+      ? "neutral"
+      : outcome === "pending"
+        ? "warn"
+        : "info";
+
+/** Outreach history as a timeline: newest first, the first few shown. */
 export function History({ items }: { items: Json[] }) {
-  if (!items.length) return <Empty>No outreach on record.</Empty>;
+  const [all, setAll] = useState(false);
+  if (!items.length) {
+    return <EmptyState compact title="No outreach on record" icon={<MessageCircleMore className="h-5 w-5" />} />;
+  }
+  const shown = all ? items : items.slice(0, 8);
   return (
-    <Table head={["Date", "Type", "Channel", "Content", "Outcome", "Source"]}>
-      {items.map((i) => (
-        <tr key={i.id}>
-          <td className="whitespace-nowrap px-3 py-2 text-stone-600">{fmtDate(i.ts)}</td>
-          <td className="px-3 py-2">{titleCase(i.type_label)}</td>
-          <td className="px-3 py-2 text-stone-600">{titleCase(i.channel_label)}</td>
-          <td className="px-3 py-2 text-stone-600">{i.content_title ?? "—"}</td>
-          <td className="px-3 py-2">
-            <Badge
-              tone={
-                i.outcome === "filled"
-                  ? "good"
-                  : ["no_response", "declined"].includes(i.outcome)
-                    ? "neutral"
-                    : i.outcome === "pending"
-                      ? "warn"
-                      : "info"
-              }
+    <>
+      <ol className="relative space-y-1 before:absolute before:inset-y-3 before:left-[15px] before:w-px before:bg-line">
+        {shown.map((i) => (
+          <li key={i.id} className="relative flex gap-3 rounded-lg py-2.5">
+            <span
+              className={cx(
+                "relative z-[1] grid h-8 w-8 shrink-0 place-items-center rounded-full ring-1",
+                i.source === "nba" ? "bg-primary-soft text-primary-ink ring-primary-line" : "bg-surface text-ink-subtle ring-line-strong",
+              )}
             >
-              {titleCase(i.outcome)}
-            </Badge>
-          </td>
-          <td className="px-3 py-2">
-            {i.source === "nba" ? <Badge tone="brand">Engine</Badge> : <span className="text-xs text-stone-400">Earlier programme</span>}
-          </td>
-        </tr>
-      ))}
-    </Table>
+              <ChannelIcon channel={i.channel} className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-sm font-semibold text-ink">{titleCase(i.type_label)}</span>
+                <span className="text-sm text-ink-muted">by {i.channel_label}</span>
+                <Badge tone={OUTCOME_TONE(i.outcome)}>{titleCase(i.outcome)}</Badge>
+              </div>
+              <div className="mt-0.5 flex flex-wrap gap-x-2 text-[13px] text-ink-subtle">
+                <span className="tabular">{fmtDate(i.ts)}</span>
+                {i.content_title && <span className="truncate">· {i.content_title}</span>}
+                <span>· {i.source === "nba" ? "Engine recommendation" : "Earlier outreach"}</span>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
+      {items.length > 8 && (
+        <Button variant="ghost" size="sm" className="mt-2" onClick={() => setAll(!all)}>
+          {all ? "Show fewer" : `Show all ${items.length} interactions`}
+        </Button>
+      )}
+    </>
   );
 }
 
+/** The open recommendation for a person, as the most prominent element of a 360 page. */
 export function OpenNba({ nba }: { nba: Json | null }) {
   if (!nba) {
-    return <p className="text-sm text-stone-500">No open recommendation. Nothing needs to be sent right now.</p>;
-  }
-  return (
-    <Link to={`/nba/${nba.id}`} className="block rounded-lg border border-brand-100 bg-brand-50 p-3 hover:border-brand-500">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-brand-900">
-          {titleCase(nba.action_label)} by {nba.channel_label}
-        </span>
-        <StatusBadge status={nba.status} />
+    return (
+      <div className="rounded-xl border border-dashed border-line-strong bg-surface p-5">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
+          <span className="h-2 w-2 rounded-full bg-line-strong" aria-hidden /> Next best action
+        </div>
+        <p className="mt-2 text-sm text-ink-muted">No open recommendation. Nothing needs to be sent right now.</p>
       </div>
-      <p className="mt-1 text-sm text-stone-700">{nba.block_reason ?? nba.rationale_summary ?? nba.timing_note}</p>
+    );
+  }
+  const blocked = nba.status === "blocked";
+  return (
+    <Link
+      to={`/nba/${nba.id}`}
+      className={cx(
+        "group block overflow-hidden rounded-xl border bg-surface shadow-card transition-shadow hover:shadow-raised",
+        blocked ? "border-bad-line" : "border-primary-line",
+      )}
+    >
+      <div className={cx("h-1", blocked ? "bg-bad" : "bg-primary")} aria-hidden />
+      <div className="p-5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
+            <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad" : "bg-accent")} aria-hidden /> Next best action
+          </span>
+          <StatusBadge status={nba.status} />
+        </div>
+        <div className={cx("mt-2 text-xl font-semibold leading-tight tracking-[-0.01em]", blocked ? "text-ink-muted" : "text-ink")}>
+          {titleCase(nba.action_label)}
+        </div>
+        <div className="mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
+          <ChannelIcon channel={nba.channel} className="h-4 w-4" /> {titleCase(nba.channel_label)}
+        </div>
+        <p className={cx("mt-3 text-sm leading-6", blocked ? "text-bad" : "text-ink-muted")}>
+          {blocked && <ShieldAlert className="mr-1 inline h-4 w-4 align-[-3px]" aria-hidden />}
+          {nba.block_reason ?? nba.rationale_summary ?? nba.timing_note}
+        </p>
+        <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary-ink">
+          {blocked ? "See why it was blocked" : "Review recommendation"}
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+        </span>
+      </div>
     </Link>
+  );
+}
+
+function TherapyCard({ t, fills, asOf }: { t: Json; fills: Json[]; asOf: string }) {
+  const below = t.pdc !== null && t.pdc < 0.8;
+  return (
+    <Card
+      title={
+        <span className="flex flex-wrap items-center gap-x-2">
+          <Pill className="h-4 w-4 text-ink-subtle" aria-hidden /> {titleCase(t.drug_name)}
+          <span className="font-normal text-ink-subtle">· {titleCase(t.measure)}</span>
+        </span>
+      }
+      action={<SegmentBadge value={t.risk_segment} />}
+    >
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="col-span-2 sm:col-span-1 lg:col-span-2">
+          <dt className="flex items-baseline justify-between text-[13px] text-ink-subtle">
+            Days covered (PDC)
+            <span className="text-xs">target 80%</span>
+          </dt>
+          <dd className={cx("tabular mt-0.5 text-2xl font-semibold", below ? "text-bad" : "text-ok")}>{pct(t.pdc)}</dd>
+          <dd className="relative mt-1.5">
+            <Meter value={t.pdc} tone={below ? "bad" : "ok"} label="Proportion of days covered" />
+            <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-ink" style={{ left: "80%" }} aria-hidden />
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">MPR</dt>
+          <dd className="tabular mt-0.5 text-lg font-semibold text-ink">{pct(t.mpr)}</dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Gap days</dt>
+          <dd className={cx("tabular mt-0.5 text-lg font-semibold", t.gap_days > 0 ? "text-bad" : "text-ink")}>
+            {t.gap_days ?? "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Last refill</dt>
+          <dd className="tabular mt-0.5 text-sm font-semibold text-ink">{fmtDate(t.last_fill_date)}</dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Risk score</dt>
+          <dd className="tabular mt-0.5 text-lg font-semibold text-ink">
+            {t.risk_score?.toFixed(0) ?? "—"}
+            <span className="text-sm font-normal text-ink-subtle"> / 100</span>
+          </dd>
+          <dd className="tabular text-xs text-ink-subtle">Copay ${t.copay?.toFixed(0)}</dd>
+        </div>
+      </dl>
+      <div className="mt-6">
+        <CoverageTimeline fills={fills} asOf={asOf} />
+      </div>
+    </Card>
   );
 }
 
 export function PatientProfile() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const profile = useQuery({ queryKey: ["patient", id], queryFn: () => api(`/patients/${id}`) });
-  if (profile.isLoading) return <Loading />;
-  if (profile.error) return <ErrorNote error={profile.error} />;
+  if (profile.isLoading) return <Loading label="Loading patient" />;
+  if (profile.error) return <ErrorState error={profile.error} title="This patient could not be loaded" />;
   const p: Json = profile.data;
   const current = p.consents.filter((c: Json) => c.in_effect);
+  const outreach = current.filter((c: Json) => c.channel);
+  const granted = outreach.filter((c: Json) => c.granted).length;
+  const pdcs = p.therapies.map((t: Json) => t.pdc).filter((v: number | null) => v !== null) as number[];
+  const lowestPdc = pdcs.length ? Math.min(...pdcs) : null;
+  const longestGap = Math.max(0, ...p.therapies.map((t: Json) => t.gap_days ?? 0));
+
   return (
     <>
-      <button onClick={() => navigate(-1)} className="mb-3 flex items-center gap-1 text-sm text-stone-500 hover:text-stone-800">
-        <ArrowLeft className="h-4 w-4" /> Back
-      </button>
       <PageHeader
-        title={p.name}
-        subtitle={`${p.patient_id} · ${p.age} years · ${p.plan_type} · ${p.city}, ${p.state}`}
-        action={<SegmentBadge value={p.risk_segment} />}
+        back
+        title={
+          <span className="flex items-center gap-3">
+            <Avatar name={p.name} size="lg" />
+            <span className="min-w-0 break-words">{p.name}</span>
+          </span>
+        }
+        meta={<SegmentBadge value={p.risk_segment} />}
+        subtitle={
+          <span className="tabular">
+            {p.patient_id} · {p.age} years · {p.plan_type} · {p.city}, {p.state}
+          </span>
+        }
       />
-      <div className="grid gap-5 xl:grid-cols-3">
-        <div className="space-y-5 xl:col-span-2">
+
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6 xl:grid-cols-5">
+        <Stat
+          label="Lowest days covered"
+          value={pct(lowestPdc)}
+          hint="target 80% (PDC)"
+          tone={lowestPdc !== null && lowestPdc < 0.8 ? "bad" : "ok"}
+          icon={<Gauge className="h-4 w-4" aria-hidden />}
+          className="md:col-span-2 xl:col-span-1"
+        />
+        <Stat
+          label="Current gap"
+          value={`${longestGap} days`}
+          hint={longestGap ? "without medication" : "supply on hand"}
+          tone={longestGap ? "bad" : undefined}
+          icon={<CalendarX2 className="h-4 w-4" aria-hidden />}
+          className="md:col-span-2 xl:col-span-1"
+        />
+        <Stat label="Therapies" value={p.therapies.length} hint={p.therapies.map((t: Json) => titleCase(t.measure)).join(", ")} icon={<Pill className="h-4 w-4" aria-hidden />} className="md:col-span-2 xl:col-span-1" />
+        <Stat
+          label="Preferred channel"
+          value={<span className="text-lg">{channelName(p.preferred_channel)}</span>}
+          hint="as stated by the patient"
+          icon={<ChannelIcon channel={p.preferred_channel} />}
+          className="md:col-span-3 xl:col-span-1"
+        />
+        <Stat
+          label="Outreach consent"
+          value={`${granted} of ${outreach.length}`}
+          hint="channels granted"
+          tone={granted ? undefined : "warn"}
+          icon={<ShieldCheck className="h-4 w-4" aria-hidden />}
+          className="col-span-2 md:col-span-3 xl:col-span-1"
+        />
+      </div>
+
+      {/* Small screens: recommendation, then therapies, then details. Wide screens: two columns. */}
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[auto_1fr]">
+        <div className="min-w-0 xl:col-start-2 xl:row-start-1">
+          <OpenNba nba={p.open_nba} />
+        </div>
+        <div className="min-w-0 space-y-6 xl:col-start-1 xl:row-span-2 xl:row-start-1">
           {p.therapies.map((t: Json) => (
-            <Card
+            <TherapyCard
               key={t.therapy_id}
-              title={`${titleCase(t.drug_name)} · ${titleCase(t.measure)}`}
-              action={<SegmentBadge value={t.risk_segment} />}
-            >
-              <dl className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-5">
-                <Field label="Days covered (PDC)">
-                  <span className={cx("tabular font-semibold", t.pdc < 0.8 ? "text-red-700" : "text-emerald-700")}>
-                    {pct(t.pdc)}
-                  </span>
-                </Field>
-                <Field label="Days without supply">
-                  <span className="tabular">{t.gap_days}</span>
-                </Field>
-                <Field label="Last fill">{fmtDate(t.last_fill_date)}</Field>
-                <Field label="Copay">${t.copay?.toFixed(0)}</Field>
-                <Field label="Risk score">
-                  <span className="tabular">{t.risk_score?.toFixed(0)} / 100</span>
-                </Field>
-              </dl>
-              <CoverageTimeline fills={p.fills.filter((f: Json) => f.therapy_id === t.therapy_id)} asOf={p.as_of_date} />
-            </Card>
+              t={t}
+              fills={p.fills.filter((f: Json) => f.therapy_id === t.therapy_id)}
+              asOf={p.as_of_date}
+            />
           ))}
-          <Card title="Outreach history">
+          <Card title="Outreach timeline" description="Newest first. Engine recommendations are highlighted.">
             <History items={p.interactions} />
           </Card>
         </div>
-        <div className="space-y-5">
-          <Card title="Next best action">
-            <OpenNba nba={p.open_nba} />
-          </Card>
-          <Card title="Consent on record">
-            <ul className="space-y-1.5 text-sm">
+
+        <div className="min-w-0 space-y-6 xl:col-start-2 xl:row-start-2">
+          <Card title="Consent on record" description="Only the patient can change consent.">
+            <ul className="divide-y divide-line">
               {current.map((c: Json, i: number) => (
-                <li key={i} className="flex items-center justify-between">
-                  <span>{c.channel ? `Contact by ${channelName(c.channel).toLowerCase()}` : "Share adherence with provider"}</span>
+                <li key={i} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                  <span className="flex min-w-0 items-center gap-2 text-sm text-ink">
+                    {c.channel ? (
+                      <ChannelIcon channel={c.channel} className="h-4 w-4 shrink-0 text-ink-subtle" />
+                    ) : (
+                      <Stethoscope className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
+                    )}
+                    <span className="truncate">{c.channel ? channelName(c.channel) : "Share adherence with provider"}</span>
+                  </span>
                   {c.granted ? (
-                    <Badge tone="good">
-                      <Check className="h-3 w-3" /> Granted
+                    <Badge tone="ok" icon={<Check className="h-3.5 w-3.5" aria-hidden />}>
+                      Granted
                     </Badge>
                   ) : (
-                    <Badge tone="bad">
-                      <X className="h-3 w-3" /> Not granted
+                    <Badge tone="bad" icon={<X className="h-3.5 w-3.5" aria-hidden />}>
+                      Not granted
                     </Badge>
                   )}
                 </li>
               ))}
             </ul>
-            <p className="mt-3 text-xs text-stone-500">
-              Stated preference: {channelName(p.preferred_channel).toLowerCase()}. Only the patient can change consent.
-            </p>
           </Card>
           {p.features && (
             <Card title="Response by channel">
@@ -309,13 +568,19 @@ export function PatientProfile() {
             </Card>
           )}
           <Card title="Care team">
-            <ul className="space-y-1.5 text-sm">
+            <ul className="space-y-3">
               {p.care_team.map((h: Json) => (
-                <li key={h.hcp_id} className="flex items-center justify-between">
-                  <span>
-                    {h.name} <span className="text-stone-400">· {h.specialty}</span>
-                  </span>
-                  {h.is_primary && <Badge>Primary</Badge>}
+                <li key={h.hcp_id} className="flex items-center gap-3">
+                  <Avatar name={h.name} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-ink">{h.name}</div>
+                    <div className="truncate text-[13px] text-ink-subtle">{h.specialty}</div>
+                  </div>
+                  {h.is_primary && (
+                    <Badge tone="sage" icon={<HeartPulse className="h-3.5 w-3.5" aria-hidden />}>
+                      Primary
+                    </Badge>
+                  )}
                 </li>
               ))}
             </ul>

@@ -1,55 +1,81 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarX2, CheckCircle2, ClipboardCheck, Clock3, FileCheck2, Hourglass, Lock, XCircle } from "lucide-react";
 import { useState } from "react";
 import { api, post } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
+import { useToast } from "../toast";
 import {
+  Alert,
   Badge,
   Button,
   Card,
+  ChannelIcon,
+  EmptyState,
   ErrorNote,
+  ErrorState,
   Loading,
   MlrBadge,
   PageHeader,
+  Segmented,
+  Stat,
+  TextArea,
+  Toolbar,
+  channelName,
   cx,
   fmtDate,
+  num,
   titleCase,
 } from "../ui";
 
-const VIEWS = [
+type View = "attention" | "all" | "HCP" | "PATIENT";
+const VIEWS: Array<{ key: View; label: string }> = [
   { key: "attention", label: "Needs attention" },
   { key: "all", label: "All content" },
   { key: "HCP", label: "HCP audience" },
   { key: "PATIENT", label: "Patient audience" },
 ];
 
+function rail(c: Json) {
+  if (c.is_expired || c.mlr_status === "rejected") return "bg-bad";
+  if (c.mlr_status === "pending") return "bg-warn";
+  return "bg-ok";
+}
+
 export default function ContentLibrary() {
   const { can } = useAuth();
   const client = useQueryClient();
+  const toast = useToast();
   const canReview = can(P.CONTENT_APPROVE);
   const governance = can(P.CONTENT_READ_ALL);
-  const [view, setView] = useState(governance ? "attention" : "all");
+  const [view, setView] = useState<View>(governance ? "attention" : "all");
   const [open, setOpen] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const list = useQuery({ queryKey: ["content"], queryFn: () => api<Json[]>("/content") });
   const review = useMutation({
     mutationFn: (v: { id: string; decision: string }) =>
       post(`/content/${v.id}/review`, { decision: v.decision, comment: comment || null }),
-    onSuccess: () => {
+    onSuccess: (_, v) => {
+      toast(v.decision === "approve" ? `${v.id} approved for use` : `${v.id} rejected`);
       setComment("");
       setOpen(null);
       void client.invalidateQueries({ queryKey: ["content"] });
     },
   });
 
-  if (list.isLoading) return <Loading />;
-  if (list.error) return <ErrorNote error={list.error} />;
-  const rows = (list.data ?? []).filter((c) => {
+  if (list.isLoading) return <Loading label="Loading content" />;
+  if (list.error) return <ErrorState error={list.error} title="Content could not be loaded" />;
+  const all = list.data ?? [];
+  const rows = all.filter((c) => {
     if (view === "attention") return !c.usable;
     if (view === "all") return true;
     return c.audience === view;
   });
+  const pending = all.filter((c) => c.mlr_status === "pending").length;
+  const expired = all.filter((c) => c.is_expired).length;
+  const waiting = all.reduce((n, c) => n + (c.recommendations_waiting ?? 0), 0);
+  const usable = all.filter((c) => c.usable).length;
 
   return (
     <>
@@ -57,98 +83,146 @@ export default function ContentLibrary() {
         title={governance ? "Content and MLR review" : "Approved content"}
         subtitle={
           governance
-            ? "Only content that is MLR-approved and inside its validity window can appear in a recommendation. Approving here unlocks the recommendations waiting on it at the next engine cycle."
+            ? "Only content that is MLR-approved and inside its validity window can appear in a recommendation. Approving an item unlocks the recommendations waiting on it at the next engine cycle."
             : "Content cleared for use with your audience. Anything not listed here cannot be sent."
         }
       />
+
       {governance && (
-        <div className="mb-3 flex flex-wrap gap-2">
-          {VIEWS.map((v) => (
-            <button
-              key={v.key}
-              onClick={() => setView(v.key)}
-              className={cx(
-                "rounded-full px-3 py-1.5 text-sm font-medium",
-                view === v.key
-                  ? "bg-brand-600 text-white"
-                  : "bg-white text-stone-600 ring-1 ring-inset ring-stone-200 hover:bg-stone-50",
-              )}
-            >
-              {v.label}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Pending MLR review" value={num(pending)} tone={pending ? "warn" : undefined} icon={<Hourglass className="h-4 w-4" aria-hidden />} />
+            <Stat label="Approval expired" value={num(expired)} tone={expired ? "bad" : undefined} icon={<CalendarX2 className="h-4 w-4" aria-hidden />} />
+            <Stat
+              label="Recommendations waiting"
+              value={num(waiting)}
+              hint="on content not yet usable"
+              icon={<Clock3 className="h-4 w-4" aria-hidden />}
+            />
+            <Stat label="Approved and in date" value={`${usable} of ${all.length}`} tone="ok" icon={<CheckCircle2 className="h-4 w-4" aria-hidden />} />
+          </div>
+          {!canReview && (
+            <Alert tone="info" icon={<Lock className="h-5 w-5" aria-hidden />} className="mb-6">
+              <span className="text-info">
+                You can see every item and its status. Approving or rejecting content is reserved for Compliance / MLR
+                reviewers.
+              </span>
+            </Alert>
+          )}
+          <Toolbar>
+            <Segmented
+              label="Content view"
+              value={view}
+              onChange={setView}
+              options={VIEWS.map((v) => ({
+                value: v.key,
+                label: v.label,
+                count:
+                  v.key === "attention"
+                    ? all.filter((c) => !c.usable).length
+                    : v.key === "all"
+                      ? all.length
+                      : all.filter((c) => c.audience === v.key).length,
+              }))}
+            />
+          </Toolbar>
+        </>
       )}
-      <ErrorNote error={review.error} />
-      <div className="mt-3 grid gap-3">
-        {rows.map((c) => (
-          <Card key={c.content_id}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-stone-400">{c.content_id}</span>
-                  <h3 className="text-sm font-semibold text-stone-900">{c.title}</h3>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <MlrBadge status={c.mlr_status} expired={c.is_expired} />
-                  <Badge>{c.audience === "HCP" ? "HCP audience" : "Patient audience"}</Badge>
-                  <Badge>{titleCase(c.action_type)}</Badge>
-                  {c.channels.map((ch: string) => (
-                    <Badge key={ch}>{titleCase(ch)}</Badge>
-                  ))}
-                  {c.recommendations_waiting > 0 && (
-                    <Badge tone="warn">{c.recommendations_waiting} recommendations waiting</Badge>
+
+      <ErrorNote error={review.error} className="mb-4" />
+
+      <Card flush>
+        {!rows.length ? (
+          <EmptyState
+            tone="ok"
+            icon={<ClipboardCheck className="h-5 w-5" />}
+            title={view === "attention" ? "Nothing needs attention" : "No content in this view"}
+          >
+            {view === "attention" ? "Every item is approved and inside its validity window." : undefined}
+          </EmptyState>
+        ) : (
+          <ul className="divide-y divide-line">
+            {rows.map((c) => {
+              const reviewable = canReview && (c.mlr_status === "pending" || c.is_expired);
+              const isOpen = open === c.content_id;
+              return (
+                <li key={c.content_id} className="relative px-5 py-5 sm:px-6">
+                  <span className={cx("absolute inset-y-4 left-0 w-1 rounded-r-full", rail(c))} aria-hidden />
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <h2 className="text-[15px] font-semibold text-ink">{c.title}</h2>
+                        <span className="tabular text-xs text-ink-subtle">{c.content_id}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <MlrBadge status={c.mlr_status} expired={c.is_expired} />
+                        <Badge tone="sage">{c.audience === "HCP" ? "HCP audience" : "Patient audience"}</Badge>
+                        <Badge>{titleCase(c.action_type)}</Badge>
+                        {c.recommendations_waiting > 0 && (
+                          <Badge tone="warn" icon={<Clock3 className="h-3.5 w-3.5" aria-hidden />}>
+                            {c.recommendations_waiting} recommendations waiting
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-3 max-w-3xl text-sm leading-6 text-ink-muted">{c.body}</p>
+                      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-ink-subtle">
+                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {c.channels.map((ch: string) => (
+                            <span key={ch} className="inline-flex items-center gap-1">
+                              <ChannelIcon channel={ch} className="h-3.5 w-3.5" /> {channelName(ch)}
+                            </span>
+                          ))}
+                        </span>
+                        <span className="tabular">
+                          {c.effective_date
+                            ? `Effective ${fmtDate(c.effective_date)} · ${c.is_expired ? "expired" : "valid until"} ${fmtDate(c.expiry_date)}`
+                            : "No approval on record"}
+                        </span>
+                      </div>
+                    </div>
+                    {reviewable && !isOpen && (
+                      <Button variant="primary" className="shrink-0 self-start" onClick={() => setOpen(c.content_id)}>
+                        <FileCheck2 className="h-4 w-4" aria-hidden /> Review
+                      </Button>
+                    )}
+                  </div>
+                  {isOpen && (
+                    <div className="animate-rise mt-5 rounded-xl border border-line bg-subtle/60 p-4 sm:p-5">
+                      <TextArea
+                        label="Review comment"
+                        hint="Optional. Recorded in the audit trail with your decision."
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        rows={3}
+                        autoFocus
+                      />
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button
+                          variant="primary"
+                          busy={review.isPending}
+                          onClick={() => review.mutate({ id: c.content_id, decision: "approve" })}
+                        >
+                          <CheckCircle2 className="h-4 w-4" aria-hidden /> Approve for use
+                        </Button>
+                        <Button
+                          variant="quiet-danger"
+                          busy={review.isPending}
+                          onClick={() => review.mutate({ id: c.content_id, decision: "reject" })}
+                        >
+                          <XCircle className="h-4 w-4" aria-hidden /> Reject
+                        </Button>
+                        <Button variant="ghost" onClick={() => setOpen(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
                   )}
-                </div>
-                <p className="mt-2 max-w-3xl text-sm text-stone-600">{c.body}</p>
-                <p className="mt-1.5 text-xs text-stone-500">
-                  {c.effective_date
-                    ? `Effective ${fmtDate(c.effective_date)} · ${c.is_expired ? "expired" : "valid until"} ${fmtDate(c.expiry_date)}`
-                    : "No approval on record"}
-                </p>
-              </div>
-              {canReview && (c.mlr_status === "pending" || c.is_expired) && open !== c.content_id && (
-                <Button onClick={() => setOpen(c.content_id)}>Review</Button>
-              )}
-            </div>
-            {open === c.content_id && (
-              <div className="mt-4 border-t border-stone-100 pt-4">
-                <textarea
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  rows={2}
-                  placeholder="Review comment (recorded in the audit trail)"
-                  className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-                />
-                <div className="mt-2 flex gap-2">
-                  <Button
-                    variant="primary"
-                    busy={review.isPending}
-                    onClick={() => review.mutate({ id: c.content_id, decision: "approve" })}
-                  >
-                    Approve for use
-                  </Button>
-                  <Button
-                    variant="danger"
-                    busy={review.isPending}
-                    onClick={() => review.mutate({ id: c.content_id, decision: "reject" })}
-                  >
-                    Reject
-                  </Button>
-                  <Button variant="ghost" onClick={() => setOpen(null)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Card>
-        ))}
-        {!rows.length && (
-          <Card>
-            <p className="text-sm text-stone-500">Nothing here. Every item is approved and in date.</p>
-          </Card>
+                </li>
+              );
+            })}
+          </ul>
         )}
-      </div>
+      </Card>
     </>
   );
 }

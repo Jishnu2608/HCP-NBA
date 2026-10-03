@@ -1,31 +1,45 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft,
+  ArrowUpRight,
+  Ban,
   CalendarClock,
+  CheckCircle2,
+  Gauge,
   MessageSquare,
+  PenLine,
   RefreshCw,
   Send,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
   Target,
   UserRound,
+  XCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api, patch, post } from "../api";
 import type { Json } from "../api";
+import { useToast } from "../toast";
 import {
+  Alert,
   Badge,
   Button,
   Card,
+  ChannelIcon,
   ErrorNote,
+  ErrorState,
   Loading,
   MlrBadge,
+  PageHeader,
+  Segmented,
   SegmentBadge,
   StatusBadge,
   Table,
+  TextArea,
+  TextField,
+  Timeline,
+  TimelineItem,
   cx,
   eventLabel,
   fmtDate,
@@ -35,19 +49,42 @@ import {
 } from "../ui";
 
 const KIND: Record<string, { label: string; icon: ReactNode }> = {
-  who: { label: "Why this person", icon: <UserRound className="h-4 w-4" /> },
-  action: { label: "Why this action", icon: <Target className="h-4 w-4" /> },
-  channel: { label: "Why this channel", icon: <MessageSquare className="h-4 w-4" /> },
-  timing: { label: "Why now", icon: <CalendarClock className="h-4 w-4" /> },
-  compliance: { label: "Compliance and consent", icon: <ShieldCheck className="h-4 w-4" /> },
-  withheld: { label: "Held back by a gate", icon: <ShieldAlert className="h-4 w-4" /> },
+  who: { label: "Why this person", icon: <UserRound className="h-4 w-4" aria-hidden /> },
+  action: { label: "Why this action", icon: <Target className="h-4 w-4" aria-hidden /> },
+  channel: { label: "Why this channel", icon: <MessageSquare className="h-4 w-4" aria-hidden /> },
+  timing: { label: "Why now", icon: <CalendarClock className="h-4 w-4" aria-hidden /> },
+  compliance: { label: "Compliance and consent", icon: <ShieldCheck className="h-4 w-4" aria-hidden /> },
+  withheld: { label: "Held back by a safeguard", icon: <ShieldAlert className="h-4 w-4" aria-hidden /> },
 };
 const KIND_ORDER = ["who", "action", "channel", "timing", "compliance", "withheld"];
 
+const cap = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+function auditTone(action: string): "neutral" | "brand" | "ok" | "warn" | "bad" {
+  if (/block|reject|withdraw/.test(action)) return "bad";
+  if (/approv/.test(action)) return "brand";
+  if (/sent|respon|outcome|fill/.test(action)) return "ok";
+  if (/edit|redraft/.test(action)) return "warn";
+  return "neutral";
+}
+
+function Fact({ icon, label, value, hint }: { icon: ReactNode; label: string; value: ReactNode; hint?: ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-subtle px-3.5 py-3">
+      <dt className="flex items-center gap-1.5 text-[13px] text-ink-subtle">
+        {icon}
+        {label}
+      </dt>
+      <dd className="mt-1 text-[15px] font-semibold leading-6 text-ink">{value}</dd>
+      {hint && <dd className="text-xs text-ink-subtle">{hint}</dd>}
+    </div>
+  );
+}
+
 export default function NbaDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const client = useQueryClient();
+  const toast = useToast();
   const detail = useQuery({ queryKey: ["nba-detail", id], queryFn: () => api(`/nba/${id}`) });
   const [draftId, setDraftId] = useState<number | null>(null);
   const [subject, setSubject] = useState("");
@@ -78,19 +115,25 @@ export default function NbaDetail() {
     void client.invalidateQueries({ queryKey: ["nba"] });
   };
   const act = useMutation({
-    mutationFn: (fn: () => Promise<unknown>) => fn(),
+    mutationFn: (v: { fn: () => Promise<unknown>; done: string }) => v.fn(),
+    onSuccess: (_, v) => {
+      toast(v.done);
+      setRejecting(false);
+      setReason("");
+    },
     onSettled: refresh,
   });
-  const run = (fn: () => Promise<unknown>) => act.mutate(fn);
+  const run = (fn: () => Promise<unknown>, done: string) => act.mutate({ fn, done });
 
-  if (detail.isLoading) return <Loading />;
-  if (detail.error) return <ErrorNote error={detail.error} />;
+  if (detail.isLoading) return <Loading label="Loading recommendation" />;
+  if (detail.error) return <ErrorState error={detail.error} title="This recommendation could not be loaded" />;
 
   const dirty = draft && (body !== draft.body || subject !== (draft.subject ?? ""));
   const reviewing = n.can_review && n.status === "ready_for_review";
+  const blocked = n.status === "blocked";
   const humanChannel = n.channel === "phone" || n.channel === "rep_visit";
-  const profileLink =
-    n.target_name && (n.target_type === "PATIENT" ? `/patients/${n.target_id}` : `/hcps/${n.target_id}`);
+  const isPatient = n.target_type === "PATIENT";
+  const profileLink = n.target_name && (isPatient ? `/patients/${n.target_id}` : `/hcps/${n.target_id}`);
   const grouped = KIND_ORDER.map((kind) => ({
     kind,
     reasons: n.reason_codes.filter((r: Json) => r.kind === kind),
@@ -103,329 +146,402 @@ export default function NbaDetail() {
     if (thenSend) await post(`/nba/${id}/send`);
   };
 
-  return (
-    <>
-      <button
-        onClick={() => navigate(-1)}
-        className="mb-3 flex items-center gap-1 text-sm text-stone-500 hover:text-stone-800"
-      >
-        <ArrowLeft className="h-4 w-4" /> Back
-      </button>
-
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight text-stone-900">
-              {n.target_name ?? "Identity hidden for this role"}
-            </h1>
-            <SegmentBadge value={n.segment} />
-            <StatusBadge status={n.status} />
+  const decision = n.can_review && (
+    <Card
+      title="Decision"
+      description={reviewing ? "You are the reviewer for this recommendation." : undefined}
+      className={cx(reviewing && "ring-1 ring-primary-line")}
+    >
+      {reviewing && !rejecting && (
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="primary"
+            size="lg"
+            busy={act.isPending}
+            onClick={() => run(() => approve(true), "Recommendation approved and sent")}
+          >
+            <Send className="h-4 w-4" aria-hidden /> Approve and send
+          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button busy={act.isPending} onClick={() => run(() => approve(false), "Recommendation approved")}>
+              <CheckCircle2 className="h-4 w-4" aria-hidden /> Approve only
+            </Button>
+            <Button variant="quiet-danger" onClick={() => setRejecting(true)}>
+              <XCircle className="h-4 w-4" aria-hidden /> Reject
+            </Button>
           </div>
-          <p className="mt-1 text-sm text-stone-600">
-            Recommended: <span className="font-medium text-stone-900">{n.action_label}</span> by{" "}
-            <span className="font-medium text-stone-900">{n.channel_label}</span>
-            {" · "}
-            {n.timing_note}
-          </p>
-          {profileLink && (
-            <Link to={profileLink} className="mt-1 inline-block text-sm text-brand-700 hover:underline">
-              Open 360 profile ({n.target_id})
-            </Link>
-          )}
+          {dirty && <p className="text-[13px] text-warn">Your edits to the draft are saved when you approve.</p>}
         </div>
-        <div className="flex gap-6 text-right">
-          {n.target_type === "PATIENT" && (
-            <Metric label="Chance of a fill" value={pct(n.predicted?.p_outcome)} />
-          )}
-          <Metric label="Chance of a response" value={pct(n.predicted?.p_engage)} />
-          <Metric label="Priority" value={n.priority.toFixed(1)} />
-        </div>
-      </div>
-
-      {n.status === "blocked" && (
-        <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
-          <div>
-            <div className="font-semibold">Blocked by a hard gate. This cannot be sent.</div>
-            <div>{n.block_reason}</div>
+      )}
+      {reviewing && rejecting && (
+        <div className="space-y-3">
+          <TextArea
+            label="Reason for rejecting"
+            hint="Recorded in the audit trail."
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            autoFocus
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="danger"
+              busy={act.isPending}
+              disabled={reason.trim().length < 3}
+              onClick={() => run(() => post(`/nba/${id}/reject`, { reason }), "Recommendation rejected")}
+            >
+              Confirm rejection
+            </Button>
+            <Button variant="ghost" onClick={() => setRejecting(false)}>
+              Cancel
+            </Button>
           </div>
         </div>
       )}
-      <div className="mb-4">
-        <ErrorNote error={act.error} />
+      {n.status === "approved" && (
+        <div className="flex flex-col gap-2">
+          <Button variant="primary" size="lg" busy={act.isPending} onClick={() => run(() => post(`/nba/${id}/send`), "Message sent")}>
+            <Send className="h-4 w-4" aria-hidden /> Send now
+          </Button>
+          <Button
+            variant="quiet-danger"
+            busy={act.isPending}
+            onClick={() => run(() => post(`/nba/${id}/reject`, { reason: "Withdrawn after approval" }), "Recommendation withdrawn")}
+          >
+            Withdraw
+          </Button>
+        </div>
+      )}
+      {n.status === "sent" && humanChannel && (
+        <div>
+          <p className="mb-3 text-sm text-ink-muted">How did the {n.channel_label} go?</p>
+          <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+            {["completed", "no_response", "declined"].map((outcome) => (
+              <Button
+                key={outcome}
+                busy={act.isPending}
+                onClick={() => run(() => post(`/nba/${id}/outcome`, { outcome }), "Outcome recorded")}
+              >
+                {titleCase(outcome)}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+      {n.status === "sent" && !humanChannel && (
+        <p className="text-sm text-ink-muted">Sent. The response is captured automatically when the recipient reacts.</p>
+      )}
+      {["responded", "rejected", "expired", "blocked"].includes(n.status) && (
+        <p className="flex items-center gap-2 text-sm text-ink-muted">
+          <StatusBadge status={n.status} /> No further action.
+        </p>
+      )}
+      <ErrorNote error={act.error} className="mt-3" />
+      <p className="mt-4 flex gap-2 border-t border-line pt-3 text-[13px] leading-5 text-ink-subtle">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        Content approval, consent and contact limits are checked again at approval and at send.
+      </p>
+    </Card>
+  );
+
+  const content = (
+    <Card title="Approved content" description="The only source the message may draw on.">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-ink">{n.content.title}</div>
+          <div className="tabular mt-0.5 text-xs text-ink-subtle">
+            {n.content.content_id} · version {n.content.version}
+          </div>
+        </div>
+        <MlrBadge status={n.content.mlr_status} expired={n.content.is_expired} />
       </div>
+      <p className="mt-3 text-sm leading-6 text-ink-muted">{n.content.body}</p>
+      {n.content.expiry_date && (
+        <p className="mt-3 text-[13px] text-ink-subtle">Approval valid until {fmtDate(n.content.expiry_date)}</p>
+      )}
+    </Card>
+  );
 
-      <div className="grid gap-5 xl:grid-cols-5">
-        <div className="space-y-5 xl:col-span-3">
-          <Card title="Why this recommendation">
-            <div className="space-y-4">
-              {grouped.map((g) => (
-                <div key={g.kind} className="flex gap-3">
-                  <div
-                    className={cx(
-                      "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg",
-                      g.kind === "withheld" ? "bg-amber-50 text-amber-700" : "bg-brand-50 text-brand-700",
-                    )}
-                  >
-                    {KIND[g.kind].icon}
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                      {KIND[g.kind].label}
-                    </div>
-                    <ul className="mt-1 space-y-1 text-sm text-stone-800">
-                      {g.reasons.map((r: Json, i: number) => (
-                        <li key={i} className="flex items-baseline gap-2">
-                          <span>{r.text}</span>
-                          {r.points !== undefined && (
-                            <span className="tabular shrink-0 text-xs text-stone-400">
-                              +{r.points} risk points
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              ))}
+  return (
+    <>
+      <PageHeader
+        back
+        title={n.target_name ?? `${isPatient ? "Patient" : "HCP"} · identity hidden`}
+        meta={
+          <div className="flex flex-wrap items-center gap-1.5">
+            <SegmentBadge value={n.segment} />
+            <StatusBadge status={n.status} />
+          </div>
+        }
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>{isPatient ? "Patient recommendation" : "HCP recommendation"}</span>
+            {profileLink && (
+              <Link to={profileLink} className="inline-flex items-center gap-1 font-semibold text-primary-ink hover:underline">
+                Open {isPatient ? "Patient" : "HCP"} 360 <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
+              </Link>
+            )}
+          </span>
+        }
+      />
+
+      {blocked && (
+        <Alert tone="bad" title="Blocked by a safeguard. This recommendation cannot be sent." className="mb-6">
+          <span className="text-bad">{n.block_reason}</span>
+        </Alert>
+      )}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="min-w-0 space-y-6">
+          {/* The recommendation itself */}
+          <section
+            aria-labelledby="nba-hero"
+            className={cx(
+              "overflow-hidden rounded-xl border bg-surface shadow-card",
+              blocked ? "border-bad-line" : "border-line",
+            )}
+          >
+            <div className={cx("h-1", blocked ? "bg-bad" : "bg-primary")} aria-hidden />
+            <div className="px-5 pb-6 pt-5 sm:px-6">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
+                <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad" : "bg-accent")} aria-hidden />
+                Next best action
+              </div>
+              <h2
+                id="nba-hero"
+                className={cx(
+                  "mt-1.5 text-[26px] font-semibold leading-tight tracking-[-0.015em] sm:text-[30px]",
+                  blocked ? "text-ink-muted line-through decoration-bad/40 decoration-2" : "text-ink",
+                )}
+              >
+                {cap(n.action_label)}
+              </h2>
+              <dl className="mt-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+                <Fact
+                  icon={<ChannelIcon channel={n.channel} className="h-3.5 w-3.5" />}
+                  label="Channel"
+                  value={cap(n.channel_label)}
+                />
+                <Fact icon={<CalendarClock className="h-3.5 w-3.5" aria-hidden />} label="Timing" value={n.timing_note} />
+                {isPatient ? (
+                  <Fact
+                    icon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
+                    label="Chance of a refill"
+                    value={<span className="tabular">{pct(n.predicted?.p_outcome)}</span>}
+                    hint={`Response ${pct(n.predicted?.p_engage)}`}
+                  />
+                ) : (
+                  <Fact
+                    icon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
+                    label="Chance of a response"
+                    value={<span className="tabular">{pct(n.predicted?.p_engage)}</span>}
+                  />
+                )}
+                <Fact
+                  icon={<Target className="h-3.5 w-3.5" aria-hidden />}
+                  label="Priority score"
+                  value={<span className="tabular">{n.priority.toFixed(1)}</span>}
+                />
+              </dl>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-[13px] font-medium text-ink-subtle">Compliance</span>
+                {blocked ? (
+                  <Badge tone="bad" icon={<Ban className="h-3.5 w-3.5" aria-hidden />}>
+                    Safeguard failed
+                  </Badge>
+                ) : (
+                  <Badge tone="ok" icon={<ShieldCheck className="h-3.5 w-3.5" aria-hidden />}>
+                    All safeguards passed
+                  </Badge>
+                )}
+                <MlrBadge status={n.content.mlr_status} expired={n.content.is_expired} />
+              </div>
             </div>
-          </Card>
 
-          <Card title="Options the engine considered">
-            <Table head={["#", "Action", "Channel", "Content", "Score", "Gate result"]}>
+            <div className="border-t border-line bg-subtle/40 px-5 py-5 sm:px-6">
+              <h3 className="text-[15px] font-semibold text-ink">Why this recommendation</h3>
+              <div className="mt-4 grid gap-x-8 gap-y-5 lg:grid-cols-2">
+                {grouped.map((g) => (
+                  <div key={g.kind} className="flex min-w-0 gap-3">
+                    <span
+                      className={cx(
+                        "mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg",
+                        g.kind === "withheld" ? "bg-warn-soft text-warn" : "bg-primary-soft text-primary-ink",
+                      )}
+                    >
+                      {KIND[g.kind].icon}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-semibold text-ink-muted">{KIND[g.kind].label}</div>
+                      <ul className="mt-1 space-y-1 text-sm leading-6 text-ink">
+                        {g.reasons.map((r: Json, i: number) => (
+                          <li key={i} className="flex flex-wrap items-baseline gap-x-2">
+                            <span>{r.text}</span>
+                            {r.points !== undefined && (
+                              <span className="tabular rounded bg-sunken px-1 text-xs font-medium text-ink-muted">
+                                +{r.points} risk pts
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {n.drafts.length > 0 && (
+            <Card
+              title="Message draft"
+              description={reviewing ? "Edit the wording if needed. Eligibility is already decided above." : undefined}
+              action={
+                reviewing && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    busy={act.isPending}
+                    onClick={() => run(() => post(`/nba/${id}/redraft`), "New drafts generated")}
+                  >
+                    <RefreshCw className="h-4 w-4" aria-hidden /> Regenerate
+                  </Button>
+                )
+              }
+            >
+              {n.drafts.length > 1 && (
+                <div className="mb-4">
+                  <Segmented
+                    label="Draft variant"
+                    value={String(draftId)}
+                    onChange={(v) => setDraftId(Number(v))}
+                    options={n.drafts.map((d: Json) => ({
+                      value: String(d.id),
+                      label: `Variant ${d.variant_no}${d.edited ? " · edited" : ""}`,
+                    }))}
+                  />
+                </div>
+              )}
+              {draft && (
+                <div className="space-y-4">
+                  {n.channel !== "sms" && (
+                    <TextField
+                      label="Subject"
+                      value={subject}
+                      onChange={(e) => setSubject(e.target.value)}
+                      readOnly={!reviewing}
+                    />
+                  )}
+                  <TextArea
+                    label="Message"
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    readOnly={!reviewing}
+                    rows={humanChannel ? 9 : 7}
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-subtle">
+                    <span className="flex items-center gap-1.5">
+                      <PenLine className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      Worded by {draft.provider}
+                      {draft.model ? ` (${draft.model})` : ""} from the approved content; checked before it is stored.
+                    </span>
+                    {n.channel === "sms" && (
+                      <span className={cx("tabular font-medium", body.length > 320 && "text-bad")}>{body.length} / 320</span>
+                    )}
+                  </div>
+                  {reviewing && dirty && (
+                    <Button busy={act.isPending} onClick={() => run(saveEdit, "Draft saved")}>
+                      Save edit
+                    </Button>
+                  )}
+                </div>
+              )}
+            </Card>
+          )}
+
+          <div className="space-y-6 xl:hidden">
+            {decision}
+            {content}
+          </div>
+
+          <Card title="Options the engine considered" description="Models rank the options. Safeguards decide which are allowed.">
+            <Table
+              caption="Options considered"
+              head={["#", "Action", "Channel", "Content", "Score", "Safeguard result"]}
+              align={[undefined, undefined, undefined, undefined, "right", undefined]}
+            >
               {n.candidates.map((c: Json) => (
-                <tr key={c.rank} className={cx(c.chosen && "bg-brand-50/60")}>
-                  <td className="tabular px-3 py-2 text-stone-400">{c.rank}</td>
-                  <td className="px-3 py-2">
-                    {titleCase(c.action_label)}
+                <tr key={c.rank} className={cx(c.chosen && "bg-primary-soft/60")}>
+                  <td className="tabular text-ink-subtle">{c.rank}</td>
+                  <td className="min-w-40">
+                    <span className="font-medium text-ink">{titleCase(c.action_label)}</span>
                     {c.chosen && (
-                      <span className="ml-2">
-                        <Badge tone="brand">Chosen</Badge>
-                      </span>
+                      <Badge tone="brand" className="ml-2">
+                        Chosen
+                      </Badge>
                     )}
                   </td>
-                  <td className="px-3 py-2">{titleCase(c.channel_label)}</td>
-                  <td className="px-3 py-2 text-stone-600">
-                    <span className="text-xs text-stone-400">{c.content_id}</span> {c.content_title}
+                  <td className="whitespace-nowrap text-ink-muted">{titleCase(c.channel_label)}</td>
+                  <td className="min-w-48 text-ink-muted">
+                    <span className="tabular text-xs text-ink-subtle">{c.content_id}</span> {c.content_title}
                   </td>
-                  <td className="tabular px-3 py-2">{c.score?.toFixed(1)}</td>
-                  <td className="px-3 py-2">
+                  <td className="tabular text-right">{c.score?.toFixed(1)}</td>
+                  <td className="min-w-44">
                     {c.eligible ? (
-                      <Badge tone="good">Passed</Badge>
+                      <Badge tone="ok" icon={<CheckCircle2 className="h-3.5 w-3.5" aria-hidden />}>
+                        Passed
+                      </Badge>
                     ) : (
-                      <span className="text-xs text-red-700">{c.gate_text}</span>
+                      <span className="flex items-start gap-1.5 text-[13px] leading-5 text-bad">
+                        <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                        {c.gate_text}
+                      </span>
                     )}
                   </td>
                 </tr>
               ))}
             </Table>
-            <p className="mt-3 text-xs text-stone-500">
-              Models rank the options. Gates decide which options are allowed. A gated option is
-              never chosen, whatever its score.
-            </p>
+            <p className="mt-3 text-[13px] text-ink-subtle">A blocked option is never chosen, whatever its score.</p>
           </Card>
 
           <Card title="Audit trail">
-            <ol className="space-y-3">
-              {n.audit.map((a: Json) => (
-                <li key={a.id} className="flex gap-3 text-sm">
-                  <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-500" />
-                  <div>
-                    <div className="text-stone-800">
-                      <span className="font-medium">{eventLabel(a.action)}</span> by {a.actor}{" "}
-                      <span className="text-stone-400">({titleCase(a.actor_role)})</span>
-                    </div>
-                    <div className="text-xs text-stone-500">
-                      {fmtDateTime(a.ts)}
-                      {a.reason ? ` · ${a.reason}` : ""}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </Card>
-        </div>
-
-        <div className="space-y-5 xl:col-span-2">
-          <Card title="Approved content">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium text-stone-900">{n.content.title}</div>
-                <div className="text-xs text-stone-400">
-                  {n.content.content_id} · version {n.content.version}
-                </div>
-              </div>
-              <MlrBadge status={n.content.mlr_status} expired={n.content.is_expired} />
-            </div>
-            <p className="mt-2 text-sm text-stone-600">{n.content.body}</p>
-            {n.content.expiry_date && (
-              <p className="mt-2 text-xs text-stone-500">
-                Approval valid until {fmtDate(n.content.expiry_date)}
-              </p>
+            {n.audit.length ? (
+              <Timeline>
+                {n.audit.map((a: Json) => (
+                  <TimelineItem
+                    key={a.id}
+                    tone={auditTone(a.action)}
+                    title={
+                      <>
+                        <span className="font-semibold">{eventLabel(a.action)}</span>
+                        <span className="text-ink-muted"> by {a.actor}</span>{" "}
+                        <span className="text-ink-subtle">({titleCase(a.actor_role)})</span>
+                      </>
+                    }
+                    meta={
+                      <>
+                        {fmtDateTime(a.ts)}
+                        {a.reason ? ` · ${a.reason}` : ""}
+                      </>
+                    }
+                  />
+                ))}
+              </Timeline>
+            ) : (
+              <p className="text-sm text-ink-subtle">No events recorded yet.</p>
             )}
           </Card>
-
-          {n.drafts.length > 0 && (
-            <Card
-              title="Message draft"
-              action={
-                reviewing && (
-                  <Button
-                    variant="ghost"
-                    busy={act.isPending}
-                    onClick={() => run(() => post(`/nba/${id}/redraft`))}
-                  >
-                    <RefreshCw className="h-4 w-4" /> Regenerate
-                  </Button>
-                )
-              }
-            >
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {n.drafts.map((d: Json) => (
-                  <button
-                    key={d.id}
-                    onClick={() => setDraftId(d.id)}
-                    className={cx(
-                      "rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset",
-                      d.id === draftId
-                        ? "bg-brand-600 text-white ring-brand-600"
-                        : "bg-white text-stone-600 ring-stone-200 hover:bg-stone-50",
-                    )}
-                  >
-                    Variant {d.variant_no}
-                    {d.edited ? " (edited)" : ""}
-                  </button>
-                ))}
-              </div>
-              {draft && (
-                <>
-                  {n.channel !== "sms" && (
-                    <input
-                      value={subject}
-                      onChange={(e) => setSubject(e.target.value)}
-                      readOnly={!reviewing}
-                      placeholder="Subject"
-                      className="mb-2 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium read-only:bg-stone-50"
-                    />
-                  )}
-                  <textarea
-                    value={body}
-                    onChange={(e) => setBody(e.target.value)}
-                    readOnly={!reviewing}
-                    rows={humanChannel ? 9 : 7}
-                    className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm leading-relaxed read-only:bg-stone-50"
-                  />
-                  <div className="mt-1.5 flex items-center justify-between text-xs text-stone-500">
-                    <span className="flex items-center gap-1">
-                      <Sparkles className="h-3.5 w-3.5" />
-                      Drafted by {draft.provider}
-                      {draft.model ? ` (${draft.model})` : ""}; wording is checked before it is stored
-                    </span>
-                    {n.channel === "sms" && <span className="tabular">{body.length} / 320</span>}
-                  </div>
-                  {reviewing && dirty && (
-                    <Button className="mt-3" busy={act.isPending} onClick={() => run(saveEdit)}>
-                      Save edit
-                    </Button>
-                  )}
-                </>
-              )}
-            </Card>
-          )}
-
-          {n.can_review && (
-            <Card title="Decision">
-              {reviewing && !rejecting && (
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="primary" busy={act.isPending} onClick={() => run(() => approve(true))}>
-                    <Send className="h-4 w-4" /> Approve and send
-                  </Button>
-                  <Button busy={act.isPending} onClick={() => run(() => approve(false))}>
-                    Approve only
-                  </Button>
-                  <Button variant="danger" onClick={() => setRejecting(true)}>
-                    Reject
-                  </Button>
-                </div>
-              )}
-              {reviewing && rejecting && (
-                <div>
-                  <textarea
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    rows={2}
-                    placeholder="Reason for rejecting (recorded in the audit trail)"
-                    className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-                  />
-                  <div className="mt-2 flex gap-2">
-                    <Button
-                      variant="danger"
-                      busy={act.isPending}
-                      disabled={reason.trim().length < 3}
-                      onClick={() => run(() => post(`/nba/${id}/reject`, { reason }))}
-                    >
-                      Confirm rejection
-                    </Button>
-                    <Button variant="ghost" onClick={() => setRejecting(false)}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {n.status === "approved" && (
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="primary" busy={act.isPending} onClick={() => run(() => post(`/nba/${id}/send`))}>
-                    <Send className="h-4 w-4" /> Send now
-                  </Button>
-                  <Button
-                    variant="danger"
-                    busy={act.isPending}
-                    onClick={() => run(() => post(`/nba/${id}/reject`, { reason: "Withdrawn after approval" }))}
-                  >
-                    Withdraw
-                  </Button>
-                </div>
-              )}
-              {n.status === "sent" && humanChannel && (
-                <div>
-                  <p className="mb-2 text-sm text-stone-600">How did the {n.channel_label} go?</p>
-                  <div className="flex flex-wrap gap-2">
-                    {["completed", "no_response", "declined"].map((outcome) => (
-                      <Button
-                        key={outcome}
-                        busy={act.isPending}
-                        onClick={() => run(() => post(`/nba/${id}/outcome`, { outcome }))}
-                      >
-                        {titleCase(outcome)}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {n.status === "sent" && !humanChannel && (
-                <p className="text-sm text-stone-600">
-                  Sent. The response is captured automatically when the recipient reacts.
-                </p>
-              )}
-              {["responded", "rejected", "expired", "blocked"].includes(n.status) && (
-                <p className="text-sm text-stone-600">No further action: {titleCase(n.status)}.</p>
-              )}
-              <p className="mt-3 text-xs text-stone-500">
-                MLR status, consent and contact limits are checked again at approval and at send.
-              </p>
-            </Card>
-          )}
         </div>
+
+        <aside className="hidden xl:block" aria-label="Review">
+          {/* Sticky while reading the rationale; scrolls itself if taller than the window (high zoom). */}
+          <div className="scroll-quiet sticky top-24 max-h-[calc(100dvh-7rem)] space-y-6 overflow-y-auto pb-1">
+
+            {decision}
+            {content}
+          </div>
+        </aside>
       </div>
     </>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="tabular text-xl font-semibold text-stone-900">{value}</div>
-      <div className="text-xs text-stone-500">{label}</div>
-    </div>
   );
 }

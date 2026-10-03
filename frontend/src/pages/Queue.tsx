@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { ShieldAlert } from "lucide-react";
+import { Ban, CheckCircle2, Clock3, Send, ShieldAlert } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, query } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
@@ -9,54 +9,61 @@ import { P } from "../permissions";
 import {
   Badge,
   Card,
-  Empty,
-  ErrorNote,
-  Loading,
+  ChannelIcon,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  LoadingRows,
+  Meter,
   PageHeader,
+  Pagination,
+  Segmented,
   SegmentBadge,
+  Select,
+  Stat,
   StatusBadge,
-  Table,
+  Toolbar,
   cx,
 } from "../ui";
+import type { Column } from "../ui";
 
 const PAGE = 25;
 const TITLE: Record<string, [string, string]> = {
   patients: [
     "Adherence queue",
-    "Patients who need outreach now, ranked by risk and the chance the action leads to a fill.",
+    "Patients who need outreach now, ranked by adherence risk and the chance the action leads to a refill.",
   ],
-  hcps: [
-    "HCP queue",
-    "Next best action for each assigned HCP, ranked by value and predicted engagement.",
-  ],
+  hcps: ["HCP queue", "The next best action for each assigned HCP, ranked by value and predicted engagement."],
   gated: [
-    "Gate outcomes",
-    "Recommendations that were blocked, or where a better option was held back by a gate. Identities are hidden.",
+    "Blocked and held-back recommendations",
+    "Recommendations a safeguard stopped, or where a better option was held back. Identities are hidden for this role.",
   ],
-  all: ["All recommendations", "Every open recommendation across both audiences."],
+  all: ["All recommendations", "Every recommendation across patients and HCPs, ranked by priority."],
 };
 
-const FILTERS: Array<{ key: string; label: string; statuses: string[] }> = [
+type FilterKey = "open" | "ready_for_review" | "approved" | "sent" | "blocked" | "closed";
+const FILTERS: Array<{ key: FilterKey; label: string; statuses: string[] }> = [
   { key: "open", label: "Open", statuses: ["ready_for_review", "approved", "blocked"] },
-  { key: "ready_for_review", label: "Ready", statuses: ["ready_for_review"] },
+  { key: "ready_for_review", label: "Pending review", statuses: ["ready_for_review"] },
   { key: "approved", label: "Approved", statuses: ["approved"] },
   { key: "sent", label: "Sent", statuses: ["sent", "responded"] },
   { key: "blocked", label: "Blocked", statuses: ["blocked"] },
-  { key: "closed", label: "Rejected / superseded", statuses: ["rejected", "expired"] },
+  { key: "closed", label: "Rejected or superseded", statuses: ["rejected", "expired"] },
 ];
+
+const cap = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 export default function Queue() {
   const { can } = useAuth();
-  const [filter, setFilter] = useState("open");
+  const navigate = useNavigate();
+  const [filter, setFilter] = useState<FilterKey>("open");
   const [audience, setAudience] = useState("");
   const [page, setPage] = useState(0);
   const statuses = FILTERS.find((f) => f.key === filter)!.statuses;
   const list = useQuery({
     queryKey: ["nba", filter, audience, page],
-    queryFn: () =>
-      api(
-        `/nba${query({ status: statuses, target_type: audience, limit: PAGE, offset: page * PAGE })}`,
-      ),
+    queryFn: () => api(`/nba${query({ status: statuses, target_type: audience, limit: PAGE, offset: page * PAGE })}`),
+    placeholderData: (previous) => previous,
   });
   const seesAll = can(P.NBA_READ_ALL);
   const view = seesAll
@@ -69,122 +76,190 @@ export default function Queue() {
   const [title, subtitle] = TITLE[view];
   const counts: Record<string, number> = list.data?.counts ?? {};
   const countFor = (keys: string[]) => keys.reduce((n, k) => n + (counts[k] ?? 0), 0);
+  // Priority is risk (or value) times the predicted chance of success; bars are relative
+  // to the highest priority on the page.
+  const maxPriority = Math.max(1, ...((list.data?.items ?? []) as Json[]).map((n) => n.priority));
+  const audienceWord = view === "hcps" ? "HCP" : view === "patients" ? "patient" : null;
+
+  const columns: Column<Json>[] = [
+    {
+      key: "who",
+      header: "Who",
+      primary: true,
+      className: "w-[24%] min-w-48",
+      cell: (n) => (
+        <div className="min-w-0">
+          <Link
+            to={`/nba/${n.id}`}
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+            className="block font-semibold text-ink [overflow-wrap:anywhere] hover:text-primary-ink hover:underline"
+            title={n.target_name ?? undefined}
+          >
+            {n.target_name ?? `${n.target_type === "HCP" ? "HCP" : "Patient"} · identity hidden`}
+          </Link>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            {n.target_name && <span className="tabular text-xs text-ink-subtle">{n.target_id}</span>}
+            <SegmentBadge value={n.segment} />
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "action",
+      header: "Recommended action",
+      className: "min-w-52",
+      cell: (n) => (
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 font-medium text-ink">
+            <ChannelIcon channel={n.channel} className="h-4 w-4 shrink-0 text-ink-subtle" />
+            <span>
+              {cap(n.action_label)} <span className="font-normal text-ink-muted">by {n.channel_label}</span>
+            </span>
+          </div>
+          <div className="mt-0.5 line-clamp-1 text-[13px] text-ink-subtle" title={n.content_title}>
+            {n.content_title}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "why",
+      header: "Why",
+      className: "min-w-64",
+      hideOnMobile: false,
+      cell: (n) => (
+        <div className="max-w-md">
+          {n.status === "blocked" ? (
+            <span className="flex items-start gap-1.5 text-[13px] leading-5 text-bad">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              {n.block_reason}
+            </span>
+          ) : (
+            <span className="line-clamp-2 text-[13px] leading-5 text-ink-muted" title={n.rationale_summary ?? n.timing_note}>
+              {n.rationale_summary ?? n.timing_note}
+            </span>
+          )}
+          {n.has_withheld && n.status !== "blocked" && (
+            <div className="mt-1.5">
+              <Badge tone="warn" icon={<ShieldAlert className="h-3.5 w-3.5" aria-hidden />}>
+                Better option held back by a safeguard
+              </Badge>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "priority",
+      header: "Priority",
+      align: "right",
+      className: "w-32",
+      cell: (n) => (
+        <div className="ml-auto flex w-24 items-center gap-2 md:w-28">
+          <Meter value={n.priority / maxPriority} tone={n.status === "blocked" ? "neutral" : "brand"} label="Priority" className="flex-1" />
+          <span className="tabular w-9 text-right text-[13px] font-semibold text-ink">{n.priority.toFixed(1)}</span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      className: "w-36",
+      hideOnMobile: true,
+      cell: (n) => <StatusBadge status={n.status} />,
+    },
+  ];
 
   return (
     <>
       <PageHeader title={title} subtitle={subtitle} />
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => {
-              setFilter(f.key);
-              setPage(0);
-            }}
-            className={cx(
-              "rounded-full px-3 py-1.5 text-sm font-medium",
-              filter === f.key
-                ? "bg-brand-600 text-white"
-                : "bg-white text-stone-600 ring-1 ring-inset ring-stone-200 hover:bg-stone-50",
-            )}
-          >
-            {f.label}
-            <span className="tabular ml-1.5 opacity-70">{countFor(f.statuses)}</span>
-          </button>
-        ))}
+
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat
+          label="Pending review"
+          value={countFor(["ready_for_review"]).toLocaleString()}
+          hint={audienceWord ? `${audienceWord} actions waiting for you` : "waiting for a reviewer"}
+          icon={<Clock3 className="h-4 w-4" aria-hidden />}
+          tone="brand"
+        />
+        <Stat
+          label="Approved, not sent"
+          value={countFor(["approved"]).toLocaleString()}
+          hint="ready to send"
+          icon={<CheckCircle2 className="h-4 w-4" aria-hidden />}
+        />
+        <Stat
+          label="Blocked"
+          value={countFor(["blocked"]).toLocaleString()}
+          hint="a safeguard stopped these"
+          icon={<Ban className="h-4 w-4" aria-hidden />}
+          tone={countFor(["blocked"]) ? "bad" : undefined}
+        />
+        <Stat
+          label="Sent"
+          value={countFor(["sent", "responded"]).toLocaleString()}
+          hint={`${(counts.responded ?? 0).toLocaleString()} responded`}
+          icon={<Send className="h-4 w-4" aria-hidden />}
+        />
+      </div>
+
+      <Toolbar>
+        <Segmented
+          label="Filter by status"
+          value={filter}
+          onChange={(v) => {
+            setFilter(v);
+            setPage(0);
+          }}
+          options={FILTERS.map((f) => ({ value: f.key, label: f.label, count: countFor(f.statuses) }))}
+        />
         {seesAll && (
-          <select
+          <Select
+            label="Audience"
             value={audience}
             onChange={(e) => {
               setAudience(e.target.value);
               setPage(0);
             }}
-            className="ml-auto rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm"
+            className="w-full sm:w-52"
           >
-            <option value="">Both audiences</option>
-            <option value="PATIENT">Patients</option>
-            <option value="HCP">HCPs</option>
-          </select>
+            <option value="">Patients and HCPs</option>
+            <option value="PATIENT">Patients only</option>
+            <option value="HCP">HCPs only</option>
+          </Select>
         )}
-      </div>
+      </Toolbar>
 
-      <Card>
+      <Card flush className={cx(list.isFetching && !list.isLoading && "opacity-70 transition-opacity")}>
         {list.isLoading ? (
-          <Loading />
+          <div className="p-5">
+            <LoadingRows rows={8} label="Loading recommendations" />
+          </div>
         ) : list.error ? (
-          <ErrorNote error={list.error} />
+          <ErrorState error={list.error} title="Recommendations could not be loaded" />
         ) : !list.data.items.length ? (
-          <Empty>Nothing in this view.</Empty>
+          <EmptyState title="Nothing in this view" icon={<CheckCircle2 className="h-5 w-5" />}>
+            {filter === "ready_for_review"
+              ? "No recommendations are waiting for review. New ones appear after the next engine cycle."
+              : "Try another status filter."}
+          </EmptyState>
         ) : (
           <>
-            <Table head={["Who", "Recommended action", "Why", "Priority", "Status"]}>
-              {list.data.items.map((n: Json) => (
-                <tr key={n.id} className="hover:bg-stone-50">
-                  <td className="px-3 py-3 align-top">
-                    <Link to={`/nba/${n.id}`} className="font-medium text-brand-700 hover:underline">
-                      {n.target_name ?? `${n.target_type === "HCP" ? "HCP" : "Patient"} (identity hidden)`}
-                    </Link>
-                    <div className="mt-1 flex items-center gap-1.5">
-                      {n.target_name && <span className="text-xs text-stone-400">{n.target_id}</span>}
-                      <SegmentBadge value={n.segment} />
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 align-top">
-                    <div className="font-medium text-stone-800">
-                      {capitalize(n.action_label)} by {n.channel_label}
-                    </div>
-                    <div className="mt-0.5 text-xs text-stone-500">{n.content_title}</div>
-                  </td>
-                  <td className="max-w-md px-3 py-3 align-top text-stone-600">
-                    {n.status === "blocked" ? (
-                      <span className="flex items-start gap-1.5 text-red-700">
-                        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                        {n.block_reason}
-                      </span>
-                    ) : (
-                      (n.rationale_summary ?? n.timing_note)
-                    )}
-                    {n.has_withheld && n.status !== "blocked" && (
-                      <div className="mt-1">
-                        <Badge tone="warn">Better option held back by a gate</Badge>
-                      </div>
-                    )}
-                  </td>
-                  <td className="tabular px-3 py-3 align-top text-stone-700">{n.priority.toFixed(1)}</td>
-                  <td className="px-3 py-3 align-top">
-                    <StatusBadge status={n.status} />
-                  </td>
-                </tr>
-              ))}
-            </Table>
-            <div className="mt-4 flex items-center justify-between text-sm text-stone-500">
-              <span className="tabular">
-                {page * PAGE + 1}–{Math.min((page + 1) * PAGE, list.data.total)} of {list.data.total}
-              </span>
-              <div className="flex gap-2">
-                <button
-                  disabled={page === 0}
-                  onClick={() => setPage(page - 1)}
-                  className="rounded-lg border border-stone-300 px-3 py-1 disabled:opacity-40"
-                >
-                  Previous
-                </button>
-                <button
-                  disabled={(page + 1) * PAGE >= list.data.total}
-                  onClick={() => setPage(page + 1)}
-                  className="rounded-lg border border-stone-300 px-3 py-1 disabled:opacity-40"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
+            <DataTable
+              caption={title}
+              tableFrom="4xl"
+              columns={columns}
+              rows={list.data.items}
+              rowKey={(n) => n.id}
+              onRowClick={(n) => navigate(`/nba/${n.id}`)}
+              rowClassName={(n) => n.status === "blocked" && "bg-bad-soft/35"}
+              mobileAside={(n) => <StatusBadge status={n.status} />}
+            />
+            <Pagination page={page} pageSize={PAGE} total={list.data.total} onPage={setPage} />
           </>
         )}
       </Card>
     </>
   );
-}
-
-function capitalize(text: string) {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }

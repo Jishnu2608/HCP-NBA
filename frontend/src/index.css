@@ -1,36 +1,377 @@
 @import "tailwindcss";
+@import "@fontsource-variable/public-sans";
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --color-brand-50: #eef7f7;
-  --color-brand-100: #d5ecec;
-  --color-brand-500: #14808a;
-  --color-brand-600: #0f6a73;
-  --color-brand-700: #0c555c;
-  --color-brand-900: #0a3338;
+/*
+ * Design tokens. Every colour in the product comes from these variables, so light and dark
+ * themes differ only here. Components use the semantic names (canvas, surface, ink,
+ * primary, ok, warn, bad ...) through the Tailwind theme mapping below, never raw hex.
+ *
+ * Palette: eucalyptus (navigation, primary actions), ivory (surfaces), charcoal (text),
+ * sage (secondary), coral (the one hero call to action, attention dots), amber (warnings).
+ * Risk and compliance use their own status colours (ok / warn / bad / info), always with an
+ * icon and a text label, never colour alone.
+ */
+:root {
+  color-scheme: light;
+
+  --canvas: #f5f3ec;
+  --surface: #fffdf8;
+  --subtle: #efece4;
+  --sunken: #e9e5db;
+  --line: #e2ddd1;
+  --line-strong: #cbc5b6;
+
+  --ink: #1d2422;
+  --ink-muted: #4d5652;
+  --ink-subtle: #646d69;
+  --ink-inverse: #fbfaf6;
+
+  --primary: #24584a;
+  --primary-hover: #1c4639;
+  --primary-ink: #24584a;
+  --primary-soft: #e6efea;
+  --primary-line: #bfd5cb;
+  --on-primary: #ffffff;
+
+  --sage: #dfe6db;
+  --sage-ink: #4f6248;
+
+  --accent: #bf4630;
+  --accent-hover: #a33a27;
+  --accent-soft: #fbe9e3;
+  --accent-ink: #a23a26;
+  --on-accent: #ffffff;
+
+  --ok: #1d6a45;
+  --ok-soft: #e5f2ea;
+  --ok-line: #b9d9c6;
+  --warn: #8a4a06;
+  --warn-soft: #fbefd9;
+  --warn-line: #ecd09b;
+  --bad: #a3241c;
+  --bad-soft: #fbe8e5;
+  --bad-line: #efc0b9;
+  --info: #285b78;
+  --info-soft: #e5eff4;
+  --info-line: #bad3e0;
+  --neutral: #4b5350;
+  --neutral-soft: #ece9e1;
+  --neutral-line: #d9d4c8;
+
+  --nav: #15211d;
+  --nav-raised: #1d2c27;
+  --nav-line: #2a3a34;
+  --nav-ink: #dbe5e0;
+  --nav-ink-muted: #93a69d;
+  --nav-active: #24392f;
+  --nav-indicator: #8cc4ad;
+
+  --focus: #2f7a63;
+
+  --shadow-sm: 0 1px 2px rgb(21 33 29 / 0.06), 0 1px 1px rgb(21 33 29 / 0.03);
+  --shadow-md: 0 4px 12px -2px rgb(21 33 29 / 0.08), 0 2px 4px -2px rgb(21 33 29 / 0.05);
+  --shadow-lg: 0 18px 40px -12px rgb(21 33 29 / 0.22), 0 6px 12px -6px rgb(21 33 29 / 0.08);
+
+  /* Charts: eucalyptus, ochre, slate blue. Baseline is deliberately neutral. */
+  --series-1: #2c6e5a;
+  --series-2: #b8811c;
+  --series-3: #4a6c9e;
+  --series-baseline: #b3ada1;
+  --chart-grid: #e4dfd3;
+  --chart-text: #555e5a;
+  --chart-cursor: rgb(36 88 74 / 0.06);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --canvas: #0f1513;
+    --surface: #151d1a;
+    --subtle: #1b2521;
+    --sunken: #111916;
+    --line: #27332e;
+    --line-strong: #3a4842;
+
+    --ink: #e7ece9;
+    --ink-muted: #b0bbb6;
+    --ink-subtle: #919d98;
+    --ink-inverse: #0f1513;
+
+    --primary: #2d7460;
+    --primary-hover: #358770;
+    --primary-ink: #8fcbb4;
+    --primary-soft: #18302a;
+    --primary-line: #2c5446;
+    --on-primary: #ffffff;
+
+    --sage: #1f2b25;
+    --sage-ink: #b4c5ad;
+
+    --accent: #c4503a;
+    --accent-hover: #d2614a;
+    --accent-soft: #3a1f19;
+    --accent-ink: #f0a08e;
+    --on-accent: #ffffff;
+
+    --ok: #7fd1a3;
+    --ok-soft: #14291e;
+    --ok-line: #24503a;
+    --warn: #f0c071;
+    --warn-soft: #2c2210;
+    --warn-line: #5a4419;
+    --bad: #f3a097;
+    --bad-soft: #321a17;
+    --bad-line: #64302a;
+    --info: #94c4de;
+    --info-soft: #14242e;
+    --info-line: #28465a;
+    --neutral: #c1c9c5;
+    --neutral-soft: #1e2724;
+    --neutral-line: #34413b;
+
+    --nav: #0b110f;
+    --nav-raised: #121a17;
+    --nav-line: #1f2a26;
+    --nav-ink: #d6e0db;
+    --nav-ink-muted: #879a91;
+    --nav-active: #1a2a24;
+    --nav-indicator: #8cc4ad;
+
+    --focus: #8fcbb4;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.45);
+    --shadow-lg: 0 18px 40px -12px rgb(0 0 0 / 0.6);
+
+    --series-1: #6cbf9f;
+    --series-2: #e0aa4a;
+    --series-3: #86a7d8;
+    --series-baseline: #69716d;
+    --chart-grid: #26312c;
+    --chart-text: #a3aea9;
+    --chart-cursor: rgb(143 203 180 / 0.08);
+  }
+}
+
+@theme inline {
+  --font-sans: "Public Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-inverse: var(--ink-inverse);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-ink: var(--primary-ink);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-line: var(--primary-line);
+  --color-on-primary: var(--on-primary);
+  --color-sage: var(--sage);
+  --color-sage-ink: var(--sage-ink);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-on-accent: var(--on-accent);
+
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-ok-line: var(--ok-line);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-line: var(--warn-line);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-bad-line: var(--bad-line);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-line: var(--info-line);
+  --color-neutral: var(--neutral);
+  --color-neutral-soft: var(--neutral-soft);
+  --color-neutral-line: var(--neutral-line);
+
+  --color-nav: var(--nav);
+  --color-nav-raised: var(--nav-raised);
+  --color-nav-line: var(--nav-line);
+  --color-nav-ink: var(--nav-ink);
+  --color-nav-ink-muted: var(--nav-ink-muted);
+  --color-nav-active: var(--nav-active);
+  --color-nav-indicator: var(--nav-indicator);
+  --color-focus: var(--focus);
+
+  --shadow-card: var(--shadow-sm);
+  --shadow-raised: var(--shadow-md);
+  --shadow-overlay: var(--shadow-lg);
+}
+
+/* Layering scale. Nothing else in the product sets a z-index. */
 :root {
-  /* Chart roles (validated categorical order: blue, orange, aqua). */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --chart-grid: #e7e5e4;
-  --chart-text: #52514e;
+  --z-sticky: 10;
+  --z-nav: 30;
+  --z-drawer: 40;
+  --z-toast: 50;
 }
 
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
-  background: #f6f7f8;
-  color: #1c1917;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv05" 1;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+/* One visible focus style for every interactive element, keyboard only. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: var(--z-toast);
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+  font-size: 14px;
+}
+.skip-link:focus {
+  top: 12px;
+}
+
+/* Skeleton shimmer for loading states. */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--subtle) 0%,
+    color-mix(in srgb, var(--subtle) 55%, var(--surface)) 50%,
+    var(--subtle) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: rise 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.animate-fade {
+  animation: fade 160ms ease-out both;
+}
+.animate-drawer-left {
+  animation: slide-in-left 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.animate-drawer-right {
+  animation: slide-in-right 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Thin, quiet scrollbars inside panels. */
+.scroll-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* Recharts: inherit the product font and keep focus outlines off SVG surfaces. */
+.recharts-wrapper,
+.recharts-text {
+  font-family: var(--font-sans);
+}
+.recharts-surface:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
