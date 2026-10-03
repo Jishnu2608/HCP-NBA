@@ -25,6 +25,11 @@ Master_Build.md
 Workflow_Context.md
 TODO.md
 
+# Locally installed agent skills (per developer, not part of the application)
+.agents/
+.claude/skills/
+skills-lock.json
+
 # Editors / OS
 .vscode/
 .idea/
