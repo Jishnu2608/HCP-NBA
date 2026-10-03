@@ -19,6 +19,7 @@ import {
   MlrBadge,
   PageHeader,
   Segmented,
+  KpiGrid,
   Stat,
   TextArea,
   Toolbar,
@@ -90,7 +91,7 @@ export default function ContentLibrary() {
 
       {governance && (
         <>
-          <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiGrid>
             <Stat label="Pending MLR review" value={num(pending)} tone={pending ? "warn" : undefined} icon={<Hourglass className="h-4 w-4" aria-hidden />} />
             <Stat label="Approval expired" value={num(expired)} tone={expired ? "bad" : undefined} icon={<CalendarX2 className="h-4 w-4" aria-hidden />} />
             <Stat
@@ -100,7 +101,7 @@ export default function ContentLibrary() {
               icon={<Clock3 className="h-4 w-4" aria-hidden />}
             />
             <Stat label="Approved and in date" value={`${usable} of ${all.length}`} tone="ok" icon={<CheckCircle2 className="h-4 w-4" aria-hidden />} />
-          </div>
+          </KpiGrid>
           {!canReview && (
             <Alert tone="info" icon={<Lock className="h-5 w-5" aria-hidden />} className="mb-6">
               <span className="text-info">

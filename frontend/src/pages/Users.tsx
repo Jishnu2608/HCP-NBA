@@ -21,6 +21,7 @@ import {
   PageHeader,
   SearchInput,
   Select,
+  KpiGrid,
   Stat,
   Toolbar,
   fmtDate,
@@ -388,12 +389,12 @@ export default function UsersPage() {
         title="Users and assignments"
         subtitle="Every account, its role and what it is assigned to. Assignments and status can be changed here. Roles cannot: permissions come only from the role an account was created with."
       />
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <KpiGrid>
         <Stat label="Accounts" value={shown(totalAccounts)} icon={<UsersIcon className="h-4 w-4" aria-hidden />} hint={role || source || q ? "across all filters" : undefined} />
         <Stat label="Active" value={shown(countStatus("active"))} tone="ok" icon={<UserCheck className="h-4 w-4" aria-hidden />} hint="in this view" />
         <Stat label="Pending verification" value={shown(countStatus("pending"))} tone={countStatus("pending") ? "warn" : undefined} icon={<UserCog className="h-4 w-4" aria-hidden />} hint="in this view" />
         <Stat label="Disabled" value={shown(countStatus("disabled"))} tone={countStatus("disabled") ? "bad" : undefined} icon={<UserX className="h-4 w-4" aria-hidden />} hint="in this view" />
-      </div>
+      </KpiGrid>
       <Toolbar>
         <div className="grid gap-2 sm:grid-cols-2 lg:flex">
           <Select label="Role" value={role} onChange={(e) => setRole(e.target.value)} className="lg:w-64">

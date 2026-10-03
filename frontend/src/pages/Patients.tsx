@@ -34,6 +34,7 @@ import {
   SearchInput,
   Segmented,
   SegmentBadge,
+  KpiGrid,
   Stat,
   StatusBadge,
   Toolbar,
@@ -117,7 +118,7 @@ export function PatientList() {
         title="Patients"
         subtitle="Adherence risk is recalculated every cycle from days covered, the current gap and the refill trend."
       />
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <KpiGrid>
         <Stat label="Patients" value={shown(total)} icon={<Users className="h-4 w-4" aria-hidden />} />
         {(["high", "medium", "low"] as const).map((r) => (
           <Stat
@@ -129,7 +130,7 @@ export function PatientList() {
             icon={RISK[r].icon}
           />
         ))}
-      </div>
+      </KpiGrid>
       <Toolbar>
         <Segmented
           label="Filter by risk"
@@ -350,7 +351,11 @@ export function History({ items }: { items: Json[] }) {
   );
 }
 
-/** The open recommendation for a person, as the most prominent element of a 360 page. */
+/**
+ * The open recommendation for a person, the most prominent element of a 360 page. Same
+ * reading order as the recommendation page: action, why, channel and timing, compliance,
+ * then the primary action.
+ */
 export function OpenNba({ nba }: { nba: Json | null }) {
   if (!nba) {
     return (
@@ -367,7 +372,7 @@ export function OpenNba({ nba }: { nba: Json | null }) {
     <Link
       to={`/nba/${nba.id}`}
       className={cx(
-        "group block overflow-hidden rounded-xl border bg-surface shadow-card transition-shadow hover:shadow-raised",
+        "lift group block overflow-hidden rounded-xl border bg-surface shadow-card",
         blocked ? "border-bad-line" : "border-primary-line",
       )}
     >
@@ -382,13 +387,33 @@ export function OpenNba({ nba }: { nba: Json | null }) {
         <div className={cx("mt-2 text-xl font-semibold leading-tight tracking-[-0.01em]", blocked ? "text-ink-muted" : "text-ink")}>
           {titleCase(nba.action_label)}
         </div>
-        <div className="mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
-          <ChannelIcon channel={nba.channel} className="h-4 w-4" /> {titleCase(nba.channel_label)}
-        </div>
-        <p className={cx("mt-3 text-sm leading-6", blocked ? "text-bad" : "text-ink-muted")}>
+        <div className="mt-3 text-[13px] font-semibold text-ink-muted">Why this action?</div>
+        <p className={cx("mt-0.5 text-sm leading-6", blocked ? "text-bad" : "text-ink")}>
           {blocked && <ShieldAlert className="mr-1 inline h-4 w-4 align-[-3px]" aria-hidden />}
           {nba.block_reason ?? nba.rationale_summary ?? nba.timing_note}
         </p>
+        <dl className="mt-4 grid grid-cols-2 gap-2">
+          <div className="min-w-0 rounded-lg bg-subtle px-3 py-2">
+            <dt className="text-xs text-ink-subtle">Channel</dt>
+            <dd className="mt-0.5 flex items-center gap-1.5 text-sm font-semibold text-ink">
+              <ChannelIcon channel={nba.channel} className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{titleCase(nba.channel_label)}</span>
+            </dd>
+          </div>
+          <div className="min-w-0 rounded-lg bg-subtle px-3 py-2">
+            <dt className="text-xs text-ink-subtle">Compliance</dt>
+            <dd className={cx("mt-0.5 flex items-center gap-1.5 text-sm font-semibold", blocked ? "text-bad" : "text-ok")}>
+              {blocked ? <ShieldAlert className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+              <span className="truncate">{blocked ? "Blocked" : "Passed"}</span>
+            </dd>
+          </div>
+          {nba.timing_note && !blocked && (
+            <div className="col-span-2 min-w-0 rounded-lg bg-subtle px-3 py-2">
+              <dt className="text-xs text-ink-subtle">Timing</dt>
+              <dd className="mt-0.5 text-sm font-semibold text-ink">{nba.timing_note}</dd>
+            </div>
+          )}
+        </dl>
         <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary-ink">
           {blocked ? "See why it was blocked" : "Review recommendation"}
           <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
@@ -483,14 +508,13 @@ export function PatientProfile() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6 xl:grid-cols-5">
+      <KpiGrid>
         <Stat
           label="Lowest days covered"
           value={pct(lowestPdc)}
           hint="target 80% (PDC)"
           tone={lowestPdc !== null && lowestPdc < 0.8 ? "bad" : "ok"}
           icon={<Gauge className="h-4 w-4" aria-hidden />}
-          className="md:col-span-2 xl:col-span-1"
         />
         <Stat
           label="Current gap"
@@ -498,15 +522,13 @@ export function PatientProfile() {
           hint={longestGap ? "without medication" : "supply on hand"}
           tone={longestGap ? "bad" : undefined}
           icon={<CalendarX2 className="h-4 w-4" aria-hidden />}
-          className="md:col-span-2 xl:col-span-1"
         />
-        <Stat label="Therapies" value={p.therapies.length} hint={p.therapies.map((t: Json) => titleCase(t.measure)).join(", ")} icon={<Pill className="h-4 w-4" aria-hidden />} className="md:col-span-2 xl:col-span-1" />
+        <Stat label="Therapies" value={p.therapies.length} hint={p.therapies.map((t: Json) => titleCase(t.measure)).join(", ")} icon={<Pill className="h-4 w-4" aria-hidden />} />
         <Stat
           label="Preferred channel"
           value={<span className="text-lg">{channelName(p.preferred_channel)}</span>}
           hint="as stated by the patient"
           icon={<ChannelIcon channel={p.preferred_channel} />}
-          className="md:col-span-3 xl:col-span-1"
         />
         <Stat
           label="Outreach consent"
@@ -514,9 +536,8 @@ export function PatientProfile() {
           hint="channels granted"
           tone={granted ? undefined : "warn"}
           icon={<ShieldCheck className="h-4 w-4" aria-hidden />}
-          className="col-span-2 md:col-span-3 xl:col-span-1"
         />
-      </div>
+      </KpiGrid>
 
       {/* Small screens: recommendation, then therapies, then details. Wide screens: two columns. */}
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[auto_1fr]">

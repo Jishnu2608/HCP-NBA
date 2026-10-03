@@ -20,6 +20,7 @@ import {
   Segmented,
   SegmentBadge,
   Select,
+  KpiGrid,
   Stat,
   StatusBadge,
   Toolbar,
@@ -176,7 +177,7 @@ export default function Queue() {
     <>
       <PageHeader title={title} subtitle={subtitle} />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <KpiGrid>
         <Stat
           label="Pending review"
           value={shown(countFor(["ready_for_review"]))}
@@ -203,7 +204,7 @@ export default function Queue() {
           hint={`${(counts.responded ?? 0).toLocaleString()} responded`}
           icon={<Send className="h-4 w-4" aria-hidden />}
         />
-      </div>
+      </KpiGrid>
 
       <Toolbar>
         <Segmented

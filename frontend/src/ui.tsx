@@ -8,6 +8,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   CalendarX2,
   CheckCheck,
   CheckCircle2,
@@ -46,8 +47,8 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
-import { useId, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Children, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "./api";
 import { useAuth } from "./auth";
 
@@ -65,6 +66,7 @@ export function Card({
   className,
   flush = false,
   id,
+  dataAttr,
 }: {
   title?: ReactNode;
   description?: ReactNode;
@@ -74,13 +76,16 @@ export function Card({
   /** No inner padding: for tables and lists that run edge to edge. */
   flush?: boolean;
   id?: string;
+  /** Adds data-<name> to the section, for scroll targets. */
+  dataAttr?: string;
 }) {
   const headingId = useId();
   return (
     <section
       id={id}
+      {...(dataAttr ? { [`data-${dataAttr}`]: "" } : {})}
       aria-labelledby={title ? headingId : undefined}
-      className={cx("min-w-0 rounded-xl border border-line bg-surface shadow-card", className)}
+      className={cx("min-w-0 scroll-mt-24 rounded-xl border border-line bg-surface shadow-card", className)}
     >
       {(title || action) && (
         <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-5 pt-4 pb-3 sm:px-6">
@@ -284,9 +289,11 @@ export const NBA_STATUS: Record<string, { tone: Tone; label: string; icon: React
 export function StatusBadge({ status }: { status: string }) {
   const s = NBA_STATUS[status] ?? { tone: "neutral" as Tone, label: titleCase(status), icon: null };
   return (
-    <Badge tone={s.tone} icon={s.icon}>
-      {s.label}
-    </Badge>
+    <span key={status} className="animate-pop inline-flex max-w-full">
+      <Badge tone={s.tone} icon={s.icon}>
+        {s.label}
+      </Badge>
+    </span>
   );
 }
 
@@ -356,42 +363,186 @@ export function ConsentBadge({ granted }: { granted: boolean }) {
 
 /* ----------------------------------------------------------------- figures */
 
-export function Stat({
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+/**
+ * A figure that counts up to its value when it first appears or changes ("1,087",
+ * "72.2%", "16 days"). Prefix, suffix, grouping and decimals are kept. Anything that is not
+ * a plain figure is shown as it is. No animation under reduced motion.
+ */
+export function AnimatedNumber({ value }: { value: ReactNode }) {
+  const text = typeof value === "number" ? value.toLocaleString("en-US") : typeof value === "string" ? value : null;
+  const match = text?.match(/^(\D*?)(\d[\d,]*(?:\.\d+)?)(.*)$/s) ?? null;
+  const target = match ? Number(match[2].replace(/,/g, "")) : NaN;
+  const decimals = match?.[2].split(".")[1]?.length ?? 0;
+  const grouped = match?.[2].includes(",") ?? false;
+  const [shown, setShown] = useState(target);
+  const from = useRef(0);
+
+  useEffect(() => {
+    if (Number.isNaN(target)) return;
+    if (reducedMotion()) {
+      setShown(target);
+      return;
+    }
+    const start = performance.now();
+    const origin = from.current;
+    let frame = 0;
+    const step = (now: number) => {
+      const k = Math.min(1, (now - start) / 650);
+      const eased = 1 - (1 - k) ** 3;
+      setShown(origin + (target - origin) * eased);
+      if (k < 1) frame = requestAnimationFrame(step);
+      else from.current = target;
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+
+  if (!match || Number.isNaN(target)) return <>{value}</>;
+  const number = grouped
+    ? shown.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+    : shown.toFixed(decimals);
+  return (
+    <>
+      {/* Screen readers get the final value once, not every frame. */}
+      <span aria-hidden>
+        {match[1]}
+        {number}
+        {match[3]}
+      </span>
+      <span className="sr-only">{text}</span>
+    </>
+  );
+}
+
+type KpiTone = "ok" | "warn" | "bad" | "brand";
+const KPI_VALUE: Record<KpiTone, string> = {
+  ok: "text-ok",
+  warn: "text-warn",
+  bad: "text-bad",
+  brand: "text-primary-ink",
+};
+const KPI_ICON: Record<KpiTone | "none", string> = {
+  ok: "bg-ok-soft text-ok",
+  warn: "bg-warn-soft text-warn",
+  bad: "bg-bad-soft text-bad",
+  brand: "bg-primary-soft text-primary-ink",
+  none: "bg-subtle text-ink-subtle",
+};
+
+/**
+ * Key-figure card. Every KPI in the product uses this one structure so tiles in a row
+ * line up regardless of text length:
+ *   title region  - always two lines tall (longer titles are clamped, full text in a tooltip)
+ *   value         - one line, large tabular figures, counts up on first view
+ *   hint region   - always one line tall
+ * The icon sits in a fixed 32px tile, top right. With `to`, the whole card is a link with a
+ * hover lift and an arrow that appears on hover or focus.
+ */
+export function KpiCard({
   label,
   value,
   hint,
   tone,
   icon,
+  to,
   className,
 }: {
-  label: ReactNode;
+  label: string;
   value: ReactNode;
-  hint?: ReactNode;
-  tone?: "ok" | "warn" | "bad" | "brand";
+  hint?: string;
+  tone?: KpiTone;
   icon?: ReactNode;
+  /** Makes the card a link to the detail behind the figure. */
+  to?: string;
   className?: string;
 }) {
-  const valueTone = {
-    ok: "text-ok",
-    warn: "text-warn",
-    bad: "text-bad",
-    brand: "text-primary-ink",
-  };
-  return (
-    <div className={cx("min-w-0 rounded-xl border border-line bg-surface px-4 py-3.5 shadow-card", className)}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 text-[13px] font-medium leading-5 text-ink-subtle">{label}</div>
-        {icon && <span className="shrink-0 text-ink-subtle">{icon}</span>}
+  const body = (
+    <>
+      <div className="flex items-start gap-3">
+        <p title={label} className="line-clamp-2 min-h-10 flex-1 text-[13px] font-medium leading-5 text-ink-muted">
+          {label}
+        </p>
+        {icon && (
+          <span
+            aria-hidden
+            className={cx(
+              "grid h-8 w-8 shrink-0 place-items-center rounded-lg transition-transform duration-200 [&>svg]:h-4 [&>svg]:w-4",
+              KPI_ICON[tone ?? "none"],
+              to && "group-hover:-translate-y-0.5",
+            )}
+          >
+            {icon}
+          </span>
+        )}
       </div>
       <div
         className={cx(
-          "tabular mt-1 truncate text-[26px] font-semibold leading-8 tracking-[-0.01em]",
-          tone ? valueTone[tone] : "text-ink",
+          "tabular mt-2 truncate text-[28px] font-semibold leading-9 tracking-[-0.02em]",
+          tone ? KPI_VALUE[tone] : "text-ink",
         )}
       >
-        {value}
+        <AnimatedNumber value={value} />
       </div>
-      {hint && <div className="mt-0.5 text-xs leading-4 text-ink-subtle">{hint}</div>}
+      <div className="mt-1 flex min-h-4 items-center justify-between gap-2">
+        <p title={hint} className="line-clamp-1 text-xs leading-4 text-ink-subtle">
+          {hint ?? "\u00a0"}
+        </p>
+        {to && (
+          <ArrowRight
+            aria-hidden
+            className="h-3.5 w-3.5 shrink-0 -translate-x-1 text-primary-ink opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
+          />
+        )}
+      </div>
+    </>
+  );
+  const shell = cx(
+    "group flex h-full min-w-0 flex-col rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5",
+    to && "lift",
+    className,
+  );
+  return to ? (
+    <Link to={to} className={shell} aria-label={`${label}: ${typeof value === "string" || typeof value === "number" ? value : ""}${hint ? `, ${hint}` : ""}`}>
+      {body}
+    </Link>
+  ) : (
+    <div className={shell}>{body}</div>
+  );
+}
+
+/** @deprecated name kept for existing call sites; same component as KpiCard. */
+export const Stat = KpiCard;
+
+/**
+ * Row of KPI cards. The column count follows the number of cards, so every count has an
+ * intentional layout with no empty cells: 3 -> 1/3; 4 -> 2/4; 5 -> 2/(3+2)/5; 6 -> 2/3/6.
+ * On two-column phones an odd last card spans the full width.
+ */
+export function KpiGrid({ children, className }: { children: ReactNode; className?: string }) {
+  const items = Children.toArray(children).filter(Boolean);
+  const n = items.length;
+  const grid =
+    n <= 3
+      ? "grid-cols-1 sm:grid-cols-3"
+      : n === 4
+        ? "grid-cols-2 lg:grid-cols-4"
+        : n === 5
+          ? "grid-cols-2 md:grid-cols-6 xl:grid-cols-5"
+          : "grid-cols-2 md:grid-cols-3 xl:grid-cols-6";
+  const span = (i: number) => {
+    if (n === 5) return cx(i < 3 ? "md:col-span-2" : "md:col-span-3", "xl:col-span-1", i === 4 && "col-span-2");
+    if (n > 3 && n % 2 === 1 && i === n - 1) return "col-span-2 md:col-span-1";
+    return undefined;
+  };
+  return (
+    <div className={cx("stagger mb-8 grid gap-4", grid, className)}>
+      {items.map((item, i) => (
+        <div key={i} className={cx("min-w-0", span(i))}>
+          {item}
+        </div>
+      ))}
     </div>
   );
 }
@@ -425,7 +576,10 @@ export function Meter({
       aria-valuenow={Math.round(v * 100)}
       className={cx("h-2 overflow-hidden rounded-full bg-sunken", className)}
     >
-      <div className={cx("h-full rounded-full transition-[width] duration-500", fill[tone])} style={{ width: `${v * 100}%` }} />
+      <div
+        className={cx("animate-grow h-full origin-left rounded-full transition-[width] duration-500", fill[tone])}
+        style={{ width: `${v * 100}%` }}
+      />
     </div>
   );
 }
@@ -850,7 +1004,7 @@ export function Table({
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-line [&_td]:px-3 [&_td]:py-2.5 [&_td:first-child]:pl-0 [&_td:last-child]:pr-0">
+        <tbody className="divide-y divide-line [&_td]:px-3 [&_td]:py-3 [&_td:first-child]:pl-0 [&_td:last-child]:pr-0">
           {children}
         </tbody>
       </table>
@@ -1228,7 +1382,10 @@ export function Switch({
   );
 }
 
-/** Mutually exclusive filter. Scrolls sideways on small screens rather than wrapping. */
+/**
+ * Mutually exclusive filter. Scrolls sideways on small screens rather than wrapping. The
+ * highlight slides to the chosen option, so the change of view is visible.
+ */
 export function Segmented<V extends string>({
   options,
   value,
@@ -1240,28 +1397,50 @@ export function Segmented<V extends string>({
   onChange: (value: V) => void;
   label: string;
 }) {
+  const refs = useRef(new Map<string, HTMLButtonElement>());
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = refs.current.get(value);
+      if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [value, options.length]);
   return (
     <div className="-mx-1 min-w-0 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div role="radiogroup" aria-label={label} className="inline-flex gap-1 rounded-lg border border-line bg-subtle p-1">
+      <div role="radiogroup" aria-label={label} className="relative inline-flex gap-1 rounded-lg border border-line bg-subtle p-1">
+        {pill && (
+          <span
+            aria-hidden
+            className="absolute inset-y-1 rounded-md bg-surface shadow-card ring-1 ring-line transition-[transform,width] duration-200 ease-out"
+            style={{ left: 0, width: pill.width, transform: `translateX(${pill.left}px)` }}
+          />
+        )}
         {options.map((o) => {
           const active = o.value === value;
           return (
             <button
               key={o.value}
+              ref={(el) => {
+                if (el) refs.current.set(o.value, el);
+              }}
               type="button"
               role="radio"
               aria-checked={active}
               onClick={() => onChange(o.value)}
               className={cx(
-                "inline-flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-[13px] font-semibold transition-colors",
-                active ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted hover:text-ink",
+                "relative inline-flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-[13px] font-semibold transition-colors",
+                active ? "text-ink" : "text-ink-muted hover:text-ink",
+                !pill && active && "bg-surface shadow-card ring-1 ring-line",
               )}
             >
               {o.label}
               {o.count !== undefined && (
                 <span
                   className={cx(
-                    "tabular rounded px-1 text-xs font-medium",
+                    "tabular rounded px-1 text-xs font-medium transition-colors",
                     active ? "bg-primary-soft text-primary-ink" : "text-ink-subtle",
                   )}
                 >

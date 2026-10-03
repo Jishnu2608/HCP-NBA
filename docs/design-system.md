@@ -77,6 +77,70 @@ One layout for every failure: `ErrorPanel` in `ui.tsx` (icon, error code, title,
 - Numbers use tabular figures (`.tabular`).
 - Headings use `text-wrap: balance`, paragraphs `text-wrap: pretty`.
 
+## Layout system
+
+### Spacing scale
+
+One scale for the whole product (Tailwind units of 4px):
+
+| Gap | Where |
+|---|---|
+| 16px (`gap-4`) | Between cards inside a grid (KPI rows, bento grids, rationale tiles) |
+| 24px (`gap-6`) | Between panels and columns on detail pages |
+| 32px (`mb-8`) | After a KPI row |
+| 40px (`mt-10`) | Between dashboard sections (`SectionHeader`) |
+| 20 / 24px | Card padding on phones / from 640px |
+
+### KPI cards (`KpiCard`, `KpiGrid` in `ui.tsx`)
+
+Every key figure uses the same structure, so cards in a row line up whatever their text:
+
+1. Title region: always two lines tall (13px, line-height 20px). Longer titles are clamped; the full text is in the tooltip.
+2. Icon: a fixed 32px tile at the top right, tinted with the card's tone.
+3. Value: one line, 28px tabular figures, counting up when it first appears.
+4. Hint region: always one line tall (12px). Hints are kept short enough to fit.
+
+`KpiGrid` chooses the columns from the number of cards, so every count has an intentional layout with no empty cells: 3 -> 1/3 columns; 4 -> 2/4; 5 -> 2 / (3 + 2 on tablets) / 5; 6 -> 2/3/6. An odd last card on two-column phones spans the row. With `to`, a KPI card becomes a link: it lifts on hover or focus and an arrow appears.
+
+### Bento grid (`layout.tsx`)
+
+Dashboards and other dense screens use one grid: 1 column on phones, 2 from 768px, 12 from 1280px. Cells come in four sizes only:
+
+| Size | Columns at 1280px+ | Use |
+|---|---|---|
+| `full` | 12 | Activity feeds, a summary that needs the width |
+| `wide` | 8 | The primary item of a row (main chart) |
+| `half` | 6 | Paired items of equal weight |
+| `narrow` | 4 | Supporting items beside a `wide` cell |
+
+Rows always add up to 12 (8 + 4, 6 + 6, 12). Below 1280px the cells go full width, because charts and lists need the width; `pairOnTablet` lets small cells sit two-up from 768px. Cards stretch to the tallest cell in the row, and a footer `note` is pinned to the bottom, so neighbouring cards end level. When a card would be mostly empty (for example a trend with one data point), the layout changes instead: the related card takes the row.
+
+Components: `BentoGrid`, `BentoCard` (icon tile, title, description, optional "View all" link, footer note), `SectionHeader`, `InsightRow` (finding plus figure), `BarRow` (label, figure, proportion bar).
+
+### Dashboard reading order
+
+Overview KPIs -> Insights (engine versus earlier outreach, what stands out) -> Recommendations (status by audience, what the engine proposes) -> Adherence and engagement -> Compliance and safeguards -> Recent activity (audit, for roles that may read it).
+
+### Recommendation hierarchy
+
+Everywhere a recommendation appears it reads in the same order: "Next best action" label -> action -> "Why this action?" -> channel -> timing -> compliance status -> expected outcome -> primary action. On the recommendation page the reasons follow as a bento of evidence tiles (profile signals, action, channel, timing, compliance; a held-back option spans the row in amber).
+
+## Motion
+
+Short (150-650 ms), and only where it says something:
+
+| Motion | Meaning |
+|---|---|
+| Cards in a grid rise in one after another (`stagger`) | The page has loaded |
+| KPI figures count up (`AnimatedNumber`) | A figure has arrived or changed |
+| Proportion bars grow from the left (`animate-grow`) | Relative size |
+| The active filter's highlight slides (`Segmented`) | Which view is selected |
+| A status badge pops once when its status changes (`animate-pop`) | The state changed |
+| Interactive cards lift 2px with a stronger border (`lift`) | This can be opened |
+| Drawers slide, menus and toasts rise | Where the new surface came from |
+
+No looping animations, no scaling beyond 2px, no glow. Everything collapses to nothing under `prefers-reduced-motion`, and the count-up is skipped.
+
 ## Shape, depth, spacing
 
 - Radius: controls 8px, cards and panels 12px, badges and chips 6px. Avatars are rounded squares.
@@ -92,7 +156,7 @@ One layout for every failure: `ErrorPanel` in `ui.tsx` (icon, error code, title,
 | `Card` | Titled panel; `flush` for edge-to-edge tables and lists |
 | `Button`, `IconButton` | Variants: primary, accent, secondary, ghost, danger, quiet-danger. Sizes sm (36px), md (40px), lg (48px). Busy state with spinner |
 | `Badge`, `StatusBadge`, `SegmentBadge`, `MlrBadge`, `ConsentBadge` | Status semantics above |
-| `Stat`, `Meter` | Key figures and proportion bars |
+| `KpiCard` (alias `Stat`), `KpiGrid`, `AnimatedNumber`, `Meter` | Key figures with fixed title/value/hint regions, column logic by count, count-up, proportion bars |
 | `DataTable` | Table on wide containers, stacked cards on narrow ones. Switches on the container's own width (container query), not the window's. Rows can be opened by click or keyboard |
 | `Table` | Small fixed tables; scrolls sideways if it must |
 | `Pagination`, `Segmented`, `Toolbar`, `Select`, `SearchInput` | List controls. `Segmented` scrolls sideways on phones instead of wrapping |

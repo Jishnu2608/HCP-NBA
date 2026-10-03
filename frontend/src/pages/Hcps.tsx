@@ -17,6 +17,7 @@ import {
   PageHeader,
   SearchInput,
   SegmentBadge,
+  KpiGrid,
   Stat,
   Toolbar,
   channelName,
@@ -194,7 +195,7 @@ export function HcpProfile() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <KpiGrid>
         <Stat label="Value score" value={`${h.value_score?.toFixed(0) ?? "—"} / 100`} hint="prescribing volume and engagement" icon={<Award className="h-4 w-4" aria-hidden />} tone="brand" />
         <Stat label="Prescriptions per year" value={num(h.rx_volume_annual)} hint={`NPI ${h.npi} (synthetic)`} icon={<FileText className="h-4 w-4" aria-hidden />} />
         <Stat
@@ -208,7 +209,7 @@ export function HcpProfile() {
           hint={touches ? `${engaged} with a response` : "none on record"}
           icon={<MessagesSquare className="h-4 w-4" aria-hidden />}
         />
-      </div>
+      </KpiGrid>
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[auto_1fr]">
         <div className="min-w-0 xl:col-start-2 xl:row-start-1">

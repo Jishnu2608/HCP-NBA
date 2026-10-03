@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowDown,
   ArrowUpRight,
   Ban,
   CalendarClock,
@@ -49,7 +50,7 @@ import {
 } from "../ui";
 
 const KIND: Record<string, { label: string; icon: ReactNode }> = {
-  who: { label: "Why this person", icon: <UserRound className="h-4 w-4" aria-hidden /> },
+  who: { label: "Profile signals", icon: <UserRound className="h-4 w-4" aria-hidden /> },
   action: { label: "Why this action", icon: <Target className="h-4 w-4" aria-hidden /> },
   channel: { label: "Why this channel", icon: <MessageSquare className="h-4 w-4" aria-hidden /> },
   timing: { label: "Why now", icon: <CalendarClock className="h-4 w-4" aria-hidden /> },
@@ -66,6 +67,15 @@ function auditTone(action: string): "neutral" | "brand" | "ok" | "warn" | "bad" 
   if (/sent|respon|outcome|fill/.test(action)) return "ok";
   if (/edit|redraft/.test(action)) return "warn";
   return "neutral";
+}
+
+/** Scrolls to and focuses the visible element matching `selector` (layouts render some
+ *  panels twice, one per width). */
+function reveal(selector: string) {
+  const el = [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.offsetParent !== null);
+  if (!el) return;
+  el.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  el.querySelector<HTMLElement>("button:not([disabled]), textarea, input")?.focus({ preventScroll: true });
 }
 
 function Fact({ icon, label, value, hint }: { icon: ReactNode; label: string; value: ReactNode; hint?: ReactNode }) {
@@ -139,6 +149,8 @@ export default function NbaDetail() {
     reasons: n.reason_codes.filter((r: Json) => r.kind === kind),
   })).filter((g) => g.reasons.length);
 
+  const regular = grouped.filter((g) => g.kind !== "withheld");
+
   const saveEdit = () => patch(`/nba/${id}/drafts/${draftId}`, { subject: subject || null, body });
   const approve = async (thenSend: boolean) => {
     if (dirty) await saveEdit();
@@ -148,6 +160,7 @@ export default function NbaDetail() {
 
   const decision = n.can_review && (
     <Card
+      dataAttr="decision"
       title="Decision"
       description={reviewing ? "You are the reviewer for this recommendation." : undefined}
       className={cx(reviewing && "ring-1 ring-primary-line")}
@@ -293,19 +306,23 @@ export default function NbaDetail() {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0 space-y-6">
-          {/* The recommendation itself */}
+          {/* The recommendation, in reading order: action, why, channel, timing,
+              compliance, expected outcome, then the primary action. */}
           <section
             aria-labelledby="nba-hero"
             className={cx(
               "overflow-hidden rounded-xl border bg-surface shadow-card",
-              blocked ? "border-bad-line" : "border-line",
+              blocked ? "border-bad-line" : "border-primary-line",
             )}
           >
             <div className={cx("h-1", blocked ? "bg-bad" : "bg-primary")} aria-hidden />
             <div className="px-5 pb-6 pt-5 sm:px-6">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
-                <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad" : "bg-accent")} aria-hidden />
-                Next best action
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
+                  <span className={cx("h-2 w-2 rounded-full", blocked ? "bg-bad" : "bg-accent")} aria-hidden />
+                  Next best action
+                </span>
+                <span className="tabular text-[13px] text-ink-subtle">Priority {n.priority.toFixed(1)}</span>
               </div>
               <h2
                 id="nba-hero"
@@ -316,6 +333,14 @@ export default function NbaDetail() {
               >
                 {cap(n.action_label)}
               </h2>
+              {(n.rationale_summary || n.block_reason) && (
+                <div className="mt-3 max-w-3xl">
+                  <div className="text-[13px] font-semibold text-ink-muted">Why this action?</div>
+                  <p className={cx("mt-0.5 text-[15px] leading-6", blocked ? "text-bad" : "text-ink")}>
+                    {blocked ? n.block_reason : n.rationale_summary}
+                  </p>
+                </div>
+              )}
               <dl className="mt-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
                 <Fact
                   icon={<ChannelIcon channel={n.channel} className="h-3.5 w-3.5" />}
@@ -323,6 +348,14 @@ export default function NbaDetail() {
                   value={cap(n.channel_label)}
                 />
                 <Fact icon={<CalendarClock className="h-3.5 w-3.5" aria-hidden />} label="Timing" value={n.timing_note} />
+                <Fact
+                  icon={blocked ? <Ban className="h-3.5 w-3.5" aria-hidden /> : <ShieldCheck className="h-3.5 w-3.5" aria-hidden />}
+                  label="Compliance"
+                  value={
+                    <span className={blocked ? "text-bad" : "text-ok"}>{blocked ? "Blocked by a safeguard" : "All safeguards passed"}</span>
+                  }
+                  hint={n.content.is_expired ? "Content approval expired" : `MLR ${n.content.mlr_status}`}
+                />
                 {isPatient ? (
                   <Fact
                     icon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
@@ -337,63 +370,70 @@ export default function NbaDetail() {
                     value={<span className="tabular">{pct(n.predicted?.p_engage)}</span>}
                   />
                 )}
-                <Fact
-                  icon={<Target className="h-3.5 w-3.5" aria-hidden />}
-                  label="Priority score"
-                  value={<span className="tabular">{n.priority.toFixed(1)}</span>}
-                />
               </dl>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <span className="text-[13px] font-medium text-ink-subtle">Compliance</span>
-                {blocked ? (
-                  <Badge tone="bad" icon={<Ban className="h-3.5 w-3.5" aria-hidden />}>
-                    Safeguard failed
-                  </Badge>
-                ) : (
-                  <Badge tone="ok" icon={<ShieldCheck className="h-3.5 w-3.5" aria-hidden />}>
-                    All safeguards passed
-                  </Badge>
-                )}
-                <MlrBadge status={n.content.mlr_status} expired={n.content.is_expired} />
-              </div>
+              {n.can_review && (reviewing || n.status === "approved") && (
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Button variant="primary" onClick={() => reveal("[data-decision]")}>
+                    {reviewing ? "Review and decide" : "Send or withdraw"}
+                    <ArrowDown className="h-4 w-4" aria-hidden />
+                  </Button>
+                  {reviewing && n.drafts.length > 0 && (
+                    <Button variant="ghost" onClick={() => reveal("[data-draft]")}>
+                      <PenLine className="h-4 w-4" aria-hidden /> Edit message
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
+          </section>
 
-            <div className="border-t border-line bg-subtle/40 px-5 py-5 sm:px-6">
-              <h3 className="text-[15px] font-semibold text-ink">Why this recommendation</h3>
-              <div className="mt-4 grid gap-x-8 gap-y-5 lg:grid-cols-2">
-                {grouped.map((g) => (
-                  <div key={g.kind} className="flex min-w-0 gap-3">
-                    <span
-                      className={cx(
-                        "mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-                        g.kind === "withheld" ? "bg-warn-soft text-warn" : "bg-primary-soft text-primary-ink",
-                      )}
-                    >
-                      {KIND[g.kind].icon}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-semibold text-ink-muted">{KIND[g.kind].label}</div>
-                      <ul className="mt-1 space-y-1 text-sm leading-6 text-ink">
-                        {g.reasons.map((r: Json, i: number) => (
-                          <li key={i} className="flex flex-wrap items-baseline gap-x-2">
-                            <span>{r.text}</span>
-                            {r.points !== undefined && (
-                              <span className="tabular rounded bg-sunken px-1 text-xs font-medium text-ink-muted">
-                                +{r.points} risk pts
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+          {/* The rationale as a bento of evidence: one tile per kind of reason. */}
+          <section aria-labelledby="nba-why">
+            <h2 id="nba-why" className="mb-3 text-[15px] font-semibold text-ink">
+              Why this recommendation
+            </h2>
+            <div className="stagger grid gap-4 md:grid-cols-2">
+              {grouped.map((g) => (
+                <div
+                  key={g.kind}
+                  className={cx(
+                    "flex min-w-0 gap-3 rounded-xl border bg-surface p-4 shadow-card sm:p-5",
+                    g.kind === "withheld" ? "border-warn-line md:col-span-2" : "border-line",
+                    // An odd number of tiles: the last regular tile takes the full row, so no cell is empty.
+                    g.kind !== "withheld" && regular.length % 2 === 1 && g === regular[regular.length - 1] && "md:col-span-2",
+                  )}
+                >
+                  <span
+                    className={cx(
+                      "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
+                      g.kind === "withheld" ? "bg-warn-soft text-warn" : "bg-primary-soft text-primary-ink",
+                    )}
+                  >
+                    {KIND[g.kind].icon}
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="text-[13px] font-semibold text-ink-muted">{KIND[g.kind].label}</h3>
+                    <ul className="mt-1 space-y-1 text-sm leading-6 text-ink">
+                      {g.reasons.map((r: Json, i: number) => (
+                        <li key={i} className="flex flex-wrap items-baseline gap-x-2">
+                          <span>{r.text}</span>
+                          {r.points !== undefined && (
+                            <span className="tabular rounded bg-sunken px-1 text-xs font-medium text-ink-muted">
+                              +{r.points} risk pts
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
           </section>
 
           {n.drafts.length > 0 && (
             <Card
+              dataAttr="draft"
               title="Message draft"
               description={reviewing ? "Edit the wording if needed. Eligibility is already decided above." : undefined}
               action={

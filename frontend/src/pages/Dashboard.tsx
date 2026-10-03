@@ -1,5 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Ban, CalendarX2, CheckCircle2, ClipboardList, HeartPulse, Stethoscope } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  Ban,
+  BarChart3,
+  CalendarX2,
+  CheckCircle2,
+  FileCheck2,
+  HeartPulse,
+  Lightbulb,
+  ListChecks,
+  MessageSquare,
+  ScrollText,
+  ShieldAlert,
+  Stethoscope,
+  TrendingUp,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -13,17 +32,26 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api } from "../api";
+import { api, query } from "../api";
 import type { Json } from "../api";
+import { useAuth } from "../auth";
+import { BarRow, BentoCard, BentoGrid, InsightRow, SectionHeader } from "../layout";
+import { P } from "../permissions";
 import {
-  Card,
+  AnimatedNumber,
   ErrorState,
+  KpiCard,
+  KpiGrid,
   Loading,
-  Meter,
+  LoadingRows,
+  NBA_STATUS,
   PageHeader,
-  Stat,
-  Table,
+  Timeline,
+  TimelineItem,
+  cx,
+  eventLabel,
   fmtDate,
+  fmtDateTime,
   num,
   pct,
   titleCase,
@@ -57,23 +85,77 @@ const legendProps = { iconType: "circle" as const, iconSize: 8, wrapperStyle: { 
 // A rate from a handful of sends is noise: show the engine bar only with enough volume.
 const MIN_SENT = 20;
 const engineRate = (row: Json | undefined) => (row && row.sent >= MIN_SENT ? row.response_rate : undefined);
+// Fixed chart height so charts in the same row line up.
+const CHART_H = "h-64";
 
 function count(rows: Json[], target: string, status: string) {
   return rows.filter((r) => r.target_type === target && r.status === status).reduce((n, r) => n + r.count, 0);
 }
 
-function ChartNote({ children }: { children: React.ReactNode }) {
-  return <p className="mt-3 text-[13px] leading-5 text-ink-subtle">{children}</p>;
+/** Order and colour of recommendation states in the distribution bars. */
+const STATUS_ORDER: Array<{ key: string; fill: string }> = [
+  { key: "ready_for_review", fill: "bg-info" },
+  { key: "approved", fill: "bg-primary" },
+  { key: "sent", fill: "bg-sage-ink" },
+  { key: "responded", fill: "bg-ok" },
+  { key: "blocked", fill: "bg-bad" },
+  { key: "rejected", fill: "bg-line-strong" },
+  { key: "expired", fill: "bg-neutral-line" },
+];
+
+function StatusBar({ rows, target, label }: { rows: Json[]; target: string; label: string }) {
+  const parts = STATUS_ORDER.map((s) => ({ ...s, n: count(rows, target, s.key) })).filter((s) => s.n > 0);
+  const total = parts.reduce((a, b) => a + b.n, 0);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-sm">
+        <span className="font-semibold text-ink">{label}</span>
+        <span className="tabular text-ink-subtle">{num(total)} total</span>
+      </div>
+      <div className="mt-2 flex h-3 overflow-hidden rounded-full bg-sunken" role="img" aria-label={`${label}: ${parts.map((p) => `${NBA_STATUS[p.key]?.label ?? p.key} ${p.n}`).join(", ")}`}>
+        {parts.map((p) => (
+          <div key={p.key} className={cx("animate-grow h-full origin-left", p.fill)} style={{ width: `${(p.n / Math.max(total, 1)) * 100}%` }} />
+        ))}
+      </div>
+      <ul className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 text-[13px] sm:grid-cols-2">
+        {parts.map((p) => (
+          <li key={p.key} className="flex min-w-0 items-center gap-2">
+            <span className={cx("h-2.5 w-2.5 shrink-0 rounded-sm", p.fill)} aria-hidden />
+            <span className="truncate text-ink-muted">{NBA_STATUS[p.key]?.label ?? titleCase(p.key)}</span>
+            <span className="tabular ml-auto font-semibold text-ink">{num(p.n)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Empty({ children }: { children: ReactNode }) {
+  return <p className="rounded-lg bg-subtle px-4 py-5 text-sm leading-6 text-ink-muted">{children}</p>;
 }
 
 export default function Dashboard() {
+  const { can } = useAuth();
   const overview = useQuery({ queryKey: ["analytics"], queryFn: () => api("/analytics/overview") });
+  const recent = useQuery({
+    queryKey: ["audit", "recent"],
+    queryFn: () => api(`/audit${query({ limit: 8 })}`),
+    enabled: can(P.AUDIT_READ),
+  });
+  const content = useQuery({
+    queryKey: ["content"],
+    queryFn: () => api<Json[]>("/content"),
+    enabled: can(P.CONTENT_READ_ALL),
+  });
   if (overview.isLoading) return <Loading label="Calculating metrics" />;
-  if (overview.error) return <ErrorState error={overview.error} retry={() => void overview.refetch()} variant="page" title="Metrics could not be loaded" />;
+  if (overview.error) return <ErrorState error={overview.error} retry={() => void overview.refetch()} variant="page" />;
+
   const d: Json = overview.data;
   const status: Json[] = d.recommendations.by_status;
   const all = d.adherence.current.find((c: Json) => c.measure === "all");
   const risk = d.adherence.patients_by_risk;
+  const queue = can(P.NBA_READ_ALL, P.NBA_READ_GATED) ? "/queue" : undefined;
+  const patients = can(P.PATIENT_READ_ALL) ? "/patients" : undefined;
 
   const fair = Object.fromEntries(d.engagement.like_for_like.map((r: Json) => [r.source, r]));
   const fairRows = [
@@ -91,115 +173,215 @@ export default function Dashboard() {
       engine: engineRate(rows.find((r: Json) => r.channel_label === label && r.source === "engine")),
     }));
   };
+  const bestChannel = (target: string) =>
+    channelRows(target)
+      .filter((r) => r.baseline !== undefined)
+      .sort((a, b) => (b.engine ?? b.baseline) - (a.engine ?? a.baseline))[0];
 
   const dates = [...new Set(d.adherence.trend.map((t: Json) => t.as_of_date))] as string[];
   const trendRows = dates.map((date) => {
     const row: Json = { date: fmtDate(date).replace(/, \d{4}$/, "") };
-    for (const t of d.adherence.trend.filter((x: Json) => x.as_of_date === date)) {
-      row[t.measure] = t.adherent_rate;
-    }
+    for (const t of d.adherence.trend.filter((x: Json) => x.as_of_date === date)) row[t.measure] = t.adherent_rate;
     return row;
   });
   const measures = ["diabetes", "hypertension", "cholesterol"];
+  const byMeasure: Json[] = d.adherence.current.filter((c: Json) => c.measure !== "all");
   const gateReasons: Json[] = d.recommendations.gate_reasons;
   const gateMax = Math.max(1, ...gateReasons.map((g) => g.count));
   const mix: Json[] = d.recommendations.mix;
   const blocked = count(status, "PATIENT", "blocked") + count(status, "HCP", "blocked");
+  const totalRecs = status.reduce((n, r) => n + r.count, 0);
+  const topGate = [...gateReasons].sort((a, b) => b.count - a.count)[0];
+  const patientBest = bestChannel("PATIENT");
+  const hcpBest = bestChannel("HCP");
+  const mixFor = (target: string) => mix.filter((m) => m.target_type === target).sort((a, b) => b.count - a.count).slice(0, 5);
+  const mixMax = Math.max(1, ...mix.map((m) => m.count));
+  const items: Json[] = content.data ?? [];
+  const pendingContent = items.filter((c) => c.mlr_status === "pending").length;
+  const expiredContent = items.filter((c) => c.is_expired).length;
 
   return (
     <>
-      <PageHeader
-        title="Dashboard"
-        subtitle="What the engine recommended, what the safeguards stopped, and what changed. Aggregates only."
-      />
+      <PageHeader title="Dashboard" subtitle="What the engine recommended, what the safeguards stopped, and what changed. Aggregates only." />
 
-      <h2 className="sr-only">Key figures</h2>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Stat
+      {/* 1. Overview */}
+      <h2 className="sr-only">Overview</h2>
+      <KpiGrid>
+        <KpiCard
           label="Patient actions ready"
           value={num(count(status, "PATIENT", "ready_for_review"))}
           hint="latest cycle"
-          icon={<HeartPulse className="h-4 w-4" aria-hidden />}
+          icon={<HeartPulse />}
+          to={queue}
         />
-        <Stat
+        <KpiCard
           label="HCP actions ready"
           value={num(count(status, "HCP", "ready_for_review"))}
           hint="latest cycle"
-          icon={<Stethoscope className="h-4 w-4" aria-hidden />}
+          icon={<Stethoscope />}
+          to={queue}
         />
-        <Stat
+        <KpiCard
           label="Blocked by safeguards"
           value={num(blocked)}
           hint="cannot be sent"
           tone={blocked ? "bad" : undefined}
-          icon={<Ban className="h-4 w-4" aria-hidden />}
+          icon={<Ban />}
+          to={queue}
         />
-        <Stat
+        <KpiCard
           label="Adherent therapies"
           value={pct(all?.adherent_rate, 1)}
-          hint={`days covered ≥ ${pct(d.adherence.pdc_threshold)}`}
+          hint={`PDC ≥ ${pct(d.adherence.pdc_threshold)}`}
           tone="ok"
-          icon={<CheckCircle2 className="h-4 w-4" aria-hidden />}
+          icon={<CheckCircle2 />}
+          to={patients}
         />
-        <Stat
+        <KpiCard
           label="Currently in a gap"
           value={pct(all?.in_gap_rate, 1)}
-          hint="therapies without supply"
+          hint="no supply now"
           tone="warn"
-          icon={<CalendarX2 className="h-4 w-4" aria-hidden />}
+          icon={<CalendarX2 />}
+          to={patients}
         />
-        <Stat
+        <KpiCard
           label="High-risk patients"
           value={num(risk.high ?? 0)}
           hint={`${num(risk.medium ?? 0)} medium risk`}
           tone="bad"
-          icon={<AlertTriangle className="h-4 w-4" aria-hidden />}
+          icon={<AlertTriangle />}
+          to={patients}
         />
-      </div>
+      </KpiGrid>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <Card
+      {/* 2. Insights */}
+      <SectionHeader title="Insights" description="The comparison that matters most, and what stands out in the latest cycle." />
+      <BentoGrid>
+        <BentoCard
+          span="wide"
+          icon={<TrendingUp />}
           title="Engine versus earlier outreach"
           description="Like for like: patients already out of medication when contacted."
+          note={
+            hasEngine
+              ? `${num(fair.baseline.sent)} earlier touches versus ${num(fair.engine.sent)} engine touches. The engine concentrates on these harder cases, so comparing with all earlier outreach would be unfair to it.`
+              : undefined
+          }
         >
           {hasEngine ? (
-            <>
-              <div className="h-64">
-                <ResponsiveContainer>
-                  <BarChart data={fairRows} barGap={4} barCategoryGap="30%" margin={{ top: 20, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                    <XAxis dataKey="metric" tick={axis} tickLine={false} axisLine={false} />
-                    <YAxis tickFormatter={percent} tick={axis} tickLine={false} axisLine={false} width={40} />
-                    <Tooltip formatter={(v: number) => pct(v, 1)} {...tooltipProps} />
-                    <Legend {...legendProps} />
-                    <Bar isAnimationActive={false} dataKey="baseline" name="Earlier outreach" fill={BASELINE} radius={[4, 4, 0, 0]} maxBarSize={48}>
-                      <LabelList dataKey="baseline" position="top" formatter={(v: number) => pct(v, 1)} style={axis} />
-                    </Bar>
-                    <Bar isAnimationActive={false} dataKey="engine" name="Engine recommendations" fill={ENGINE} radius={[4, 4, 0, 0]} maxBarSize={48}>
-                      <LabelList dataKey="engine" position="top" formatter={(v: number) => pct(v, 1)} style={axis} />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <ChartNote>
-                {num(fair.baseline.sent)} earlier touches versus {num(fair.engine.sent)} engine touches. The engine
-                concentrates on these harder cases, so comparing against all earlier outreach would be unfair to it.
-              </ChartNote>
-            </>
+            <div className={CHART_H}>
+              <ResponsiveContainer>
+                <BarChart data={fairRows} barGap={4} barCategoryGap="30%" margin={{ top: 20, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                  <XAxis dataKey="metric" tick={axis} tickLine={false} axisLine={false} />
+                  <YAxis tickFormatter={percent} tick={axis} tickLine={false} axisLine={false} width={40} />
+                  <Tooltip formatter={(v: number) => pct(v, 1)} {...tooltipProps} />
+                  <Legend {...legendProps} />
+                  <Bar isAnimationActive={false} dataKey="baseline" name="Earlier outreach" fill={BASELINE} radius={[4, 4, 0, 0]} maxBarSize={56}>
+                    <LabelList dataKey="baseline" position="top" formatter={(v: number) => pct(v, 1)} style={axis} />
+                  </Bar>
+                  <Bar isAnimationActive={false} dataKey="engine" name="Engine recommendations" fill={ENGINE} radius={[4, 4, 0, 0]} maxBarSize={56}>
+                    <LabelList dataKey="engine" position="top" formatter={(v: number) => pct(v, 1)} style={axis} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
-            <div className="rounded-lg bg-subtle px-4 py-5 text-sm leading-6 text-ink-muted">
-              Not enough engine outreach has been answered yet for a fair comparison. Approve and send recommendations,
-              then advance the demo clock on the Engine page. Earlier outreach to patients already in a gap:{" "}
-              <strong className="text-ink">{pct(fair.baseline?.response_rate, 1)}</strong> responded,{" "}
-              <strong className="text-ink">{pct(fair.baseline?.fill_rate, 1)}</strong> led to a refill (
-              {num(fair.baseline?.sent)} touches).
+            <div className="flex h-full flex-col gap-5">
+              <dl className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Earlier outreach: responded", value: pct(fair.baseline?.response_rate, 1) },
+                  { label: "Earlier outreach: led to a refill", value: pct(fair.baseline?.fill_rate, 1) },
+                ].map((f) => (
+                  <div key={f.label} className="rounded-lg bg-subtle px-4 py-3.5">
+                    <dt className="text-[13px] leading-5 text-ink-muted">{f.label}</dt>
+                    <dd className="tabular mt-1 text-[28px] font-semibold leading-9 text-ink">
+                      <AnimatedNumber value={f.value} />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="text-sm leading-6 text-ink-muted">
+                Baseline from {num(fair.baseline?.sent)} earlier touches to patients already in a gap. The engine bars appear
+                once at least {MIN_SENT} engine recommendations of this kind have an outcome: approve and send
+                recommendations, then advance the demo clock.
+              </p>
+              {can(P.ENGINE_OPERATE) && (
+                <Link
+                  to="/admin"
+                  className="group mt-auto inline-flex items-center gap-1.5 self-start text-sm font-semibold text-primary-ink hover:underline"
+                >
+                  Open the Engine page
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+                </Link>
+              )}
             </div>
           )}
-        </Card>
+        </BentoCard>
 
-        <Card title="Adherent share by measure" description="Therapies with days covered at or above the threshold.">
-          {trendRows.length > 1 ? (
-            <div className="h-64">
+        <BentoCard span="narrow" icon={<Lightbulb />} title="What stands out" description="Derived from the figures on this page.">
+          <ul className="divide-y divide-line">
+            <InsightRow icon={<AlertTriangle />} tone="bad" figure={num(risk.high ?? 0)}>
+              Patients at high adherence risk, with {pct(all?.in_gap_rate, 0)} of therapies currently without supply.
+            </InsightRow>
+            {topGate && (
+              <InsightRow icon={<ShieldAlert />} tone="warn" figure={num(topGate.count)}>
+                Most common reason an option was held back: {topGate.label.charAt(0).toLowerCase() + topGate.label.slice(1)}.
+              </InsightRow>
+            )}
+            {patientBest && (
+              <InsightRow icon={<MessageSquare />} tone="brand" figure={pct(patientBest.engine ?? patientBest.baseline)}>
+                Patients respond most to {patientBest.channel.toLowerCase()}.
+              </InsightRow>
+            )}
+            {hcpBest && (
+              <InsightRow icon={<Stethoscope />} tone="brand" figure={pct(hcpBest.engine ?? hcpBest.baseline)}>
+                HCPs respond most to {hcpBest.channel.toLowerCase()}.
+              </InsightRow>
+            )}
+          </ul>
+        </BentoCard>
+      </BentoGrid>
+
+      {/* 3. Recommendations */}
+      <SectionHeader title="Recommendations" description="Where every recommendation stands, and what the engine is proposing." />
+      <BentoGrid>
+        <BentoCard span="half" icon={<ListChecks />} title="Status by audience" description="Every recommendation on record." link={queue ? { to: queue, label: "Open queue" } : undefined}>
+          <div className="space-y-6">
+            <StatusBar rows={status} target="PATIENT" label="Patients" />
+            <StatusBar rows={status} target="HCP" label="HCPs" />
+          </div>
+        </BentoCard>
+        <BentoCard span="half" icon={<BarChart3 />} title="What the engine is recommending" description="Latest cycle, top actions by audience and channel.">
+          {mix.length ? (
+            <div className="grid gap-6 sm:grid-cols-2">
+              {(["PATIENT", "HCP"] as const).map((target) => (
+                <div key={target} className="min-w-0">
+                  <h4 className="mb-3 text-[13px] font-semibold text-ink-muted">{target === "PATIENT" ? "Patients" : "HCPs"}</h4>
+                  <ul className="space-y-3">
+                    {mixFor(target).map((m, i) => (
+                      <BarRow key={i} label={titleCase(m.action)} sub={titleCase(m.channel)} figure={num(m.count)} value={m.count / mixMax} />
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty>No recommendations in the latest cycle.</Empty>
+          )}
+        </BentoCard>
+      </BentoGrid>
+
+      {/* 4. Adherence and engagement */}
+      <SectionHeader title="Adherence and engagement" description="Days covered by measure over time, and which channels people respond to." />
+      <BentoGrid>
+        {/* With a trend, the chart leads and today's split sits beside it. With one date only,
+            there is no line to draw, so today's split takes the full row instead of leaving a
+            mostly empty chart card. */}
+        {trendRows.length > 1 && (
+          <BentoCard span="wide" icon={<Activity />} title="Adherent share over time" description="Therapies with days covered at or above the threshold, by measure.">
+            <div className={CHART_H}>
               <ResponsiveContainer>
                 <LineChart data={trendRows} margin={{ top: 16, right: 16, left: 0, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
@@ -213,37 +395,38 @@ export default function Dashboard() {
                 </LineChart>
               </ResponsiveContainer>
             </div>
-          ) : (
-            <p className="mb-2 rounded-lg bg-subtle px-4 py-3 text-sm text-ink-muted">
-              One measurement date so far. A trend line appears after the demo clock is advanced.
-            </p>
-          )}
-          <div className="mt-4">
-            <Table
-              caption="Adherence by measure"
-              head={["Measure", "Therapies", "Adherent", "Mean days covered", "In a gap"]}
-              align={[undefined, "right", "right", "right", "right"]}
-            >
-              {d.adherence.current.map((c: Json) => (
-                <tr key={c.measure} className={c.measure === "all" ? "font-semibold" : undefined}>
-                  <td className="whitespace-nowrap text-ink">{c.measure === "all" ? "All measures" : titleCase(c.measure)}</td>
-                  <td className="tabular text-right">{num(c.therapies)}</td>
-                  <td className="tabular text-right">{pct(c.adherent_rate, 1)}</td>
-                  <td className="tabular text-right">{pct(c.mean_pdc, 1)}</td>
-                  <td className="tabular text-right">{pct(c.in_gap_rate, 1)}</td>
-                </tr>
-              ))}
-            </Table>
-          </div>
-        </Card>
-
+          </BentoCard>
+        )}
+        <BentoCard
+          span={trendRows.length > 1 ? "narrow" : "full"}
+          icon={<HeartPulse />}
+          title="Adherence by measure"
+          description={`Adherent share today; target ${pct(d.adherence.pdc_threshold)} of days covered.`}
+          note={trendRows.length > 1 ? undefined : "One measurement date so far. A trend over time appears after the demo clock is advanced."}
+        >
+          <ul className={cx("gap-x-10 gap-y-4", trendRows.length > 1 ? "space-y-4" : "grid md:grid-cols-3")}>
+            {byMeasure.map((c) => (
+              <BarRow
+                key={c.measure}
+                label={titleCase(c.measure)}
+                figure={pct(c.adherent_rate, 1)}
+                value={c.adherent_rate}
+                tone="ok"
+                sub={`${num(c.therapies)} therapies · ${pct(c.in_gap_rate, 1)} in a gap · mean ${pct(c.mean_pdc, 0)} covered`}
+              />
+            ))}
+          </ul>
+        </BentoCard>
         {(["PATIENT", "HCP"] as const).map((target) => (
-          <Card
+          <BentoCard
             key={target}
+            span="half"
+            icon={target === "PATIENT" ? <HeartPulse /> : <Stethoscope />}
             title={`${target === "PATIENT" ? "Patient" : "HCP"} response rate by channel`}
             description={`All ${target === "PATIENT" ? "patient" : "HCP"} outreach with a known outcome.`}
+            note={`Engine bars appear for a channel once at least ${MIN_SENT} sent recommendations have an outcome.`}
           >
-            <div className="h-64">
+            <div className={CHART_H}>
               <ResponsiveContainer>
                 <BarChart data={channelRows(target)} barGap={3} barCategoryGap="26%" margin={{ top: 20, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
@@ -260,52 +443,89 @@ export default function Dashboard() {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <ChartNote>
-              Engine bars appear for a channel once at least {MIN_SENT} sent recommendations have an outcome.
-            </ChartNote>
-          </Card>
+          </BentoCard>
         ))}
+      </BentoGrid>
 
-        <Card
-          title="Why options were held back"
-          description="Latest cycle, every option the engine evaluated. Blocked options are never sent."
-        >
+      {/* 5. Compliance and safeguards */}
+      <SectionHeader title="Compliance and safeguards" description="What the deterministic safeguards stopped. Blocked options are never sent." />
+      <BentoGrid>
+        <BentoCard span="wide" icon={<ShieldAlert />} title="Why options were held back" description="Latest cycle, every option the engine evaluated, not only the one chosen.">
           {gateReasons.length ? (
-            <ul className="space-y-3.5">
+            <ul className="space-y-4">
               {gateReasons.map((g) => (
-                <li key={g.label}>
-                  <div className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="min-w-0 text-ink">{g.label}</span>
-                    <span className="tabular shrink-0 font-semibold text-ink">{num(g.count)}</span>
-                  </div>
-                  <Meter value={g.count / gateMax} tone="warn" className="mt-1.5" label={g.label} />
-                </li>
+                <BarRow key={g.label} label={g.label} figure={num(g.count)} value={g.count / gateMax} tone="warn" />
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-ink-subtle">No option was held back in the latest cycle.</p>
+            <Empty>No option was held back in the latest cycle.</Empty>
           )}
-        </Card>
+        </BentoCard>
+        <BentoCard
+          span="narrow"
+          icon={<FileCheck2 />}
+          title="Safeguard summary"
+          link={can(P.CONTENT_READ_ALL) ? { to: "/content", label: "Content" } : undefined}
+        >
+          <dl className="divide-y divide-line">
+            {[
+              { label: "Blocked recommendations", value: num(blocked), sub: totalRecs ? `${pct(blocked / totalRecs, 1)} of all recommendations` : undefined, tone: blocked ? "text-bad" : "text-ink" },
+              ...(can(P.CONTENT_READ_ALL)
+                ? [
+                    { label: "Content pending MLR review", value: content.data ? num(pendingContent) : "—", sub: "approval by Compliance only", tone: pendingContent ? "text-warn" : "text-ink" },
+                    { label: "Content approval expired", value: content.data ? num(expiredContent) : "—", sub: "cannot be used until renewed", tone: expiredContent ? "text-bad" : "text-ink" },
+                  ]
+                : []),
+            ].map((row) => (
+              <div key={row.label} className="flex items-start justify-between gap-4 py-3.5 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <dt className="text-sm text-ink">{row.label}</dt>
+                  {row.sub && <dd className="mt-0.5 text-xs text-ink-subtle">{row.sub}</dd>}
+                </div>
+                <dd className={cx("tabular text-xl font-semibold", row.tone)}>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </BentoCard>
+      </BentoGrid>
 
-        <Card title="What the engine is recommending" description="Latest cycle, by audience, action and channel.">
-          {mix.length ? (
-            <Table caption="Recommendation mix" head={["Audience", "Action", "Channel", "Count"]} align={[undefined, undefined, undefined, "right"]}>
-              {mix.map((m: Json, i: number) => (
-                <tr key={i}>
-                  <td className="whitespace-nowrap text-ink-muted">{m.target_type === "HCP" ? "HCP" : "Patient"}</td>
-                  <td className="text-ink">{titleCase(m.action)}</td>
-                  <td className="whitespace-nowrap text-ink-muted">{titleCase(m.channel)}</td>
-                  <td className="tabular text-right font-semibold">{num(m.count)}</td>
-                </tr>
-              ))}
-            </Table>
-          ) : (
-            <p className="flex items-center gap-2 text-sm text-ink-subtle">
-              <ClipboardList className="h-4 w-4" aria-hidden /> No recommendations in the latest cycle.
-            </p>
-          )}
-        </Card>
-      </div>
+      {/* 6. Recent activity */}
+      {can(P.AUDIT_READ) && (
+        <>
+          <SectionHeader title="Recent activity" description="The latest entries in the audit log." />
+          <BentoGrid>
+            <BentoCard span="full" icon={<ScrollText />} title="Audit log" link={{ to: "/audit", label: "View all" }}>
+              {recent.isLoading ? (
+                <LoadingRows rows={4} label="Loading recent activity" />
+              ) : recent.error ? (
+                <ErrorState error={recent.error} retry={() => void recent.refetch()} title="Recent activity could not be loaded" />
+              ) : !recent.data.items.length ? (
+                <Empty>No activity recorded yet.</Empty>
+              ) : (
+                <div className="grid gap-x-10 lg:grid-cols-2">
+                  {[recent.data.items.slice(0, 4), recent.data.items.slice(4, 8)].map((col: Json[], i) => (
+                    <Timeline key={i}>
+                      {col.map((a) => (
+                        <TimelineItem
+                          key={a.id}
+                          tone={/block|reject/.test(a.action) ? "bad" : /approv/.test(a.action) ? "brand" : /sent|respon|fill/.test(a.action) ? "ok" : "neutral"}
+                          title={
+                            <>
+                              <span className="font-semibold">{eventLabel(a.action)}</span>
+                              <span className="text-ink-muted"> by {a.actor}</span>
+                            </>
+                          }
+                          meta={fmtDateTime(a.ts)}
+                        />
+                      ))}
+                    </Timeline>
+                  ))}
+                </div>
+              )}
+            </BentoCard>
+          </BentoGrid>
+        </>
+      )}
     </>
   );
 }
