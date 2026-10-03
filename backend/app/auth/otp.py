@@ -7,6 +7,11 @@ Two separate concerns:
                `LocalDemoOtpSender` is the development fallback when no mail server is
                configured, and it says so. A later SMS or authenticator-app sender would
                implement the same two-line protocol.
+
+Once a mail server is configured, a failed send is reported as a failure
+(`otp_delivery_failed`) and no code is stored; the code is never shown on screen instead,
+because that would let someone verify an address they do not control. Only the exception
+type is logged, never the server's reply, the address book or any credential.
 """
 
 import hashlib
@@ -130,13 +135,15 @@ class OTPService:
         except AuthError:
             raise
         except Exception as exc:  # noqa: BLE001 - any delivery failure is handled the same way
-            log.error("Could not email one-time code to %s: %s", user.email, type(exc).__name__)
-            if not settings.demo_mode:
-                raise AuthError(
-                    502, "otp_delivery_failed", "The verification email could not be sent."
-                ) from exc
-            sender = LocalDemoOtpSender()
-            sender.send(user, code, settings.otp_ttl_minutes)
+            log.error("Could not email one-time code to user %s: %s", user.id, type(exc).__name__)
+            # Any earlier code is withdrawn too, so the account has no usable code at all.
+            self._clear(db, user)
+            db.flush()
+            raise AuthError(
+                502,
+                "otp_delivery_failed",
+                "We couldn't send the verification email. Check the address and try again.",
+            ) from exc
 
         self._clear(db, user)
         db.add(

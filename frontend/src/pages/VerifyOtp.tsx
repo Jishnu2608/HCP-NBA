@@ -1,10 +1,11 @@
-import { MailCheck, TerminalSquare, TimerReset } from "lucide-react";
+import { MailCheck, MailX, TerminalSquare, TimerReset } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { pendingSignup } from "../session";
 import type { Challenge } from "../session";
+import { useToast } from "../toast";
 import { Alert, Button, ErrorNote, cx } from "../ui";
 import AuthLayout from "./AuthLayout";
 
@@ -102,6 +103,7 @@ function CodeInput({
 export default function VerifyOtp() {
   const { verify, resend } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
   const [challenge, setChallenge] = useState<Challenge | null>(() => pendingSignup.get());
   const [code, setCode] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -119,6 +121,8 @@ export default function VerifyOtp() {
   const expiresIn = seconds(challenge.expiresAt, now);
   const resendIn = seconds(challenge.resendAt, now);
   const development = challenge.delivery === "development";
+  // The email could not be sent: there is no code to enter until a resend succeeds.
+  const failed = challenge.delivery === "failed";
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -127,6 +131,7 @@ export default function VerifyOtp() {
     setError(null);
     try {
       const user = await verify(code);
+      toast(`Email verified. Welcome, ${user.name.split(" ")[0]}.`);
       navigate(user.home, { replace: true });
     } catch (e) {
       setError(e);
@@ -171,7 +176,14 @@ export default function VerifyOtp() {
         </Link>
       }
     >
-      {development ? (
+      {failed ? (
+        <Alert tone="bad" icon={<MailX className="h-5 w-5" aria-hidden />} title="We couldn't send the verification email" className="mb-6">
+          <span className="text-bad">
+            The code could not be delivered to <span className="break-all font-semibold">{challenge.email}</span>. Your
+            account is saved but not active yet. Check the address, then send a new code below.
+          </span>
+        </Alert>
+      ) : development ? (
         <Alert
           tone="warn"
           icon={<TerminalSquare className="h-5 w-5" aria-hidden />}
@@ -202,11 +214,15 @@ export default function VerifyOtp() {
             setError(null);
           }}
           invalid={Boolean(error)}
-          disabled={busy === "verify"}
+          disabled={busy === "verify" || failed}
         />
         <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-subtle" aria-live="polite">
-          <span className={cx("tabular", expiresIn === 0 && "font-medium text-bad")}>
-            {expiresIn > 0 ? `Code expires in ${clock(expiresIn)}` : "This code has expired. Request a new one."}
+          <span className={cx("tabular", expiresIn === 0 && !failed && "font-medium text-bad")}>
+            {failed
+              ? "No code has been sent yet."
+              : expiresIn > 0
+                ? `Code expires in ${clock(expiresIn)}`
+                : "This code has expired. Request a new one."}
           </span>
           <span>Single use · 5 attempts</span>
         </div>
@@ -222,14 +238,19 @@ export default function VerifyOtp() {
           size="lg"
           className="w-full"
           busy={busy === "verify"}
-          disabled={code.length !== LENGTH}
+          disabled={code.length !== LENGTH || failed}
         >
           {busy === "verify" ? "Verifying" : "Verify and continue"}
         </Button>
       </form>
 
       <div className="mt-4 flex justify-center">
-        <Button variant="ghost" onClick={() => void again()} busy={busy === "resend"} disabled={resendIn > 0}>
+        <Button
+          variant={failed ? "primary" : "ghost"}
+          onClick={() => void again()}
+          busy={busy === "resend"}
+          disabled={resendIn > 0}
+        >
           <TimerReset className="h-4 w-4" aria-hidden />
           {resendIn > 0 ? <span className="tabular">Send a new code in {resendIn}s</span> : "Send a new code"}
         </Button>

@@ -221,15 +221,30 @@ def test_with_mail_configured_the_code_is_emailed_and_never_returned(env, monkey
     assert verify(client, body, code).status_code == 200
 
 
-def test_mail_failure_falls_back_only_in_demo_mode(env, monkeypatch):
+def test_mail_failure_is_reported_never_shown_on_screen(env, monkeypatch):
+    """With a mail server configured, a failed send is a failure even in demo mode: no code
+    is stored, none is returned, and the account stays pending until a resend succeeds."""
     client, db = env
-    monkeypatch.setattr(otp_module, "get_sender", lambda settings=None: FakeMail(fail=True))
-    fallback = register(client, "fallback@example.org").json()
-    assert fallback["delivery"] == "development" and fallback["dev_otp"]
+    mail = FakeMail(fail=True)
+    monkeypatch.setattr(otp_module, "get_sender", lambda settings=None: mail)
+    body = register(client, "unreachable@example.org").json()
+    assert body["delivery"] == "failed" and "dev_otp" not in body
+    assert body["verification_token"] and body["expires_in"] == 0 and body["resend_in"] == 0
+    user = db.scalar(select(User).where(User.email == "unreachable@example.org"))
+    assert not user.verified and user.status == "pending"
+    codes = select(func.count()).select_from(OtpChallenge).where(OtpChallenge.user_id == user.id)
+    assert db.scalar(codes) == 0
 
-    monkeypatch.setattr(get_settings(), "demo_mode", False)
-    strict = register(client, "strict@example.org")
-    assert strict.status_code == 502 and code_of(strict) == "otp_delivery_failed"
+    # Resending while the server is still down: a clear 502, still no code.
+    token = {"verification_token": body["verification_token"]}
+    again = client.post("/api/auth/resend-otp", json=token)
+    assert again.status_code == 502 and code_of(again) == "otp_delivery_failed"
+
+    # Mail works again: resend delivers a code that verifies the account.
+    mail.fail = False
+    resent = client.post("/api/auth/resend-otp", json=token).json()
+    assert resent["delivery"] == "email" and "dev_otp" not in resent
+    assert verify(client, body, mail.sent[-1][1]).status_code == 200
 
 
 def test_email_message_content():

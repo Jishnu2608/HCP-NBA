@@ -25,7 +25,8 @@ export const session = {
 export interface Challenge {
   verification_token: string;
   email: string;
-  delivery: "email" | "development";
+  /** "failed": the email could not be sent; no code exists until a resend succeeds. */
+  delivery: "email" | "development" | "failed";
   expiresAt: number;
   resendAt: number;
   dev_otp?: string;
@@ -34,7 +35,7 @@ export interface Challenge {
 interface ChallengePayload {
   verification_token: string;
   email: string;
-  delivery?: "email" | "development";
+  delivery?: "email" | "development" | "failed";
   expires_in?: number;
   resend_in?: number;
   dev_otp?: string;

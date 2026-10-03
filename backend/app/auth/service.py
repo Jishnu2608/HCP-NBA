@@ -63,6 +63,24 @@ def _challenge(user: User, issued: Issued) -> dict:
     return out
 
 
+def _issue_or_report(db: Session, user: User) -> dict:
+    """Issues a code for a pending account. If the email cannot be sent, the account stays
+    pending and the caller is told so (delivery "failed"), so the verify screen can explain
+    and offer to send again; nothing about the failure beyond that reaches the client."""
+    try:
+        return _challenge(user, otp_service.issue(db, user, respect_cooldown=False))
+    except AuthError as exc:
+        if exc.code != "otp_delivery_failed":
+            raise
+        return {
+            "verification_token": sessions.issue_verification(user),
+            "email": user.email,
+            "delivery": "failed",
+            "expires_in": 0,
+            "resend_in": 0,
+        }
+
+
 def validate_password(password: str, confirm: str) -> None:
     if password != confirm:
         raise AuthError(422, "password_mismatch", "The two passwords do not match.")
@@ -101,7 +119,7 @@ def signup(db: Session, *, name: str, email: str, password: str, confirm: str, r
     user = repo.create_pending(
         name=name, email=email, password_hash=hash_password(password), role=role
     )
-    issued = otp_service.issue(db, user, respect_cooldown=False)
+    challenge = _issue_or_report(db, user)
     audit.record(
         db,
         "account_created",
@@ -109,9 +127,9 @@ def signup(db: Session, *, name: str, email: str, password: str, confirm: str, r
         user.id,
         actor=user.username,
         actor_role=user.role,
-        detail={"delivery": issued.delivery},
+        detail={"delivery": challenge["delivery"]},
     )
-    return _challenge(user, issued)
+    return challenge
 
 
 def _pending_user(db: Session, verification_token: str) -> User:
@@ -165,8 +183,7 @@ def login(db: Session, email: str, password: str) -> dict:
         status = otp_service.status(db, user)
         extra = {"verification_token": sessions.issue_verification(user), "email": user.email}
         if status["expires_in"] == 0:
-            issued = otp_service.issue(db, user, respect_cooldown=False)
-            extra.update(_challenge(user, issued))
+            extra.update(_issue_or_report(db, user))
         else:
             # A code is already active. Say how it was delivered, never the code itself.
             extra.update(status, delivery=get_sender().channel)
