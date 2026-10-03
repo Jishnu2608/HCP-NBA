@@ -58,7 +58,7 @@ function AdherenceBadge({ therapy }: { therapy: Json }) {
 export function MyMedications() {
   const profile = useQuery({ queryKey: ["me"], queryFn: () => api("/me/profile") });
   if (profile.isLoading) return <Loading label="Loading your medications" />;
-  if (profile.error) return <ErrorState error={profile.error} title="Your medications could not be loaded" />;
+  if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="Your medications could not be loaded" />;
   const p: Json = profile.data;
   const outOfSupply = p.therapies.filter((t: Json) => t.gap_days > 0);
   return (
@@ -172,7 +172,7 @@ export function MyInbox() {
   });
   const isPatient = can(P.SELF_CONSENT_MANAGE);
   if (inbox.isLoading) return <Loading label="Loading messages" rows={4} />;
-  if (inbox.error) return <ErrorState error={inbox.error} title="Messages could not be loaded" />;
+  if (inbox.error) return <ErrorState error={inbox.error} retry={() => void inbox.refetch()} variant="page" title="Messages could not be loaded" />;
   const unreadCount = inbox.data!.filter((m) => m.status === "pending" || m.status === "no_response").length;
   return (
     <>
@@ -272,7 +272,7 @@ export function MyConsents() {
     },
   });
   if (consents.isLoading) return <Loading label="Loading your preferences" rows={4} />;
-  if (consents.error) return <ErrorState error={consents.error} title="Your preferences could not be loaded" />;
+  if (consents.error) return <ErrorState error={consents.error} retry={() => void consents.refetch()} variant="page" title="Your preferences could not be loaded" />;
   const outreach = consents.data!.filter((c) => c.channel);
   const sharing = consents.data!.filter((c) => !c.channel);
 
@@ -339,7 +339,7 @@ export function MyConsents() {
 export function MyPatients() {
   const patients = useQuery({ queryKey: ["my-patients"], queryFn: () => api<Json[]>("/me/patients") });
   if (patients.isLoading) return <Loading label="Loading your patients" />;
-  if (patients.error) return <ErrorState error={patients.error} title="Your patients could not be loaded" />;
+  if (patients.error) return <ErrorState error={patients.error} retry={() => void patients.refetch()} variant="page" title="Your patients could not be loaded" />;
   const rows = patients.data!.flatMap((p) => p.therapies.map((t: Json) => ({ ...t, name: p.name, patient_id: p.patient_id })));
   const columns: Column<Json>[] = [
     {
@@ -391,7 +391,7 @@ export function MyPatients() {
 export function MyProfile() {
   const profile = useQuery({ queryKey: ["me"], queryFn: () => api("/me/profile") });
   if (profile.isLoading) return <Loading label="Loading your profile" rows={3} />;
-  if (profile.error) return <ErrorState error={profile.error} title="Your profile could not be loaded" />;
+  if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="Your profile could not be loaded" />;
   const p: Json = profile.data;
   return (
     <>

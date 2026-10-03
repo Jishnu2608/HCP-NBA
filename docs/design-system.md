@@ -13,7 +13,7 @@ The interface is aimed at enterprise healthcare and pharma users in the United S
 
 ## Colour
 
-Colours are semantic tokens defined as CSS variables on `:root`, with dark values under `prefers-color-scheme: dark`. They are mapped into Tailwind as `bg-surface`, `text-ink-muted`, `bg-primary` and so on.
+Colours are semantic tokens defined as CSS variables: light values on `:root`, dark values on `:root[data-theme="dark"]`. They are mapped into Tailwind as `bg-surface`, `text-ink-muted`, `bg-primary` and so on. The dark set is designed separately (its own surfaces, text, status and chart colours), not an inversion or a filter. A brand or theme change is an edit to these tokens only.
 
 | Token | Use |
 |---|---|
@@ -44,6 +44,31 @@ Status is never shown by colour alone: every badge has an icon and words.
 | Consent granted / not granted | ok / bad | check / x |
 
 Charts use `--series-1..3` (eucalyptus, ochre, slate blue) and a neutral `--series-baseline` for comparisons.
+
+## Theme switching
+
+- One application-wide state (`frontend/src/theme.tsx`): `data-theme="light" | "dark"` on `<html>` selects the token set.
+- Precedence: the user's explicit choice, saved in `localStorage` (`nba.theme`, read and written through `session.ts`), then the operating system's `prefers-color-scheme`. While no choice is saved, the app follows OS changes live.
+- No flash: an inline script in `index.html` applies the same rule before the first paint. During a switch, transitions are suppressed for two frames so nothing animates its colours.
+- One toggle component, `ThemeToggle` (sun in dark mode, moon in light mode, labelled "Switch to light/dark theme"), shown in the app top bar, the landing header, the sign-in / sign-up / verification pages and the standalone error pages. Every instance drives the same state.
+
+## Errors and fallbacks
+
+One layout for every failure: `ErrorPanel` in `ui.tsx` (icon, error code, title, plain explanation, recovery actions). `ErrorState` picks the kind from a failed request; `pages/ErrorPage.tsx` holds the standalone screen and the crash boundary.
+
+| Kind | When | Title | Actions |
+|---|---|---|---|
+| 404 | Unknown address; record not found or outside the account's scope | Page not found / Not found | Dashboard (signed in) or home, Go back |
+| 400 | Malformed link or request (API 400 / 422) | This request isn't valid | Dashboard, Go back |
+| 401 | Signed out on an app page, or session ended | Please sign in | Sign in (returns to the page if the role allows it) |
+| 403 | Page or resource outside the role | Access restricted | Dashboard, Go back |
+| 500 | Server error or a crash while rendering | Something went wrong | Try again, Dashboard, Go back |
+| Data | Network failure or a panel that could not load | Unable to load this information (or "… could not be loaded") | Try again, Dashboard |
+
+- Signed-out visitors: an address that is a real app page goes to sign-in with a "Please sign in to continue" notice; any other address gets the standalone 404 screen (brand, theme switch, footer).
+- Signed in: errors render inside the shell, so navigation, the account menu and the theme switch keep working. The crash boundary resets on the next navigation.
+- "Go to my dashboard" uses the account's home route from the server.
+- Nothing internal is shown: no stack traces, exception names, SQL or raw server text. The API's own 4xx messages (written for people) are shown for failed actions; 5xx, network failures and validation dumps get plain wording. Summary figures show "—" until their data has loaded, never a misleading 0.
 
 ## Typography
 
@@ -82,7 +107,7 @@ Charts use `--series-1..3` (eucalyptus, ochre, slate blue) and a neutral `--seri
 ## Layout
 
 - Shell (`App.tsx`): dark sidebar from 1024px, collapsible to an icon rail (remembered per browser). Below 1024px the sidebar becomes a drawer opened from the top bar. The sidebar is grouped into Workspace, My account, Governance and Administration, and shows only routes the account's permissions allow (from `routes.tsx`).
-- Top bar: demo date and an account menu showing the signed-in name, email, role and Sign out. A "Skip to content" link is the first focusable element.
+- Top bar: demo date, theme switch and an account menu showing the signed-in name, email, role and Sign out (the demo date moves into the account menu on phones). A "Skip to content" link is the first focusable element.
 - Detail pages (Patient 360, HCP 360, recommendation): main column plus a 360px side column from 1280px. Below that, the recommendation comes first, then the main content, then details.
 - The recommendation page keeps the Decision panel in view while the rationale is read. On high zoom it scrolls within itself instead of being cut off.
 

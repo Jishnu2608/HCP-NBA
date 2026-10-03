@@ -8,9 +8,28 @@
       name="description"
       content="Explainable, compliance-gated next best action for HCP and patient engagement. Proof of concept with synthetic data."
     />
-    <meta name="theme-color" content="#f5f3ec" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0f1513" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f5f3ec" />
     <meta name="color-scheme" content="light dark" />
+    <!--
+      Theme bootstrap. Runs before the stylesheet so the first paint already uses the right
+      theme: the user's saved choice (same key as session.ts), otherwise the OS preference.
+      theme.tsx takes over once the app has loaded.
+    -->
+    <script>
+      (function () {
+        var theme = null;
+        try {
+          theme = window.localStorage.getItem("nba.theme");
+        } catch (e) {}
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        var root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.style.colorScheme = theme;
+        document.querySelector('meta[name="theme-color"]').setAttribute("content", theme === "dark" ? "#0f1513" : "#f5f3ec");
+      })();
+    </script>
     <!-- Inline so it is served with the page; the API only serves /assets and index.html. -->
     <link
       rel="icon"

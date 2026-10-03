@@ -85,7 +85,7 @@ export default function UnderTheHood() {
             {models.isLoading ? (
               <LoadingRows rows={3} label="Loading models" />
             ) : models.error ? (
-              <ErrorState error={models.error} title="Models could not be loaded" />
+              <ErrorState error={models.error} retry={() => void models.refetch()} title="Models could not be loaded" />
             ) : !active.length ? (
               <p className="text-sm text-ink-subtle">No trained models. The engine is using smoothed historical rates.</p>
             ) : (
@@ -129,7 +129,7 @@ export default function UnderTheHood() {
             {meta.isLoading ? (
               <LoadingRows rows={4} label="Loading environment" />
             ) : meta.error ? (
-              <ErrorState error={meta.error} />
+              <ErrorState error={meta.error} retry={() => void meta.refetch()} />
             ) : (
               <>
                 <div className="mb-4 flex flex-wrap gap-1.5">

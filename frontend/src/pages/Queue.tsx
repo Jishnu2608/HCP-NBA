@@ -76,6 +76,7 @@ export default function Queue() {
   const [title, subtitle] = TITLE[view];
   const counts: Record<string, number> = list.data?.counts ?? {};
   const countFor = (keys: string[]) => keys.reduce((n, k) => n + (counts[k] ?? 0), 0);
+  const shown = (n: number) => (list.data ? n.toLocaleString() : "—");
   // Priority is risk (or value) times the predicted chance of success; bars are relative
   // to the highest priority on the page.
   const maxPriority = Math.max(1, ...((list.data?.items ?? []) as Json[]).map((n) => n.priority));
@@ -178,27 +179,27 @@ export default function Queue() {
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
           label="Pending review"
-          value={countFor(["ready_for_review"]).toLocaleString()}
+          value={shown(countFor(["ready_for_review"]))}
           hint={audienceWord ? `${audienceWord} actions waiting for you` : "waiting for a reviewer"}
           icon={<Clock3 className="h-4 w-4" aria-hidden />}
           tone="brand"
         />
         <Stat
           label="Approved, not sent"
-          value={countFor(["approved"]).toLocaleString()}
+          value={shown(countFor(["approved"]))}
           hint="ready to send"
           icon={<CheckCircle2 className="h-4 w-4" aria-hidden />}
         />
         <Stat
           label="Blocked"
-          value={countFor(["blocked"]).toLocaleString()}
+          value={shown(countFor(["blocked"]))}
           hint="a safeguard stopped these"
           icon={<Ban className="h-4 w-4" aria-hidden />}
           tone={countFor(["blocked"]) ? "bad" : undefined}
         />
         <Stat
           label="Sent"
-          value={countFor(["sent", "responded"]).toLocaleString()}
+          value={shown(countFor(["sent", "responded"]))}
           hint={`${(counts.responded ?? 0).toLocaleString()} responded`}
           icon={<Send className="h-4 w-4" aria-hidden />}
         />
@@ -237,7 +238,7 @@ export default function Queue() {
             <LoadingRows rows={8} label="Loading recommendations" />
           </div>
         ) : list.error ? (
-          <ErrorState error={list.error} title="Recommendations could not be loaded" />
+          <ErrorState error={list.error} retry={() => void list.refetch()} title="Recommendations could not be loaded" />
         ) : !list.data.items.length ? (
           <EmptyState title="Nothing in this view" icon={<CheckCircle2 className="h-5 w-5" />}>
             {filter === "ready_for_review"

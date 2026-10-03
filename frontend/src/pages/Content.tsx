@@ -65,7 +65,7 @@ export default function ContentLibrary() {
   });
 
   if (list.isLoading) return <Loading label="Loading content" />;
-  if (list.error) return <ErrorState error={list.error} title="Content could not be loaded" />;
+  if (list.error) return <ErrorState error={list.error} retry={() => void list.refetch()} variant="page" title="Content could not be loaded" />;
   const all = list.data ?? [];
   const rows = all.filter((c) => {
     if (view === "attention") return !c.usable;

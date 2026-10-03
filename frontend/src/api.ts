@@ -51,7 +51,13 @@ export async function api<T = Json>(
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(options.body);
   }
-  const response = await fetch(`/api${path}`, { method: options.method ?? "GET", headers, body });
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, { method: options.method ?? "GET", headers, body });
+  } catch {
+    // Offline, server down, connection reset: status 0 marks a network failure.
+    throw new ApiError(0, { code: "network", message: "The server could not be reached." });
+  }
   const payload = response.headers.get("content-type")?.includes("json")
     ? await response.json()
     : null;

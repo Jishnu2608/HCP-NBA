@@ -119,7 +119,7 @@ export function HcpList() {
             <LoadingRows rows={8} label="Loading HCPs" />
           </div>
         ) : list.error ? (
-          <ErrorState error={list.error} title="HCPs could not be loaded" />
+          <ErrorState error={list.error} retry={() => void list.refetch()} title="HCPs could not be loaded" />
         ) : !list.data.items.length ? (
           <EmptyState title={q ? "No HCPs match your search" : "No HCPs assigned"} icon={<Stethoscope className="h-5 w-5" />}>
             {q ? "Try a last name, an HCP ID or a specialty." : "An administrator can assign HCPs to your account."}
@@ -164,7 +164,7 @@ export function HcpProfile() {
   const { id } = useParams();
   const profile = useQuery({ queryKey: ["hcp", id], queryFn: () => api(`/hcps/${id}`) });
   if (profile.isLoading) return <Loading label="Loading HCP" />;
-  if (profile.error) return <ErrorState error={profile.error} title="This HCP could not be loaded" />;
+  if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="This HCP could not be loaded" />;
   const h: Json = profile.data;
   const touches = h.interactions.length;
   const engaged = h.interactions.filter((i: Json) => !["no_response", "declined", "pending"].includes(i.outcome)).length;

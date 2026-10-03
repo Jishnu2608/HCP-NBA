@@ -319,7 +319,7 @@ export default function Admin() {
             <LoadingRows rows={6} label="Loading settings" />
           </div>
         ) : config.error ? (
-          <ErrorState error={config.error} title="Settings could not be loaded" />
+          <ErrorState error={config.error} retry={() => void config.refetch()} title="Settings could not be loaded" />
         ) : (
           <ul className="divide-y divide-line border-t border-line">
             {Object.entries(config.data as Record<string, Json>).map(([name, entry]) => (
@@ -343,7 +343,7 @@ export default function Admin() {
             <LoadingRows rows={4} label="Loading cycles" />
           </div>
         ) : cycles.error ? (
-          <ErrorState error={cycles.error} title="Cycles could not be loaded" />
+          <ErrorState error={cycles.error} retry={() => void cycles.refetch()} title="Cycles could not be loaded" />
         ) : (
           <div className="border-t border-line">
             <DataTable caption="Recent cycles" columns={cycleColumns} rows={cycles.data ?? []} rowKey={(c) => c.id} />

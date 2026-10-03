@@ -126,7 +126,7 @@ export default function NbaDetail() {
   const run = (fn: () => Promise<unknown>, done: string) => act.mutate({ fn, done });
 
   if (detail.isLoading) return <Loading label="Loading recommendation" />;
-  if (detail.error) return <ErrorState error={detail.error} title="This recommendation could not be loaded" />;
+  if (detail.error) return <ErrorState error={detail.error} retry={() => void detail.refetch()} variant="page" title="This recommendation could not be loaded" />;
 
   const dirty = draft && (body !== draft.body || subject !== (draft.subject ?? ""));
   const reviewing = n.can_review && n.status === "ready_for_review";

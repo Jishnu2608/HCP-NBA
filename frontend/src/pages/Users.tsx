@@ -205,7 +205,7 @@ function AccountPanel({ id }: { id: number }) {
     },
   });
   if (detail.isLoading) return <LoadingRows rows={6} label="Loading account" />;
-  if (detail.error) return <ErrorState error={detail.error} title="This account could not be loaded" />;
+  if (detail.error) return <ErrorState error={detail.error} retry={() => void detail.refetch()} variant="page" title="This account could not be loaded" />;
   const a: Json = detail.data;
   const locked = a.id === me!.id || a.source === "system";
 
@@ -354,6 +354,7 @@ export default function UsersPage() {
   const byRole: Record<string, number> = list.data?.by_role ?? {};
   const totalAccounts = Object.values(byRole).reduce((a, b) => a + b, 0);
   const countStatus = (s: string) => items.filter((u) => u.status === s).length;
+  const shown = (n: number) => (list.data ? num(n) : "—");
 
   const columns: Column<Json>[] = [
     {
@@ -388,10 +389,10 @@ export default function UsersPage() {
         subtitle="Every account, its role and what it is assigned to. Assignments and status can be changed here. Roles cannot: permissions come only from the role an account was created with."
       />
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Accounts" value={num(totalAccounts)} icon={<UsersIcon className="h-4 w-4" aria-hidden />} hint={role || source || q ? "across all filters" : undefined} />
-        <Stat label="Active" value={num(countStatus("active"))} tone="ok" icon={<UserCheck className="h-4 w-4" aria-hidden />} hint="in this view" />
-        <Stat label="Pending verification" value={num(countStatus("pending"))} tone={countStatus("pending") ? "warn" : undefined} icon={<UserCog className="h-4 w-4" aria-hidden />} hint="in this view" />
-        <Stat label="Disabled" value={num(countStatus("disabled"))} tone={countStatus("disabled") ? "bad" : undefined} icon={<UserX className="h-4 w-4" aria-hidden />} hint="in this view" />
+        <Stat label="Accounts" value={shown(totalAccounts)} icon={<UsersIcon className="h-4 w-4" aria-hidden />} hint={role || source || q ? "across all filters" : undefined} />
+        <Stat label="Active" value={shown(countStatus("active"))} tone="ok" icon={<UserCheck className="h-4 w-4" aria-hidden />} hint="in this view" />
+        <Stat label="Pending verification" value={shown(countStatus("pending"))} tone={countStatus("pending") ? "warn" : undefined} icon={<UserCog className="h-4 w-4" aria-hidden />} hint="in this view" />
+        <Stat label="Disabled" value={shown(countStatus("disabled"))} tone={countStatus("disabled") ? "bad" : undefined} icon={<UserX className="h-4 w-4" aria-hidden />} hint="in this view" />
       </div>
       <Toolbar>
         <div className="grid gap-2 sm:grid-cols-2 lg:flex">
@@ -425,7 +426,7 @@ export default function UsersPage() {
             <LoadingRows rows={8} label="Loading accounts" />
           </div>
         ) : list.error ? (
-          <ErrorState error={list.error} title="Accounts could not be loaded" />
+          <ErrorState error={list.error} retry={() => void list.refetch()} title="Accounts could not be loaded" />
         ) : !items.length ? (
           <EmptyState title="No accounts match" icon={<UsersIcon className="h-5 w-5" />}>
             Clear the filters or search by another name or email.

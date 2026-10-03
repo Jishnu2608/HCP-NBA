@@ -1,6 +1,7 @@
 import { Activity, Lock, ShieldCheck, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { ThemeToggle } from "../theme";
 import { cx } from "../ui";
 
 /** The product mark: a pulse line in a rounded eucalyptus tile. */
@@ -60,7 +61,7 @@ export default function AuthLayout({
           aria-hidden
           className="pointer-events-none absolute -bottom-40 -left-24 h-96 w-96 rounded-full bg-accent/15 blur-3xl"
         />
-        <div className="relative">
+        <div className="relative flex items-center justify-between">
           <Brand light />
         </div>
         <div className="relative max-w-md">
@@ -83,9 +84,12 @@ export default function AuthLayout({
         </p>
       </aside>
 
-      <main className="flex min-h-dvh flex-col px-4 py-6 sm:px-8 sm:py-10 lg:min-h-0 lg:justify-center lg:py-12">
-        <div className="lg:hidden">
-          <Brand />
+      <main className="relative flex min-h-dvh flex-col px-4 py-6 sm:px-8 sm:py-10 lg:min-h-0 lg:justify-center lg:py-12">
+        <div className="flex items-center justify-between gap-4 lg:absolute lg:right-6 lg:top-6">
+          <span className="lg:hidden">
+            <Brand />
+          </span>
+          <ThemeToggle />
         </div>
         <div className={cx("mx-auto w-full flex-1 pt-8 lg:flex-none lg:pt-0", wide ? "max-w-2xl" : "max-w-[420px]")}>
           <h1 className="text-[26px] font-semibold leading-8 tracking-[-0.015em] text-ink">{title}</h1>

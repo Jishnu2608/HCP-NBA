@@ -69,7 +69,7 @@ function ChartNote({ children }: { children: React.ReactNode }) {
 export default function Dashboard() {
   const overview = useQuery({ queryKey: ["analytics"], queryFn: () => api("/analytics/overview") });
   if (overview.isLoading) return <Loading label="Calculating metrics" />;
-  if (overview.error) return <ErrorState error={overview.error} title="Metrics could not be loaded" />;
+  if (overview.error) return <ErrorState error={overview.error} retry={() => void overview.refetch()} variant="page" title="Metrics could not be loaded" />;
   const d: Json = overview.data;
   const status: Json[] = d.recommendations.by_status;
   const all = d.adherence.current.find((c: Json) => c.measure === "all");

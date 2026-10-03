@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { ThemeToggle } from "../theme";
 import { cx } from "../ui";
 import { Brand } from "./AuthLayout";
 
@@ -161,6 +162,7 @@ export default function Landing() {
             <a href="#roles" className="hidden rounded-lg px-3 py-2 text-sm font-medium text-ink-muted hover:text-ink md:block">
               Roles
             </a>
+            <ThemeToggle />
             <Link to="/login" className="inline-flex min-h-10 items-center rounded-lg px-3 text-sm font-semibold text-ink hover:bg-subtle">
               Sign in
             </Link>

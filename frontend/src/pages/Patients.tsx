@@ -62,6 +62,7 @@ export function PatientList() {
   });
   const byRisk: Record<string, number> = list.data?.by_risk ?? {};
   const total = Object.values(byRisk).reduce((a, b) => a + b, 0);
+  const shown = (n: number) => (list.data ? num(n) : "—");
 
   const columns: Column<Json>[] = [
     {
@@ -117,12 +118,12 @@ export function PatientList() {
         subtitle="Adherence risk is recalculated every cycle from days covered, the current gap and the refill trend."
       />
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Patients" value={num(total)} icon={<Users className="h-4 w-4" aria-hidden />} />
+        <Stat label="Patients" value={shown(total)} icon={<Users className="h-4 w-4" aria-hidden />} />
         {(["high", "medium", "low"] as const).map((r) => (
           <Stat
             key={r}
             label={RISK[r].label}
-            value={num(byRisk[r] ?? 0)}
+            value={shown(byRisk[r] ?? 0)}
             hint={total ? `${pct((byRisk[r] ?? 0) / total)} of patients` : undefined}
             tone={r === "high" ? "bad" : r === "medium" ? "warn" : "ok"}
             icon={RISK[r].icon}
@@ -155,7 +156,7 @@ export function PatientList() {
             <LoadingRows rows={8} label="Loading patients" />
           </div>
         ) : list.error ? (
-          <ErrorState error={list.error} title="Patients could not be loaded" />
+          <ErrorState error={list.error} retry={() => void list.refetch()} title="Patients could not be loaded" />
         ) : !list.data.items.length ? (
           <EmptyState title={q ? "No patients match your search" : "No patients in this view"} icon={<Users className="h-5 w-5" />}>
             {q ? "Check the spelling, or search by patient ID." : risk === "high" ? "No high-risk patients are currently assigned." : undefined}
@@ -455,7 +456,7 @@ export function PatientProfile() {
   const { id } = useParams();
   const profile = useQuery({ queryKey: ["patient", id], queryFn: () => api(`/patients/${id}`) });
   if (profile.isLoading) return <Loading label="Loading patient" />;
-  if (profile.error) return <ErrorState error={profile.error} title="This patient could not be loaded" />;
+  if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="This patient could not be loaded" />;
   const p: Json = profile.data;
   const current = p.consents.filter((c: Json) => c.in_effect);
   const outreach = current.filter((c: Json) => c.channel);

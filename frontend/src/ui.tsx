@@ -14,6 +14,15 @@ import {
   ChevronDown,
   CircleCheck,
   Clock3,
+  CloudOff,
+  Compass,
+  FileWarning,
+  Home,
+  LayoutDashboard,
+  LogIn,
+  RotateCw,
+  ServerCrash,
+  ShieldX,
   Eye,
   EyeOff,
   History as HistoryIcon,
@@ -38,7 +47,9 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import { useId, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { ApiError } from "./api";
+import { useAuth } from "./auth";
 
 export function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -541,8 +552,90 @@ export function Alert({
   );
 }
 
-export function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+/* ------------------------------------------------------------------- errors */
+
+export type ErrorKind = "not_found" | "bad_request" | "unauthenticated" | "forbidden" | "server" | "data";
+
+/** One set of words and icons per kind of failure, shared by every error screen. */
+export const ERROR_COPY: Record<
+  ErrorKind,
+  { code: string | null; title: string; message: string; icon: typeof AlertTriangle; tone: "neutral" | "warn" | "bad" | "info" }
+> = {
+  not_found: {
+    code: "404",
+    title: "Page not found",
+    message: "The page you're looking for doesn't exist or may have moved.",
+    icon: Compass,
+    tone: "neutral",
+  },
+  bad_request: {
+    code: "400",
+    title: "This request isn't valid",
+    message:
+      "The link or the information sent is incomplete or not in the expected form. Check it, or start again from your workspace.",
+    icon: FileWarning,
+    tone: "warn",
+  },
+  unauthenticated: {
+    code: "401",
+    title: "Please sign in",
+    message: "You're not signed in, or your session has ended. Sign in to continue.",
+    icon: LogIn,
+    tone: "info",
+  },
+  forbidden: {
+    code: "403",
+    title: "Access restricted",
+    message: "You don't have permission to access this resource. Access is decided by your account on the server.",
+    icon: ShieldX,
+    tone: "bad",
+  },
+  server: {
+    code: "500",
+    title: "Something went wrong",
+    message: "We couldn't complete that request. Please try again.",
+    icon: ServerCrash,
+    tone: "bad",
+  },
+  data: {
+    code: null,
+    title: "Unable to load this information",
+    message: "Something prevented us from retrieving the requested data. Check your connection and try again.",
+    icon: CloudOff,
+    tone: "warn",
+  },
+};
+
+/** Classifies any thrown value. Never looks at stack traces or server internals. */
+export function errorKind(error: unknown): ErrorKind {
+  if (error instanceof ApiError) {
+    if (error.status === 0) return "data";
+    if (error.status === 401) return "unauthenticated";
+    if (error.status === 403) return "forbidden";
+    if (error.status === 404) return "not_found";
+    if (error.status >= 500) return "server";
+    return "bad_request";
+  }
+  return "server";
+}
+
+/**
+ * Text that is safe to show for an error. The API's own 4xx messages are written for
+ * people (for example "Patient has not consented to outreach on this channel") and are
+ * shown as they are; server failures, network failures, validation dumps and unexpected
+ * exceptions get plain-language text instead, so nothing internal reaches the screen.
+ */
+export function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 0) return "We couldn't reach the server. Check your connection and try again.";
+    if (error.status >= 500) return ERROR_COPY.server.message;
+    if (error.status === 422 && !error.code) return "Some of the information is missing or not in the expected form.";
+    return error.message || ERROR_COPY[errorKind(error)].message;
+  }
+  // Errors raised deliberately by this app's own code carry readable messages; anything
+  // else (TypeError and similar) is a bug and gets the generic text.
+  if (error instanceof Error && error.constructor === Error && error.message) return error.message;
+  return ERROR_COPY.server.message;
 }
 
 /** Inline error for a form or an action. Renders nothing when there is no error. */
@@ -555,12 +648,133 @@ export function ErrorNote({ error, className }: { error: unknown; className?: st
   );
 }
 
-/** Whole-panel error, for a page or section that could not load. */
-export function ErrorState({ error, title = "This information could not be loaded" }: { error: unknown; title?: string }) {
+/**
+ * The shared error layout: icon, status code, title, explanation and recovery actions.
+ * `page` fills the content area (a route that cannot be shown); `section` sits inside a
+ * card (one panel of a page failed to load).
+ */
+export function ErrorPanel({
+  kind,
+  title,
+  message,
+  onRetry,
+  variant = "page",
+}: {
+  kind: ErrorKind;
+  title?: string;
+  message?: string;
+  onRetry?: () => void;
+  variant?: "page" | "section";
+}) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const copy = ERROR_COPY[kind];
+  const Icon = copy.icon;
+  const page = variant === "page";
+  const size = page ? "lg" : "md";
+  const recoverable = kind === "server" || kind === "data";
+  const canGoBack = window.history.length > 1;
+  const iconTone = {
+    neutral: "bg-subtle text-ink-muted",
+    warn: "bg-warn-soft text-warn",
+    bad: "bg-bad-soft text-bad",
+    info: "bg-info-soft text-info",
+  }[copy.tone];
+  const HeadingTag = page ? "h1" : "h2";
+
+  const actions: ReactNode[] = [];
+  const next = () => (actions.length ? "secondary" : "primary");
+  if (recoverable && onRetry) {
+    actions.push(
+      <Button key="retry" variant={next()} size={size} onClick={onRetry}>
+        <RotateCw className="h-4 w-4" aria-hidden /> Try again
+      </Button>,
+    );
+  }
+  if (kind === "unauthenticated") {
+    actions.push(
+      <Button key="signin" variant={next()} size={size} onClick={() => navigate("/login", { state: { from: location.pathname } })}>
+        <LogIn className="h-4 w-4" aria-hidden /> Sign in
+      </Button>,
+    );
+  } else if (!user) {
+    actions.push(
+      <Button key="home" variant={next()} size={size} onClick={() => navigate("/")}>
+        <Home className="h-4 w-4" aria-hidden /> Return to home
+      </Button>,
+    );
+  } else if (page || !recoverable) {
+    // Signed in: recovery lands on the role's own dashboard, as the server defines it.
+    actions.push(
+      <Button key="dashboard" variant={next()} size={size} onClick={() => navigate(user.home)}>
+        <LayoutDashboard className="h-4 w-4" aria-hidden /> Go to my dashboard
+      </Button>,
+    );
+  }
+  if (canGoBack && kind !== "unauthenticated" && page) {
+    actions.push(
+      <Button key="back" variant="ghost" size={size} onClick={() => navigate(-1)}>
+        <ArrowLeft className="h-4 w-4" aria-hidden /> Go back
+      </Button>,
+    );
+  }
+
   return (
-    <EmptyState icon={<AlertTriangle className="h-5 w-5" />} title={title} tone="bad">
-      {errorMessage(error)}
-    </EmptyState>
+    <div
+      role={kind === "server" || kind === "forbidden" ? "alert" : "status"}
+      className={cx("mx-auto flex max-w-lg flex-col items-center text-center", page ? "py-14 sm:py-20" : "px-5 py-10")}
+    >
+      <span className={cx("grid place-items-center", iconTone, page ? "h-14 w-14 rounded-2xl" : "h-11 w-11 rounded-xl")} aria-hidden>
+        <Icon className={page ? "h-7 w-7" : "h-5 w-5"} />
+      </span>
+      {copy.code && <p className="tabular mt-5 text-[13px] font-semibold text-ink-subtle">Error {copy.code}</p>}
+      <HeadingTag
+        className={cx(
+          "font-semibold tracking-[-0.015em] text-ink",
+          copy.code ? "mt-1" : "mt-5",
+          page ? "text-2xl sm:text-[28px] sm:leading-9" : "text-lg",
+        )}
+      >
+        {title ?? copy.title}
+      </HeadingTag>
+      <p className={cx("mt-2 text-ink-muted", page ? "text-[15px] leading-6" : "text-sm leading-6")}>{message ?? copy.message}</p>
+      {actions.length > 0 && (
+        <div className="mt-7 flex w-full flex-col items-stretch justify-center gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * For a query that failed: picks the kind from the error. `title` is used for data and
+ * server failures ("Patients could not be loaded"); 404 / 403 / 400 keep their own words.
+ * Pass `retry` (usually `query.refetch`) to offer Try again.
+ */
+export function ErrorState({
+  error,
+  title,
+  retry,
+  variant = "section",
+}: {
+  error: unknown;
+  title?: string;
+  retry?: () => void;
+  variant?: "page" | "section";
+}) {
+  const kind = errorKind(error);
+  const ownTitle = kind === "data" || kind === "server";
+  const record = kind === "not_found";
+  return (
+    <ErrorPanel
+      kind={kind}
+      variant={variant}
+      title={ownTitle ? title : record ? "Not found" : undefined}
+      message={record ? "This record doesn't exist, or it isn't available to your account." : undefined}
+      onRetry={retry}
+    />
   );
 }
 

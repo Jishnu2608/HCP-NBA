@@ -8,6 +8,8 @@
  *
  * Palette: eucalyptus (navigation, primary actions), ivory (surfaces), charcoal (text),
  * sage (secondary), coral (the one hero call to action, attention dots), amber (warnings).
+ * The active set is chosen by data-theme="light" | "dark" on <html>: the user's saved
+ * choice, else the operating system (index.html sets it before first paint).
  * Risk and compliance use their own status colours (ok / warn / bad / info), always with an
  * icon and a text label, never colour alone.
  */
@@ -82,76 +84,76 @@
   --chart-cursor: rgb(36 88 74 / 0.06);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
+/* Dark theme: the same token names with values designed for a dark canvas, not an
+   inversion of the light set. Selected by data-theme on <html> (see theme.tsx). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
-    --canvas: #0f1513;
-    --surface: #151d1a;
-    --subtle: #1b2521;
-    --sunken: #111916;
-    --line: #27332e;
-    --line-strong: #3a4842;
+  --canvas: #0f1513;
+  --surface: #151d1a;
+  --subtle: #1b2521;
+  --sunken: #111916;
+  --line: #27332e;
+  --line-strong: #3a4842;
 
-    --ink: #e7ece9;
-    --ink-muted: #b0bbb6;
-    --ink-subtle: #919d98;
-    --ink-inverse: #0f1513;
+  --ink: #e7ece9;
+  --ink-muted: #b0bbb6;
+  --ink-subtle: #919d98;
+  --ink-inverse: #0f1513;
 
-    --primary: #2d7460;
-    --primary-hover: #358770;
-    --primary-ink: #8fcbb4;
-    --primary-soft: #18302a;
-    --primary-line: #2c5446;
-    --on-primary: #ffffff;
+  --primary: #2d7460;
+  --primary-hover: #358770;
+  --primary-ink: #8fcbb4;
+  --primary-soft: #18302a;
+  --primary-line: #2c5446;
+  --on-primary: #ffffff;
 
-    --sage: #1f2b25;
-    --sage-ink: #b4c5ad;
+  --sage: #1f2b25;
+  --sage-ink: #b4c5ad;
 
-    --accent: #c4503a;
-    --accent-hover: #d2614a;
-    --accent-soft: #3a1f19;
-    --accent-ink: #f0a08e;
-    --on-accent: #ffffff;
+  --accent: #c4503a;
+  --accent-hover: #d2614a;
+  --accent-soft: #3a1f19;
+  --accent-ink: #f0a08e;
+  --on-accent: #ffffff;
 
-    --ok: #7fd1a3;
-    --ok-soft: #14291e;
-    --ok-line: #24503a;
-    --warn: #f0c071;
-    --warn-soft: #2c2210;
-    --warn-line: #5a4419;
-    --bad: #f3a097;
-    --bad-soft: #321a17;
-    --bad-line: #64302a;
-    --info: #94c4de;
-    --info-soft: #14242e;
-    --info-line: #28465a;
-    --neutral: #c1c9c5;
-    --neutral-soft: #1e2724;
-    --neutral-line: #34413b;
+  --ok: #7fd1a3;
+  --ok-soft: #14291e;
+  --ok-line: #24503a;
+  --warn: #f0c071;
+  --warn-soft: #2c2210;
+  --warn-line: #5a4419;
+  --bad: #f3a097;
+  --bad-soft: #321a17;
+  --bad-line: #64302a;
+  --info: #94c4de;
+  --info-soft: #14242e;
+  --info-line: #28465a;
+  --neutral: #c1c9c5;
+  --neutral-soft: #1e2724;
+  --neutral-line: #34413b;
 
-    --nav: #0b110f;
-    --nav-raised: #121a17;
-    --nav-line: #1f2a26;
-    --nav-ink: #d6e0db;
-    --nav-ink-muted: #879a91;
-    --nav-active: #1a2a24;
-    --nav-indicator: #8cc4ad;
+  --nav: #0b110f;
+  --nav-raised: #121a17;
+  --nav-line: #1f2a26;
+  --nav-ink: #d6e0db;
+  --nav-ink-muted: #879a91;
+  --nav-active: #1a2a24;
+  --nav-indicator: #8cc4ad;
 
-    --focus: #8fcbb4;
+  --focus: #8fcbb4;
 
-    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
-    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.45);
-    --shadow-lg: 0 18px 40px -12px rgb(0 0 0 / 0.6);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 18px 40px -12px rgb(0 0 0 / 0.6);
 
-    --series-1: #6cbf9f;
-    --series-2: #e0aa4a;
-    --series-3: #86a7d8;
-    --series-baseline: #69716d;
-    --chart-grid: #26312c;
-    --chart-text: #a3aea9;
-    --chart-cursor: rgb(143 203 180 / 0.08);
-  }
+  --series-1: #6cbf9f;
+  --series-2: #e0aa4a;
+  --series-3: #86a7d8;
+  --series-baseline: #69716d;
+  --chart-grid: #26312c;
+  --chart-text: #a3aea9;
+  --chart-cursor: rgb(143 203 180 / 0.08);
 }
 
 @theme inline {
@@ -363,6 +365,14 @@ p {
 }
 .recharts-surface:focus {
   outline: none;
+}
+
+/* Applied for two frames while the theme changes, so nothing animates its colours. */
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

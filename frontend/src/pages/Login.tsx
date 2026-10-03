@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { isChallenge, useAuth } from "../auth";
 import { mayOpen } from "../routes";
-import { Button, ErrorNote, PasswordField, TextField } from "../ui";
+import { Alert, Button, ErrorNote, PasswordField, TextField } from "../ui";
 import AuthLayout from "./AuthLayout";
 
 export default function Login() {
@@ -14,6 +14,8 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // Set when a signed-out visitor opened an app page (or a session ended): a 401.
+  const signinRequired = (location.state as { reason?: string } | null)?.reason === "signin_required";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -49,6 +51,13 @@ export default function Login() {
         </>
       }
     >
+      {signinRequired && (
+        <Alert tone="info" title="Please sign in to continue" className="mb-6">
+          <span className="text-info">
+            That page needs a signed-in account. If you were signed in, your session has ended.
+          </span>
+        </Alert>
+      )}
       <form onSubmit={submit} className="space-y-5">
         <TextField
           label="Work email"

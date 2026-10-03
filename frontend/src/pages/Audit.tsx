@@ -154,7 +154,7 @@ export default function Audit() {
             <LoadingRows rows={10} label="Loading audit events" />
           </div>
         ) : log.error ? (
-          <ErrorState error={log.error} title="The audit log could not be loaded" />
+          <ErrorState error={log.error} retry={() => void log.refetch()} title="The audit log could not be loaded" />
         ) : !log.data.items.length ? (
           <EmptyState title="No events of this type" icon={<ScrollText className="h-5 w-5" />} />
         ) : (

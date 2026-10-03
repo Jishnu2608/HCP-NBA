@@ -11,29 +11,27 @@ import {
 } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import { ROLE_LABEL, useAuth } from "./auth";
 import AccessDenied from "./pages/AccessDenied";
 import { BrandMark } from "./pages/AuthLayout";
+import { AppErrorBoundary, ErrorScreen } from "./pages/ErrorPage";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import VerifyOtp from "./pages/VerifyOtp";
 import type { Permission } from "./permissions";
 import { NAV_GROUPS, ROUTES } from "./routes";
+import { preferences } from "./session";
+import { ThemeToggle } from "./theme";
 import { Avatar, IconButton, Loading, Skeleton, cx, fmtDate } from "./ui";
 
 const PUBLIC_PATHS = ["/", "/login", "/signup", "/signup/verify"];
-const COLLAPSE_KEY = "nba.nav.collapsed";
 
-function readCollapsed() {
-  try {
-    return window.localStorage.getItem(COLLAPSE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
+/** True for an address that is a real page of the signed-in app (so a signed-out visitor
+ *  should sign in), as opposed to an address that does not exist at all (404). */
+const isAppPath = (path: string) => path === "/denied" || ROUTES.some((r) => matchPath(r.path, path));
 
 /** Menu entries come from the route table, filtered by the account's permissions. */
 function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
@@ -203,6 +201,9 @@ function AccountMenu() {
             <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary-soft px-2 py-0.5 text-xs font-semibold text-primary-ink">
               <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> {ROLE_LABEL[user.role]}
             </div>
+            <div className="mt-3 sm:hidden">
+              <DemoDate />
+            </div>
           </div>
           <button
             type="button"
@@ -239,7 +240,7 @@ function DemoDate() {
 function Shell({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [collapsed, setCollapsed] = useState(preferences.navCollapsed);
   const [drawer, setDrawer] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
 
@@ -262,11 +263,7 @@ function Shell({ children }: { children: ReactNode }) {
 
   const toggle = () =>
     setCollapsed((v) => {
-      try {
-        window.localStorage.setItem(COLLAPSE_KEY, v ? "0" : "1");
-      } catch {
-        /* storage unavailable: keep the choice for this visit only */
-      }
+      preferences.setNavCollapsed(!v);
       return !v;
     });
 
@@ -349,8 +346,11 @@ function Shell({ children }: { children: ReactNode }) {
           <p className="hidden min-w-0 truncate text-[13px] text-ink-subtle xl:block">
             Access follows your role and assignments. All records are synthetic.
           </p>
-          <div className="ml-auto flex items-center gap-2 sm:gap-3">
-            <DemoDate />
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+            <div className="hidden sm:block">
+              <DemoDate />
+            </div>
+            <ThemeToggle />
             <AccountMenu />
           </div>
         </header>
@@ -361,7 +361,9 @@ function Shell({ children }: { children: ReactNode }) {
           className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 outline-none sm:px-6 sm:py-8 lg:px-8"
         >
           <div key={location.pathname} className="animate-rise">
-            <Suspense fallback={<Loading />}>{children}</Suspense>
+            <AppErrorBoundary resetKey={location.pathname}>
+              <Suspense fallback={<Loading />}>{children}</Suspense>
+            </AppErrorBoundary>
           </div>
         </main>
       </div>
@@ -400,7 +402,16 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/signup/verify" element={<VerifyOtp />} />
-        <Route path="*" element={<Navigate to="/login" replace state={{ from: location.pathname }} />} />
+        <Route
+          path="*"
+          element={
+            isAppPath(location.pathname) ? (
+              <Navigate to="/login" replace state={{ from: location.pathname, reason: "signin_required" }} />
+            ) : (
+              <ErrorScreen kind="not_found" />
+            )
+          }
+        />
       </Routes>
     );
   }
