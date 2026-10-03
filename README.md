@@ -48,6 +48,7 @@ Unify → Segment → Predict NBA → Personalize → Orchestrate → Engage →
 | Closed loop | Simulated delivery, response capture, a demo clock that advances time, retraining, next cycle |
 | Analytics | Recommendation mix, why options were held back, response by channel, adherence by measure over time, engine versus earlier outreach on equal terms |
 | Audit | Append-only record of every recommendation, gate result, decision, send, response and settings change, with the actor |
+| Interface | One design system in clinical blue and cool slate, light and dark themes (saved per browser, otherwise following the system setting), responsive from phones to wide screens and at high browser zoom, a bento-grid layout for dashboards and 360 pages, consistent error pages (404, 400, 401, 403, 500, data failures) |
 
 Therapy areas match the three Medicare STAR adherence measures: diabetes, hypertension, cholesterol.
 
@@ -94,21 +95,95 @@ Account credentials are not documented in this repository. See "Secrets and acco
 
 Email only.
 
-- With a mail server configured, the code is emailed and never shown on screen.
-- Without one, and only while demo mode is on, the verify page shows the code in a box that states no email was sent.
+- With a mail server configured, the code is emailed and never shown on screen, returned by the API or written to the log.
+- If the email cannot be sent, no code is created and the account stays pending. The verify page says the email could not be sent and offers to send a new code straight away.
+- Without a mail server, and only while demo mode is on, the verify page shows the code in a box that states no email was sent.
+- A new code can be requested after 30 seconds; each new code replaces the previous one.
+- After a successful check, the account is activated, given its starting data, signed in and sent to its role's dashboard.
 
-To configure email, add the `NBA_SMTP_*` settings listed in [.env.example](.env.example) to `.env` and restart. Any SMTP service on port 587 with STARTTLS works.
+To configure email, add the `NBA_SMTP_*` settings listed in [.env.example](.env.example) to `.env` and restart. Any SMTP service on port 587 with STARTTLS works; with Gmail, use an app password (it needs two-step verification on the account), not the account password.
 
-## Getting started (Windows)
+## Getting started
 
-Requires Python 3.12 or 3.13 and Node 20 or later.
+### Prerequisites
+
+- Git
+- Python 3.13. On Windows the setup script calls it through the `py` launcher (`py -3.13`), which the python.org installer adds.
+- Node.js 20 or later (includes npm)
+
+### From a fresh clone (Windows)
 
 ```powershell
+git clone https://github.com/Jishnu2608/HCP-NBA.git
+cd HCP-NBA
 .\scripts\setup.ps1
 .\scripts\run.ps1
 ```
 
-Open http://localhost:8000. Setup creates the Python environment, builds the frontend, generates local secrets, creates the database, generates the synthetic population, trains the models and runs the first recommendation cycle.
+Open http://localhost:8000.
+
+`setup.ps1` runs once and takes a few minutes. It:
+
+1. Creates the Python environment in `backend\.venv` and installs the backend with its development tools.
+2. Installs the frontend packages and builds the web application into `frontend\dist`.
+3. Creates `.env` with random values for every required secret (`python -m app.bootstrap`).
+4. Creates the SQLite database in `data\` (`alembic upgrade head`).
+5. Generates the synthetic population, trains the models and runs the first recommendation cycle.
+
+If PowerShell refuses to run the scripts, allow local scripts for your user once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+### Signing in the first time
+
+- **Administrator:** the email in `NBA_ADMIN_EMAIL` (default shown in [.env.example](.env.example)) with the password that `setup.ps1` generated in your `.env` as `NBA_ADMIN_PASSWORD`. Choose your own by editing `.env`, then run `python -m app.auth.rotate` from `backend` and restart.
+- **Demo accounts** for the other roles are created with the synthetic data and share `NBA_DEMO_PASSWORD`. An administrator can see their emails on the Users and assignments page.
+- **Your own account:** sign up with any role except Administrator. Without email configured, the verification code is shown on screen in development mode.
+
+### Optional: email delivery of verification codes
+
+Add the `NBA_SMTP_*` values from [.env.example](.env.example) to `.env` and restart the server. See "Verification code delivery" above.
+
+### Working on the code
+
+Run the API and the frontend dev server side by side for instant reload:
+
+```powershell
+# Terminal 1 - API with auto-reload, from backend\
+.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 - frontend with hot reload, from frontend\
+npm run dev
+```
+
+Open http://localhost:5173 while developing; it forwards `/api` to port 8000. `.\scripts\run.ps1` instead serves the last frontend build from port 8000, so run `npm run build` after frontend changes when using it.
+
+Before committing:
+
+| Where | Command |
+|---|---|
+| `backend` | `.venv\Scripts\python -m pytest` |
+| `backend` | `.venv\Scripts\python -m ruff check .` and `ruff format .` |
+| `backend` | `.venv\Scripts\alembic check` (after changing tables; must report no new operations) |
+| `frontend` | `npm run typecheck` and `npm run build` |
+
+### macOS and Linux
+
+The scripts are PowerShell; the same steps by hand:
+
+```bash
+cd backend && python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+cd ../frontend && npm install && npm run build
+cd ../backend && .venv/bin/python -m app.bootstrap && .venv/bin/alembic upgrade head
+.venv/bin/python -m app.datagen && .venv/bin/python -m app.cycle --retrain
+.venv/bin/python -m uvicorn app.main:app --port 8000
+```
+
+### Viewing it on a phone
+
+The server listens only on this computer by default. To open it from a phone on the same, trusted Wi-Fi, start it with `--host 0.0.0.0`, allow port 8000 for private networks in the firewall, and open `http://<computer's IPv4 address>:8000` on the phone. Stop it when done; anyone on that network can reach the sign-in page while it runs.
+
+### Resetting the data
+
+The Engine page has **Reset to seeded data**, which keeps registered accounts. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
 
 ## Secrets and accounts
 
@@ -147,6 +222,7 @@ From `backend`, using the virtual environment's Python.
 | `python -m app.datagen` | Rebuild the synthetic population. Registered accounts are kept. |
 | `python -m app.cycle [--retrain]` | Refresh features, optionally retrain, generate recommendations and drafts |
 | `python -m app.pipeline` | Feature refresh and model training, with holdout metrics |
+| `python -m uvicorn app.main:app --reload --port 8000` | Run the API with auto-reload |
 | `python -m pytest` | Backend tests |
 | `ruff check .` | Lint |
 | `alembic upgrade head` | Apply database migrations |
@@ -203,7 +279,7 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 |---|---|
 | SQLite | PostgreSQL |
 | Local accounts | Enterprise single sign-on, MFA |
-| Email code with development fallback | Managed email, SMS or authenticator |
+| Email code over SMTP (a personal mailbox works for a demo) | Transactional email service; SMS or authenticator codes |
 | Synthetic data | Governed claims, pharmacy, CRM and consent data |
 | Simulated delivery | CRM, marketing automation, telephony |
 | Offline templates | Private enterprise language model |
@@ -215,6 +291,10 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 
 - Models are trained on synthetic behaviour; measured quality is modest by design and real-world results will differ.
 - Outreach delivery is simulated. No outreach message leaves the system.
-- No forgot-password, password change, login lockout or MFA at sign-in yet.
-- Live email delivery of verification codes and the hosted language-model provider have not been exercised.
-- No browser end-to-end tests yet; behaviour is covered by backend tests and manual checks.
+- **Email verification codes:** working with a configured SMTP account and checked once end to end with Gmail, but real delivery has no automated test (tests use a fake sender). A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
+- No forgot-password, password change, login lockout, rate limiting or MFA at sign-in yet.
+- An administrator can disable accounts but not delete them from the app.
+- The hosted language-model provider has not been exercised; drafting uses offline templates.
+- No browser end-to-end tests yet; behaviour is covered by backend tests and manual checks, including a scripted layout check at phone, tablet and desktop widths. Real browser zoom and operating-system display scaling have not been tested.
+- Explanation texts from the engine format dates day-month-year, while the interface uses US dates.
+- The theme switch is per browser; it is not stored with the account.
