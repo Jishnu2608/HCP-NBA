@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Award, Building2, FileText, MapPin, MessagesSquare, Stethoscope } from "lucide-react";
+import { Award, BookOpen, Building2, FileText, History, IdCard, MapPin, MessagesSquare, Stethoscope } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, query } from "../api";
@@ -26,7 +26,8 @@ import {
   titleCase,
 } from "../ui";
 import type { Column } from "../ui";
-import { ChannelTable, History, OpenNba } from "./Patients";
+import { BentoCard, BentoCell, BentoGrid } from "../layout";
+import { ChannelTable, HistoryList, OpenNba } from "./Patients";
 
 export function HcpList() {
   const navigate = useNavigate();
@@ -211,51 +212,62 @@ export function HcpProfile() {
         />
       </KpiGrid>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[auto_1fr]">
-        <div className="min-w-0 xl:col-start-2 xl:row-start-1">
+      {/* Bento: recommendation beside the profile; what the HCP engages with beside the
+          channel response; the engagement timeline across the full width. */}
+      <BentoGrid>
+        <BentoCell span="wide">
           <OpenNba nba={h.open_nba} />
-        </div>
-        <div className="min-w-0 space-y-6 xl:col-start-1 xl:row-span-2 xl:row-start-1">
-          {h.features && (
-            <Card title="What this HCP engages with" description="Smoothed toward the average, so one response is not over-read.">
+        </BentoCell>
+        <BentoCard span="narrow" icon={<IdCard />} title="Profile">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-4 text-sm">
+            <div className="min-w-0">
+              <dt className="text-[13px] text-ink-subtle">HCP ID</dt>
+              <dd className="tabular font-medium text-ink">{h.hcp_id}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[13px] text-ink-subtle">NPI (synthetic)</dt>
+              <dd className="tabular font-medium text-ink">{h.npi}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[13px] text-ink-subtle">Taxonomy</dt>
+              <dd className="tabular font-medium text-ink">{h.taxonomy_code ?? "—"}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[13px] text-ink-subtle">Segment</dt>
+              <dd className="font-medium text-ink">{h.segment ? titleCase(h.segment) : "—"}</dd>
+            </div>
+            <div className="col-span-2 min-w-0">
+              <dt className="text-[13px] text-ink-subtle">Organization</dt>
+              <dd className="break-words font-medium text-ink">
+                {h.organization}, {h.city}, {h.state}
+              </dd>
+            </div>
+          </dl>
+        </BentoCard>
+
+        {h.features && (
+          <>
+            <BentoCard
+              span="wide"
+              icon={<BookOpen />}
+              title="What this HCP engages with"
+              description="Smoothed toward the average, so one response is not over-read."
+            >
               <div className="grid gap-8 md:grid-cols-2">
                 <RateList title="By therapy area" rates={h.features.topic_rates.measure ?? {}} />
                 <RateList title="By content type" rates={h.features.topic_rates.subtopic ?? {}} />
               </div>
-            </Card>
-          )}
-          <Card title="Engagement timeline" description="Newest first. Engine recommendations are highlighted.">
-            <History items={h.interactions} />
-          </Card>
-        </div>
-        <div className="min-w-0 space-y-6 xl:col-start-2 xl:row-start-2">
-          {h.features && (
-            <Card title="Response by channel">
+            </BentoCard>
+            <BentoCard span="narrow" icon={<MessagesSquare />} title="Response by channel">
               <ChannelTable channels={h.features.channels} />
-            </Card>
-          )}
-          <Card title="Profile">
-            <dl className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <dt className="text-[13px] text-ink-subtle">HCP ID</dt>
-                <dd className="tabular font-medium text-ink">{h.hcp_id}</dd>
-              </div>
-              <div>
-                <dt className="text-[13px] text-ink-subtle">NPI (synthetic)</dt>
-                <dd className="tabular font-medium text-ink">{h.npi}</dd>
-              </div>
-              <div>
-                <dt className="text-[13px] text-ink-subtle">Taxonomy</dt>
-                <dd className="tabular font-medium text-ink">{h.taxonomy_code ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[13px] text-ink-subtle">Segment</dt>
-                <dd className="font-medium text-ink">{h.segment ? titleCase(h.segment) : "—"}</dd>
-              </div>
-            </dl>
-          </Card>
-        </div>
-      </div>
+            </BentoCard>
+          </>
+        )}
+
+        <BentoCard span="full" icon={<History />} title="Engagement timeline" description="Newest first. Engine recommendations are highlighted.">
+          <HistoryList items={h.interactions} />
+        </BentoCard>
+      </BentoGrid>
     </>
   );
 }

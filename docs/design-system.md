@@ -127,7 +127,17 @@ Dashboards and other dense screens use one grid: 1 column on phones, 2 from 768p
 
 Rows always add up to 12 (8 + 4, 6 + 6, 12). Below 1280px the cells go full width, because charts and lists need the width; `pairOnTablet` lets small cells sit two-up from 768px. Cards stretch to the tallest cell in the row, and a footer `note` is pinned to the bottom, so neighbouring cards end level. When a card would be mostly empty (for example a trend with one data point), the layout changes instead: the related card takes the row.
 
-Components: `BentoGrid`, `BentoCard` (icon tile, title, description, optional "View all" link, footer note), `SectionHeader`, `InsightRow` (finding plus figure), `BarRow` (label, figure, proportion bar).
+Components: `BentoGrid`, `BentoCard` (icon tile, title, description, optional "View all" link, footer note), `BentoCell` (a cell for content that brings its own card, stretched to the row), `SectionHeader`, `InsightRow` (finding plus figure), `BarRow` (label, figure, proportion bar). From 1280px a cell can be two rows tall (`rows={2}`) so a long list sits beside two stacked supporting cards; their bottoms line up with it.
+
+### 360 pages
+
+| Row | Patient 360 | HCP 360 |
+|---|---|---|
+| 1 | Next best action (wide) + consent on record (narrow) | Next best action (wide) + profile (narrow) |
+| 2 | One full-width card per therapy (PDC, MPR, gap, refill, risk, 12-month supply timeline) | What the HCP engages with (wide) + response by channel (narrow) |
+| 3 | Outreach timeline (wide, two rows) + response by channel and care team (narrow, stacked; side by side on tablets) | Engagement timeline (full) |
+
+On phones the cells stack in that order, so the recommendation always comes first.
 
 ### Dashboard reading order
 

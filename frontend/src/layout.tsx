@@ -7,7 +7,9 @@
 //   wide   -  8 of 12   (primary content; full width below 1280px)
 //   half   -  6 of 12   (paired content; full width below 1280px, charts need the width)
 //   narrow -  4 of 12   (supporting content; half width from 768px when `pairOnTablet`)
-// Cards stretch to the tallest cell in their row, so neighbouring cards always align.
+// A cell can be two rows tall (`rows={2}`, from 1280px) so a long list sits beside two
+// stacked supporting cards. Cards stretch to the tallest cell in their row, so neighbouring
+// cards always align.
 import { ArrowRight } from "lucide-react";
 import { useId } from "react";
 import type { ReactNode } from "react";
@@ -22,6 +24,32 @@ const SPAN: Record<Span, string> = {
   narrow: "xl:col-span-4",
 };
 
+const ROWS = { 1: "", 2: "xl:row-span-2" } as const;
+
+function spanClass(span: Span, pairOnTablet: boolean, rows: 1 | 2) {
+  return cx(SPAN[span], pairOnTablet && span !== "full" ? "md:col-span-1" : "md:col-span-2", ROWS[rows]);
+}
+
+/**
+ * A grid cell for content that brings its own card (for example the open-recommendation
+ * card). The child is stretched to fill the cell, so it aligns with neighbouring cards.
+ */
+export function BentoCell({
+  span = "half",
+  pairOnTablet = false,
+  rows = 1,
+  children,
+  className,
+}: {
+  span?: Span;
+  pairOnTablet?: boolean;
+  rows?: 1 | 2;
+  children: ReactNode;
+  className?: string;
+}) {
+  return <div className={cx("flex min-w-0 flex-col [&>*]:flex-1", spanClass(span, pairOnTablet, rows), className)}>{children}</div>;
+}
+
 export function BentoGrid({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cx("stagger grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12", className)}>{children}</div>;
 }
@@ -33,6 +61,7 @@ export function BentoGrid({ children, className }: { children: ReactNode; classN
 export function BentoCard({
   span = "half",
   pairOnTablet = false,
+  rows = 1,
   title,
   description,
   icon,
@@ -46,6 +75,8 @@ export function BentoCard({
   span?: Span;
   /** Narrow and half cells sit two-up between 768 and 1279px instead of full width. */
   pairOnTablet?: boolean;
+  /** Two rows tall from 1280px. */
+  rows?: 1 | 2;
   title: ReactNode;
   description?: ReactNode;
   icon?: ReactNode;
@@ -62,8 +93,7 @@ export function BentoCard({
       aria-labelledby={headingId}
       className={cx(
         "flex min-w-0 flex-col rounded-xl border border-line bg-surface shadow-card",
-        SPAN[span],
-        pairOnTablet && span !== "full" ? "md:col-span-1" : "md:col-span-2",
+        spanClass(span, pairOnTablet, rows),
         className,
       )}
     >

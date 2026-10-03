@@ -5,7 +5,9 @@ import {
   Check,
   Gauge,
   HeartPulse,
+  History,
   MessageCircleMore,
+  MessageSquare,
   Pill,
   ShieldAlert,
   ShieldCheck,
@@ -14,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { BentoCard, BentoCell, BentoGrid } from "../layout";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, query } from "../api";
 import type { Json } from "../api";
@@ -308,7 +311,7 @@ const OUTCOME_TONE = (outcome: string) =>
         : "info";
 
 /** Outreach history as a timeline: newest first, the first few shown. */
-export function History({ items }: { items: Json[] }) {
+export function HistoryList({ items }: { items: Json[] }) {
   const [all, setAll] = useState(false);
   if (!items.length) {
     return <EmptyState compact title="No outreach on record" icon={<MessageCircleMore className="h-5 w-5" />} />;
@@ -426,13 +429,16 @@ export function OpenNba({ nba }: { nba: Json | null }) {
 function TherapyCard({ t, fills, asOf }: { t: Json; fills: Json[]; asOf: string }) {
   const below = t.pdc !== null && t.pdc < 0.8;
   return (
-    <Card
+    <BentoCard
+      span="full"
+      icon={<Pill />}
       title={
         <span className="flex flex-wrap items-center gap-x-2">
-          <Pill className="h-4 w-4 text-ink-subtle" aria-hidden /> {titleCase(t.drug_name)}
+          {titleCase(t.drug_name)}
           <span className="font-normal text-ink-subtle">· {titleCase(t.measure)}</span>
         </span>
       }
+      description={`Started ${fmtDate(t.start_date)} · ${t.days_supply}-day supply per fill`}
       action={<SegmentBadge value={t.risk_segment} />}
     >
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
@@ -473,7 +479,7 @@ function TherapyCard({ t, fills, asOf }: { t: Json; fills: Json[]; asOf: string 
       <div className="mt-6">
         <CoverageTimeline fills={fills} asOf={asOf} />
       </div>
-    </Card>
+    </BentoCard>
   );
 }
 
@@ -539,63 +545,72 @@ export function PatientProfile() {
         />
       </KpiGrid>
 
-      {/* Small screens: recommendation, then therapies, then details. Wide screens: two columns. */}
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[auto_1fr]">
-        <div className="min-w-0 xl:col-start-2 xl:row-start-1">
+      {/* Bento: recommendation beside the consent it depends on; one full-width row per
+          therapy (the supply timeline needs the width); the outreach timeline as a tall cell
+          beside the two supporting cards. Phones read top to bottom in the same order. */}
+      <BentoGrid>
+        <BentoCell span="wide">
           <OpenNba nba={p.open_nba} />
-        </div>
-        <div className="min-w-0 space-y-6 xl:col-start-1 xl:row-span-2 xl:row-start-1">
-          {p.therapies.map((t: Json) => (
-            <TherapyCard
-              key={t.therapy_id}
-              t={t}
-              fills={p.fills.filter((f: Json) => f.therapy_id === t.therapy_id)}
-              asOf={p.as_of_date}
-            />
-          ))}
-          <Card title="Outreach timeline" description="Newest first. Engine recommendations are highlighted.">
-            <History items={p.interactions} />
-          </Card>
-        </div>
-
-        <div className="min-w-0 space-y-6 xl:col-start-2 xl:row-start-2">
-          <Card title="Consent on record" description="Only the patient can change consent.">
-            <ul className="divide-y divide-line">
-              {current.map((c: Json, i: number) => (
-                <li key={i} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-                  <span className="flex min-w-0 items-center gap-2 text-sm text-ink">
-                    {c.channel ? (
-                      <ChannelIcon channel={c.channel} className="h-4 w-4 shrink-0 text-ink-subtle" />
-                    ) : (
-                      <Stethoscope className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
-                    )}
-                    <span className="truncate">{c.channel ? channelName(c.channel) : "Share adherence with provider"}</span>
-                  </span>
-                  {c.granted ? (
-                    <Badge tone="ok" icon={<Check className="h-3.5 w-3.5" aria-hidden />}>
-                      Granted
-                    </Badge>
+        </BentoCell>
+        <BentoCard span="narrow" icon={<ShieldCheck />} title="Consent on record" description="Only the patient can change consent.">
+          <ul className="divide-y divide-line">
+            {current.map((c: Json, i: number) => (
+              <li key={i} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                <span className="flex min-w-0 items-start gap-2 text-sm leading-5 text-ink">
+                  {c.channel ? (
+                    <ChannelIcon channel={c.channel} className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" />
                   ) : (
-                    <Badge tone="bad" icon={<X className="h-3.5 w-3.5" aria-hidden />}>
-                      Not granted
-                    </Badge>
+                    <Stethoscope className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
                   )}
-                </li>
-              ))}
-            </ul>
-          </Card>
-          {p.features && (
-            <Card title="Response by channel">
-              <ChannelTable channels={p.features.channels} />
-            </Card>
-          )}
-          <Card title="Care team">
+                  <span className="min-w-0">{c.channel ? channelName(c.channel) : "Share adherence with provider"}</span>
+                </span>
+                {c.granted ? (
+                  <Badge tone="ok" icon={<Check className="h-3.5 w-3.5" aria-hidden />} className="shrink-0">
+                    Granted
+                  </Badge>
+                ) : (
+                  <Badge tone="bad" icon={<X className="h-3.5 w-3.5" aria-hidden />} className="shrink-0">
+                    Not granted
+                  </Badge>
+                )}
+              </li>
+            ))}
+          </ul>
+        </BentoCard>
+
+        {p.therapies.map((t: Json) => (
+          <TherapyCard
+            key={t.therapy_id}
+            t={t}
+            fills={p.fills.filter((f: Json) => f.therapy_id === t.therapy_id)}
+            asOf={p.as_of_date}
+          />
+        ))}
+
+        <BentoCard
+          span="wide"
+          rows={p.features ? 2 : 1}
+          icon={<History />}
+          title="Outreach timeline"
+          description="Newest first. Engine recommendations are highlighted."
+        >
+          <HistoryList items={p.interactions} />
+        </BentoCard>
+        {p.features && (
+          <BentoCard span="narrow" pairOnTablet icon={<MessageSquare />} title="Response by channel">
+            <ChannelTable channels={p.features.channels} />
+          </BentoCard>
+        )}
+        <BentoCard span="narrow" pairOnTablet={Boolean(p.features)} icon={<Users />} title="Care team">
+          {p.care_team.length ? (
             <ul className="space-y-3">
               {p.care_team.map((h: Json) => (
                 <li key={h.hcp_id} className="flex items-center gap-3">
                   <Avatar name={h.name} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-ink">{h.name}</div>
+                    <div className="truncate text-sm font-semibold text-ink" title={h.name}>
+                      {h.name}
+                    </div>
                     <div className="truncate text-[13px] text-ink-subtle">{h.specialty}</div>
                   </div>
                   {h.is_primary && (
@@ -606,9 +621,11 @@ export function PatientProfile() {
                 </li>
               ))}
             </ul>
-          </Card>
-        </div>
-      </div>
+          ) : (
+            <p className="text-sm text-ink-subtle">No care team on record.</p>
+          )}
+        </BentoCard>
+      </BentoGrid>
     </>
   );
 }
