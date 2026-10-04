@@ -195,7 +195,7 @@ The server listens only on this computer by default. To open it from a phone on 
 
 ### Resetting the data
 
-The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, invitations and the security audit trail, and signs everyone out. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
+The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, invitations and the security audit trail, and signs everyone out. Account and invitation ids are never reused, not even after a deletion or a reset, so the audit history of one account can never appear under another; demo and administrator accounts get new, higher ids after each reset. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
 
 ## Secrets and accounts
 
@@ -288,6 +288,7 @@ scripts/                setup and run
 8. The simulator's hidden behaviour traits are never readable by the engine, features or models.
 9. Model features are computed as they stood before each historical touch; no look-ahead.
 10. No secret in the repository.
+11. The audit trail is append-only, and account and invitation ids are never reused, so every entry keeps pointing at the account it was written for.
 
 ## Path to production
 
@@ -309,7 +310,7 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 
 - Models are trained on synthetic behaviour; measured quality is modest by design and real-world results will differ.
 - Outreach delivery is simulated. No outreach message leaves the system.
-- **Email verification codes and invitation emails:** codes were checked once end to end with Gmail; invitation emails are covered by tests with a fake mailbox and a browser run without a mail server, but no invitation has yet been sent through real SMTP. Real delivery has no automated test. A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
+- **Email verification codes and invitation emails:** both were checked end to end once with Gmail: a sign-up code, and an invitation that was accepted, verified with its emailed code and produced an active, verified HCP account. Real delivery has no automated test (tests use a fake mailbox), and the invitation email has not been checked in Outlook or Apple Mail. A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
 - Rate limits are kept in the server's memory: they reset on restart and are not shared between processes.
 - No forgot-password, password change, account lockout or MFA at sign-in yet.
 - A professional cannot be invited to an email that already has a patient account.
