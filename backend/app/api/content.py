@@ -2,13 +2,14 @@ from datetime import timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
+from app.api.schemas import StrictBody
 from app.core import clock
 from app.core.db import get_db
 from app.core.permissions import Permission, can
@@ -27,9 +28,9 @@ APPROVED_AUDIENCE = {
 readers = require_permission(Permission.CONTENT_READ_ALL, *APPROVED_AUDIENCE)
 
 
-class ReviewBody(BaseModel):
+class ReviewBody(StrictBody):
     decision: Literal["approve", "reject"]
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 def _waiting_on(db: Session) -> dict[str, int]:

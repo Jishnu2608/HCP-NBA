@@ -7,7 +7,6 @@ signed-in user, so there is no id to tamper with.
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,6 +14,7 @@ from app import audit
 from app.api import serializers as out
 from app.api.deps import require_permission
 from app.api.people import consent_out
+from app.api.schemas import StrictBody
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
@@ -65,7 +65,7 @@ def own_hcp_id(user: User) -> str:
 OUTREACH_CHANNELS = (Channel.SMS, Channel.EMAIL, Channel.PORTAL, Channel.PHONE)
 
 
-class ConsentChange(BaseModel):
+class ConsentChange(StrictBody):
     granted: bool
 
 
@@ -223,7 +223,7 @@ def my_patients(user: User = Depends(panel_readers), db: Session = Depends(get_d
 INBOX_CHANNELS = (Channel.PORTAL, Channel.EMAIL, Channel.SMS)
 
 
-class InboxResponse(BaseModel):
+class InboxResponse(StrictBody):
     response: Literal["opened", "clicked", "refill"]
 
 
@@ -246,7 +246,6 @@ def _inbox_item(db: Session, i: Interaction) -> dict:
         # A text message has no subject line; never show the internal content title instead.
         "subject": draft.subject if draft else (content.title if content else None),
         "body": draft.body if draft else (content.body if content else ""),
-        "content_title": content.title if content else None,
         "status": i.outcome,
         "responded": i.outcome_ts,
         "can_refill": i.therapy_id is not None and i.outcome != Outcome.FILLED,

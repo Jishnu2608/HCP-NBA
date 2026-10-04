@@ -12,6 +12,7 @@ import {
   LoadingRows,
   PageHeader,
   Pagination,
+  PersonName,
   Select,
   Toolbar,
   cx,
@@ -79,9 +80,7 @@ export default function Audit() {
       header: "Actor",
       cell: (a) => (
         <div className="min-w-0">
-          <div className="max-w-56 truncate text-ink" title={a.actor}>
-            {a.actor}
-          </div>
+          <PersonName name={a.actor} verified={a.actor_verified} className="max-w-56 text-ink" />
           <div className="text-xs text-ink-subtle">{titleCase(a.actor_role)}</div>
         </div>
       ),

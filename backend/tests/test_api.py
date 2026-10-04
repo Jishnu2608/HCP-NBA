@@ -1,8 +1,7 @@
 """API behaviour, with the emphasis on who is allowed to see and do what."""
 
 import pytest
-from conftest import DEMO_PASSWORD, new_session, sign_in
-from fastapi.testclient import TestClient
+from conftest import DEMO_PASSWORD, ApiClient, cookie_header, login, new_session, sign_in
 from sqlalchemy import select
 
 from app import cycle
@@ -31,7 +30,7 @@ def env():
     cycle.run(db)
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
-    client = TestClient(app)
+    client = ApiClient(app)
     tokens = {role: sign_in(client, name) for role, name in PERSONAS.items()}
     yield client, db, tokens
     app.dependency_overrides.clear()
@@ -40,7 +39,7 @@ def env():
 
 def call(env, role, method, path, **kw):
     client, _, tokens = env
-    return client.request(method, path, headers={"Authorization": f"Bearer {tokens[role]}"}, **kw)
+    return client.request(method, path, headers=cookie_header(nba_session=tokens[role]), **kw)
 
 
 def open_nba(db, target_type, target_id=None, status=NbaStatus.READY_FOR_REVIEW) -> Nba:
@@ -55,13 +54,12 @@ def open_nba(db, target_type, target_id=None, status=NbaStatus.READY_FOR_REVIEW)
 
 def test_login_with_password_and_reject_bad_credentials(env):
     client, *_ = env
-    ok = client.post(
-        "/api/auth/login", data={"username": "cm01@nba.demo", "password": DEMO_PASSWORD}
-    )
+    ok = login(client, "cm01@nba.demo", DEMO_PASSWORD)
     assert ok.status_code == 200
     assert ok.json()["user"]["role"] == "care_manager" and ok.json()["user"]["home"] == "/queue"
-    bad = client.post("/api/auth/login", data={"username": "cm01@nba.demo", "password": "wrong"})
-    unknown = client.post("/api/auth/login", data={"username": "nobody@nba.demo", "password": "x"})
+    assert "access_token" not in ok.json()  # the session is only in the HttpOnly cookie
+    bad = login(client, "cm01@nba.demo", "wrong")
+    unknown = login(client, "nobody@nba.demo", "x")
     # Same answer for a wrong password and an unknown email: nothing reveals which it was.
     assert bad.status_code == unknown.status_code == 401
     assert bad.json() == unknown.json()
@@ -71,9 +69,12 @@ def test_login_with_password_and_reject_bad_credentials(env):
 def test_requests_without_a_valid_token_are_refused(env):
     client, *_ = env
     assert client.get("/api/nba").status_code == 401
-    assert client.get("/api/nba", headers={"Authorization": "Bearer nonsense"}).status_code == 401
+    assert client.get("/api/nba", headers=cookie_header(nba_session="nonsense")).status_code == 401
     forged = env[2]["admin"][:-3] + "abc"
-    assert client.get("/api/nba", headers={"Authorization": f"Bearer {forged}"}).status_code == 401
+    assert client.get("/api/nba", headers=cookie_header(nba_session=forged)).status_code == 401
+    # A bearer header is not a way in either.
+    token = env[2]["admin"]
+    assert client.get("/api/nba", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
 def test_persona_picker_endpoints_are_gone(env):
@@ -164,7 +165,11 @@ def test_compliance_sees_gate_outcomes_but_not_identities_and_cannot_review(env)
     assert items
     assert all(i["status"] == "blocked" or i["has_withheld"] for i in items)
     assert all(i["target_name"] is None and i["segment"] is None for i in items)
+    assert all(i["target_id"] is None for i in items)
     withheld = next(i for i in items if i["has_withheld"] and i["status"] == "ready_for_review")
+    # The detail view leaves out the drafts (they address the person by name).
+    detail = call(env, "compliance", "GET", f"/api/nba/{withheld['id']}").json()
+    assert detail["target_id"] is None and detail["drafts"] == []
     assert (
         call(env, "compliance", "POST", f"/api/nba/{withheld['id']}/approve", json={}).status_code
         == 403
@@ -220,10 +225,8 @@ def test_hcp_sees_patient_adherence_only_with_sharing_consent(env):
     }
 
     # PAT_00002 is treated by HCP_0001 but never consented to sharing.
-    cardiologist = {"access_token": sign_in(client, "hcp0001")}
-    seen = client.get(
-        "/api/me/patients", headers={"Authorization": f"Bearer {cardiologist['access_token']}"}
-    ).json()
+    cardiologist = sign_in(client, "hcp0001")
+    seen = client.get("/api/me/patients", headers=cookie_header(nba_session=cardiologist)).json()
     assert "PAT_00002" not in {p["patient_id"] for p in seen}
 
 
@@ -303,7 +306,7 @@ def test_approval_rechecks_consent_withdrawn_after_generation(env):
     off = client.put(
         f"/api/me/consents/outreach/{nba.channel}",
         json={"granted": False},
-        headers={"Authorization": f"Bearer {rosa}"},
+        headers=cookie_header(nba_session=rosa),
     )
     assert off.status_code == 200
     response = call(env, "cm", "POST", f"/api/nba/{nba.id}/approve", json={})

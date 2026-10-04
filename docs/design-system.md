@@ -200,7 +200,8 @@ No looping animations, no scaling beyond 2px, no glow. Everything collapses to n
 ## Accessibility
 
 - Visible focus ring on every interactive element (`:focus-visible`), skip link, landmarks (`header`, `nav`, `main`, `aside`).
-- Radio groups for role selection and filters, with arrow-key movement on the role cards.
+- Radio groups for the invitation role choice and filters.
+- `VerifiedBadge` / `PersonName`: a small primary-blue disc with a white check after a person's name, with a label on hover and keyboard focus ("Verified professional — onboarded through an authorized invitation", or "provisioned by the platform"). Shown only when the server reports `professionally_verified`; never derived from the role. Used in the account menu, sidebar, Users table and drawer (including lineage), Invitations list, HCP profile and audit actor cells.
 - Verification code: six boxes that accept typing, Backspace, arrows, paste and one-time-code autofill.
 - Touch targets at least 40px for primary controls. Motion is reduced to nearly zero under `prefers-reduced-motion`.
 - Text contrast meets WCAG AA in both themes.

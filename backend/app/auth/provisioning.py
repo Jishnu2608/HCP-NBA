@@ -11,14 +11,14 @@ The shape of an assignment follows from the account's permissions:
   SELF_PATIENTS_READ      one own HCP record      (user.hcp_id)
 """
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, extract, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.errors import AuthError
 from app.core.config import get_settings
 from app.core.permissions import Permission as P
 from app.core.permissions import can
-from app.models import CareManagerPatient, Hcp, Nba, Patient, RepHcp, User
+from app.models import AuditLog, CareManagerPatient, Hcp, Invitation, Nba, Patient, RepHcp, User
 from app.models.enums import AccountSource, NbaStatus, RiskSegment, TargetType
 
 PATIENTS, HCPS, OWN_PATIENT, OWN_HCP = "patients", "hcps", "patient", "hcp"
@@ -113,10 +113,16 @@ class AssignmentService:
         if kind == OWN_PATIENT and user.patient_id is None:
             linked = select(User.patient_id).where(User.patient_id.is_not(None))
             ready = _ready_targets(TargetType.PATIENT)
+            order = [Patient.patient_id.in_(ready).desc()]
+            if user.date_of_birth is not None:
+                # The synthetic record keeps its own birth date (a model feature); prefer one
+                # close in age to the account holder so the profile reads plausibly.
+                years = func.abs(extract("year", Patient.birth_date) - user.date_of_birth.year)
+                order.append(case((years > 5, 5), else_=years))
             record = db.scalar(
                 select(Patient)
                 .where(Patient.patient_id.not_in(linked))
-                .order_by(Patient.patient_id.in_(ready).desc(), Patient.patient_id)
+                .order_by(*order, Patient.patient_id)
             )
             if record:
                 user.patient_id = record.patient_id
@@ -236,30 +242,60 @@ class AssignmentService:
             raise AuthError(409, "record_in_use", "That record is linked to another account.")
 
     # --- surviving a demo reset --------------------------------------------------
+    #
+    # A reset rebuilds the demo data. What is not demo data is carried across: registered
+    # and invited accounts with their assignments, invitations (with lineage), and the
+    # security part of the audit trail. Account ids can change in a rebuild, so every
+    # reference between accounts is saved by email and re-linked afterwards, and all
+    # sessions end (sessions.revoke_everyone) so no old cookie can land on a new id.
 
-    def snapshot(self, db: Session) -> list[dict]:
-        """Registered accounts and what they were assigned, taken before the data is rebuilt."""
-        saved = []
-        for user in db.scalars(select(User).where(User.source == AccountSource.SIGNUP)):
-            saved.append(
+    KEPT_SOURCES = (AccountSource.SIGNUP, AccountSource.INVITATION)
+    SECURITY_AUDIT = ("user", "auth", "invitation")
+
+    def snapshot(self, db: Session) -> dict:
+        emails = dict(db.execute(select(User.id, User.email)).all())
+        accounts = []
+        for user in db.scalars(select(User).where(User.source.in_(self.KEPT_SOURCES))):
+            account = {c.name: getattr(user, c.name) for c in User.__table__.columns}
+            account.pop("id")
+            account["invited_by_user_id"] = None
+            accounts.append(
                 {
-                    "account": {
-                        c.name: getattr(user, c.name)
-                        for c in User.__table__.columns
-                        if c.name != "id"
-                    },
+                    "account": account,
+                    "invited_by": emails.get(user.invited_by_user_id),
                     "patient_ids": self.patient_ids(db, user),
                     "hcp_ids": self.hcp_ids(db, user),
                 }
             )
-        return saved
+        invites = []
+        for inv in db.scalars(select(Invitation).order_by(Invitation.id)):
+            row = {c.name: getattr(inv, c.name) for c in Invitation.__table__.columns}
+            invites.append(
+                {
+                    "row": row,
+                    "invited_by": emails.get(inv.invited_by_user_id),
+                    "revoked_by": emails.get(inv.revoked_by_user_id),
+                    "claimed": emails.get(inv.claimed_user_id),
+                }
+            )
+        audit_rows = [
+            {c.name: getattr(a, c.name) for c in AuditLog.__table__.columns if c.name != "id"}
+            for a in db.scalars(
+                select(AuditLog)
+                .where(AuditLog.entity_type.in_(self.SECURITY_AUDIT), AuditLog.nba_id.is_(None))
+                .order_by(AuditLog.id)
+            )
+        ]
+        return {"accounts": accounts, "invitations": invites, "audit": audit_rows}
 
-    def restore(self, db: Session, saved: list[dict]) -> None:
-        """Re-creates registered accounts after a rebuild. Synthetic ids are deterministic, so
-        earlier assignments are re-linked where the record still exists at the new scale."""
+    def restore(self, db: Session, saved: dict) -> None:
+        """Re-creates kept accounts, invitations and security audit rows after a rebuild.
+        Synthetic ids are deterministic, so earlier assignments are re-linked where the
+        record still exists at the new scale."""
         patients = set(db.scalars(select(Patient.patient_id)))
         hcps = set(db.scalars(select(Hcp.hcp_id)))
-        for item in saved:
+        db.add_all(AuditLog(**row) for row in saved.get("audit", []))
+        for item in saved.get("accounts", []):
             account = dict(item["account"])
             if account["patient_id"] not in patients:
                 account["patient_id"] = None
@@ -278,6 +314,33 @@ class AssignmentService:
                 if p in patients
             )
             db.add_all(RepHcp(rep_user_id=user.id, hcp_id=h) for h in item["hcp_ids"] if h in hcps)
+        db.flush()
+
+        ids = dict(db.execute(select(User.email, User.id)).all())
+        for item in saved.get("accounts", []):
+            if item["invited_by"] in ids:
+                user = db.get(User, ids[item["account"]["email"]])
+                user.invited_by_user_id = ids[item["invited_by"]]
+        new_ids: dict[int, Invitation] = {}
+        for item in saved.get("invitations", []):
+            if item["invited_by"] not in ids:
+                continue  # the inviter no longer exists at this scale
+            row = dict(item["row"])
+            old_id = row.pop("id")
+            row.update(
+                invited_by_user_id=ids[item["invited_by"]],
+                revoked_by_user_id=ids.get(item["revoked_by"]),
+                claimed_user_id=ids.get(item["claimed"]),
+                replaced_by_id=None,
+            )
+            inv = Invitation(**row)
+            db.add(inv)
+            new_ids[old_id] = inv
+        db.flush()
+        for item in saved.get("invitations", []):
+            old = item["row"]
+            if old["id"] in new_ids and old["replaced_by_id"] in new_ids:
+                new_ids[old["id"]].replaced_by_id = new_ids[old["replaced_by_id"]].id
         db.flush()
 
 

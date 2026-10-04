@@ -1,13 +1,14 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
+from app.api.schemas import StrictBody
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
@@ -35,22 +36,22 @@ readers = require_permission(
 )
 
 
-class ApproveBody(BaseModel):
+class ApproveBody(StrictBody):
     draft_id: int | None = None
 
 
-class RejectBody(BaseModel):
+class RejectBody(StrictBody):
     reason: str = Field(min_length=3, max_length=500)
 
 
-class OutcomeBody(BaseModel):
+class OutcomeBody(StrictBody):
     outcome: Literal["completed", "declined", "no_response"]
     note: str | None = Field(default=None, max_length=500)
 
 
-class DraftEdit(BaseModel):
-    subject: str | None = None
-    body: str = Field(min_length=1)
+class DraftEdit(StrictBody):
+    subject: str | None = Field(default=None, max_length=200)
+    body: str = Field(min_length=1, max_length=4000)
 
 
 def _scoped(db: Session, user: User, nba_id: int) -> Nba:

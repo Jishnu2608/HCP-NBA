@@ -2,9 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_permission
 from app.core.clock import get_today
 from app.core.config import get_settings
 from app.core.db import Base, get_db
+from app.core.permissions import Permission
+from app.models import User
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -15,8 +18,11 @@ def health() -> dict[str, str]:
 
 
 @router.get("/meta")
-def meta(db: Session = Depends(get_db)) -> dict:
-    """Environment, demo clock and row counts per table."""
+def meta(
+    _: User = Depends(require_permission(Permission.MODELS_READ)), db: Session = Depends(get_db)
+) -> dict:
+    """Environment, demo clock and row counts per table. Technical reviewers only: row counts
+    of the account and audit tables are not public information."""
     settings = get_settings()
     counts = {
         table.name: db.scalar(select(func.count()).select_from(table))

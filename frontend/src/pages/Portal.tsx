@@ -32,6 +32,7 @@ import {
   Loading,
   Meter,
   PageHeader,
+  PersonName,
   Switch,
   channelName,
   cx,
@@ -389,6 +390,7 @@ export function MyPatients() {
 }
 
 export function MyProfile() {
+  const { user } = useAuth();
   const profile = useQuery({ queryKey: ["me"], queryFn: () => api("/me/profile") });
   if (profile.isLoading) return <Loading label="Loading your profile" rows={3} />;
   if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="Your profile could not be loaded" />;
@@ -400,8 +402,16 @@ export function MyProfile() {
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
           <Avatar name={p.name} size="lg" />
           <div className="min-w-0">
-            <div className="text-xl font-semibold text-ink">{p.name}</div>
-            <div className="mt-0.5 text-sm text-ink-muted">{p.specialty}</div>
+            <PersonName
+              name={p.name}
+              verified={user?.professionally_verified}
+              source={user?.verification_source}
+              className="max-w-full text-xl font-semibold text-ink"
+            />
+            <div className="mt-0.5 text-sm text-ink-muted">
+              {p.specialty}
+              {user?.professionally_verified && " · Verified"}
+            </div>
           </div>
         </div>
         <dl className="mt-6 grid gap-4 border-t border-line pt-5 sm:grid-cols-2">

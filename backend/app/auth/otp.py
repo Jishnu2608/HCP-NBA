@@ -18,7 +18,6 @@ import hashlib
 import hmac
 import logging
 import secrets
-import smtplib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import EmailMessage
@@ -29,6 +28,9 @@ from sqlalchemy.orm import Session
 
 from app.auth.errors import AuthError
 from app.core.config import Settings, get_settings
+from app.core.security import derived_key
+from app.mail.templates import otp_email
+from app.mail.transport import SmtpTransport
 from app.models import OtpChallenge, User
 from app.models.tables import utcnow
 
@@ -51,41 +53,27 @@ class EmailOtpSender:
         self.settings = settings
 
     def build(self, user: User, code: str, minutes: int) -> EmailMessage:
-        message = EmailMessage()
-        message["Subject"] = f"{code} is your Next Best Action verification code"
-        message["From"] = self.settings.smtp_from or self.settings.smtp_user
-        message["To"] = user.email
-        message.set_content(
-            f"Hello {user.display_name},\n\n"
-            f"Your verification code is {code}.\n"
-            f"It expires in {minutes} minutes and can be used once.\n\n"
-            "If you did not create an account, you can ignore this message.\n"
-        )
-        return message
+        return otp_email(user.email, user.display_name, code, minutes)
 
     def send(self, user: User, code: str, minutes: int) -> None:
-        s = self.settings
-        with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
-            server.starttls()
-            if s.smtp_user:
-                server.login(s.smtp_user, s.smtp_password or "")
-            server.send_message(self.build(user, code, minutes))
+        SmtpTransport(self.settings).deliver(self.build(user, code, minutes))
 
 
 class LocalDemoOtpSender:
-    """Development only: nothing is sent. The code is logged and shown on the verify screen."""
+    """Local development only: nothing is sent and the code is shown on the verify screen.
+    The code itself is never written to the log."""
 
     channel = DEVELOPMENT
 
     def send(self, user: User, code: str, minutes: int) -> None:
-        log.warning("DEVELOPMENT one-time code for %s: %s (no email sent)", user.email, code)
+        log.warning("Development one-time code issued for user %s (no email sent)", user.id)
 
 
 def get_sender(settings: Settings | None = None) -> OtpSender:
     settings = settings or get_settings()
     if settings.smtp_host:
         return EmailOtpSender(settings)
-    if settings.demo_mode:
+    if settings.show_development_codes:
         return LocalDemoOtpSender()
     raise AuthError(503, "otp_delivery_unavailable", "Email delivery is not configured.")
 
@@ -100,8 +88,7 @@ class Issued:
 
 
 def _hash(user: User, code: str) -> str:
-    key = get_settings().secret("jwt_secret").encode()
-    return hmac.new(key, f"{user.id}:{code}".encode(), hashlib.sha256).hexdigest()
+    return hmac.new(derived_key("otp"), f"{user.id}:{code}".encode(), hashlib.sha256).hexdigest()
 
 
 class OTPService:

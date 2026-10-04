@@ -17,15 +17,16 @@ import { ROLE_LABEL, useAuth } from "./auth";
 import AccessDenied from "./pages/AccessDenied";
 import { BrandMark } from "./pages/AuthLayout";
 import { AppErrorBoundary, ErrorScreen } from "./pages/ErrorPage";
+import Invite from "./pages/Invite";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import VerifyOtp from "./pages/VerifyOtp";
 import type { Permission } from "./permissions";
-import { NAV_GROUPS, ROUTES } from "./routes";
+import { NAV_GROUPS, ROUTES, groupOf } from "./routes";
 import { preferences } from "./session";
 import { ThemeToggle } from "./theme";
-import { Avatar, IconButton, Loading, Skeleton, cx, fmtDate } from "./ui";
+import { Avatar, IconButton, Loading, PersonName, Skeleton, cx, fmtDate } from "./ui";
 
 const PUBLIC_PATHS = ["/", "/login", "/signup", "/signup/verify"];
 
@@ -40,7 +41,7 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
   return (
     <nav aria-label="Main" className="scroll-quiet flex-1 overflow-y-auto px-3 py-2">
       {NAV_GROUPS.map((group) => {
-        const entries = items.filter((r) => r.group === group.key);
+        const entries = items.filter((r) => groupOf(r, can) === group.key);
         if (!entries.length) return null;
         return (
           <div key={group.key} className="mb-4">
@@ -110,9 +111,12 @@ function AccountBlock({ collapsed }: { collapsed: boolean }) {
         </span>
         {!collapsed && (
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-white" title={user.name}>
-              {user.name}
-            </div>
+            <PersonName
+              name={user.name}
+              verified={user.professionally_verified}
+              source={user.verification_source}
+              className="max-w-full text-sm font-semibold text-white"
+            />
             <div className="truncate text-xs text-nav-ink-muted" title={ROLE_LABEL[user.role]}>
               {ROLE_LABEL[user.role]}
             </div>
@@ -192,14 +196,18 @@ function AccountMenu() {
         >
           <div className="border-b border-line px-4 py-3">
             <div className="text-xs text-ink-subtle">Signed in as</div>
-            <div className="mt-0.5 truncate text-sm font-semibold text-ink" title={user.name}>
-              {user.name}
-            </div>
+            <PersonName
+              name={user.name}
+              verified={user.professionally_verified}
+              source={user.verification_source}
+              className="mt-0.5 max-w-full text-sm font-semibold text-ink"
+            />
             <div className="truncate text-[13px] text-ink-muted" title={user.email}>
               {user.email}
             </div>
             <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary-soft px-2 py-0.5 text-xs font-semibold text-primary-ink">
               <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> {ROLE_LABEL[user.role]}
+              {user.professionally_verified && " · Verified"}
             </div>
             <div className="mt-3 sm:hidden">
               <DemoDate />
@@ -392,6 +400,16 @@ export default function App() {
   const { user, loading } = useAuth();
   const location = useLocation();
   if (loading) return <Restoring />;
+
+  // An invitation link opens on its own page whether or not someone is signed in, so a
+  // person signed in as another account is told so instead of being redirected away.
+  if (matchPath("/invite/:token", location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/invite/:token" element={<Invite />} />
+      </Routes>
+    );
+  }
 
   if (!user) {
     // Signed out: only the public pages exist. Anything else goes to sign-in, and the

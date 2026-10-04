@@ -1,5 +1,15 @@
-// Thin fetch wrapper. Attaches the session token and turns API errors into ApiError.
-import { session } from "./session";
+// Thin fetch wrapper. Turns API errors into ApiError.
+//
+// The session lives in an HttpOnly cookie that this code cannot read; the browser sends it
+// with every same-origin request. For state-changing requests the server also requires the
+// CSRF token from the readable `nba_csrf` cookie to be echoed in a header, which another
+// website cannot do.
+const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function csrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)nba_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 // API payloads are plain JSON shaped by the backend serializers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -38,22 +48,24 @@ export const setSessionLostHandler = (handler: () => void) => {
 
 export async function api<T = Json>(
   path: string,
-  options: { method?: string; body?: unknown; form?: Record<string, string> } = {},
+  options: { method?: string; body?: unknown } = {},
 ): Promise<T> {
+  const method = (options.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {};
-  const token = session.token();
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (!SAFE.has(method)) {
+    // No token yet in a brand-new browser: one harmless read makes the server issue it.
+    if (!csrfToken()) await fetch("/api/health", { credentials: "same-origin" }).catch(() => undefined);
+    const token = csrfToken();
+    if (token) headers["X-CSRF-Token"] = token;
+  }
   let body: BodyInit | undefined;
-  if (options.form) {
-    headers["Content-Type"] = "application/x-www-form-urlencoded";
-    body = new URLSearchParams(options.form).toString();
-  } else if (options.body !== undefined) {
+  if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(options.body);
   }
   let response: Response;
   try {
-    response = await fetch(`/api${path}`, { method: options.method ?? "GET", headers, body });
+    response = await fetch(`/api${path}`, { method, headers, body, credentials: "same-origin" });
   } catch {
     // Offline, server down, connection reset: status 0 marks a network failure.
     throw new ApiError(0, { code: "network", message: "The server could not be reached." });
@@ -63,7 +75,7 @@ export async function api<T = Json>(
     : null;
   if (!response.ok) {
     const error = new ApiError(response.status, payload?.detail ?? response.statusText);
-    if (response.status === 401 && token && error.code === "not_authenticated") onSessionLost();
+    if (response.status === 401 && error.code === "not_authenticated") onSessionLost();
     throw error;
   }
   return payload as T;

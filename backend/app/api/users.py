@@ -4,19 +4,22 @@ There is deliberately no endpoint that changes a role. Assignments (data scope) 
 are editable; permissions follow only from the role the account was created with.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
+from app.api.schemas import StrictBody
+from app.auth import invitations
 from app.auth.errors import AuthError
 from app.auth.provisioning import HCPS, OWN_HCP, OWN_PATIENT, PATIENTS, assignments
 from app.auth.sessions import sessions
+from app.core import age
 from app.core.db import get_db
 from app.core.permissions import Permission, permissions_for
 from app.models import Hcp, Patient, User
@@ -27,18 +30,19 @@ router = APIRouter(prefix="/api/admin/users", tags=["users"])
 manager = require_permission(Permission.USER_MANAGE)
 
 
-class StatusBody(BaseModel):
+class StatusBody(StrictBody):
     status: Literal["active", "disabled"]
 
 
-class AssignmentBody(BaseModel):
-    patient_ids: list[str] | None = None
-    hcp_ids: list[str] | None = None
-    patient_id: str | None = None
-    hcp_id: str | None = None
+class AssignmentBody(StrictBody):
+    patient_ids: list[Annotated[str, Field(max_length=16)]] | None = Field(None, max_length=500)
+    hcp_ids: list[Annotated[str, Field(max_length=16)]] | None = Field(None, max_length=500)
+    patient_id: str | None = Field(None, max_length=16)
+    hcp_id: str | None = Field(None, max_length=16)
 
 
 def _summary(db: Session, user: User) -> dict:
+    inviter = db.get(User, user.invited_by_user_id) if user.invited_by_user_id else None
     return {
         "id": user.id,
         "name": user.display_name,
@@ -46,6 +50,12 @@ def _summary(db: Session, user: User) -> dict:
         "role": user.role,
         "status": user.status,
         "verified": user.verified,
+        "email_verified": user.verified,
+        "professionally_verified": user.professionally_verified,
+        "verification_source": user.verification_source,
+        # Never the date of birth itself: only whether the holder is a minor.
+        "age_band": age.age_band(user),
+        "invited_by": invitations.person(inviter),
         "source": user.source,
         "created_at": user.created_at,
         "last_login_at": user.last_login_at,
@@ -53,8 +63,20 @@ def _summary(db: Session, user: User) -> dict:
     }
 
 
+def _lineage(db: Session, user: User) -> list[dict]:
+    """Who brought this account in, back to the administrator or the platform."""
+    chain, seen, current = [], set(), user
+    while current is not None and current.id not in seen:
+        seen.add(current.id)
+        chain.append(invitations.person(current))
+        current = db.get(User, current.invited_by_user_id) if current.invited_by_user_id else None
+    return list(reversed(chain))
+
+
 def _detail(db: Session, user: User) -> dict:
     result = _summary(db, user)
+    result["lineage"] = _lineage(db, user)
+    result["professionally_verified_at"] = user.professionally_verified_at
     result["permissions"] = sorted(permissions_for(user.role))
     kind = result["assignment"]["kind"]
     if kind == PATIENTS:
@@ -117,7 +139,11 @@ def list_users(
     rows = db.scalars(
         select(User)
         .where(*where)
-        .order_by((User.source == AccountSource.SIGNUP).desc(), User.created_at.desc(), User.id)
+        .order_by(
+            User.source.in_((AccountSource.SIGNUP, AccountSource.INVITATION)).desc(),
+            User.created_at.desc(),
+            User.id,
+        )
         .limit(limit)
         .offset(offset)
     ).all()
@@ -142,8 +168,11 @@ def set_status(
         raise AuthError(409, "not_verified", "This account has not verified its email yet.")
     previous = user.status
     user.status = body.status
+    revoked = 0
     if body.status == AccountStatus.DISABLED:
-        sessions.revoke(user)  # signs the account out everywhere, immediately
+        sessions.revoke_all(db, user)  # signs the account out everywhere, immediately
+        # Invitations it sent can no longer be accepted: its authority has ended.
+        revoked = invitations.revoke_from(db, user, admin)
     audit.record(
         db,
         "account_status_changed",
@@ -151,7 +180,12 @@ def set_status(
         user.id,
         actor=admin.username,
         actor_role=admin.role,
-        detail={"account": user.email, "previous": previous, "new": body.status},
+        detail={
+            "account": user.email,
+            "previous": previous,
+            "new": body.status,
+            "invitations_revoked": revoked,
+        },
     )
     db.commit()
     return _detail(db, user)

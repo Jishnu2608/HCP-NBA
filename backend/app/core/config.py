@@ -39,7 +39,15 @@ class Settings(BaseSettings):
     demo_password: str | None = None
 
     jwt_algorithm: str = "HS256"
+    # Sessions: absolute lifetime and idle timeout (server-side, see auth/sessions.py).
     access_token_minutes: int = 480
+    session_idle_minutes: int = 60
+
+    # Origins allowed to send state-changing requests besides the request's own host
+    # (comma-separated, e.g. "http://localhost:5173" for the Vite dev server).
+    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Off only in tests; limits are per process.
+    rate_limit_enabled: bool = True
 
     # "template" needs no key and no network; other providers are plugged in later.
     llm_provider: str = "template"
@@ -66,9 +74,34 @@ class Settings(BaseSettings):
     otp_resend_seconds: int = 30
     verification_token_minutes: int = 30
 
+    # Invitations for professional roles.
+    invitation_ttl_hours: int = 72
+    # Base of links in emails (set to a LAN address to open them on a phone).
+    public_base_url: str = "http://127.0.0.1:8000"
+    # Shown in emails as the contact for questions; falls back to the sender address.
+    support_email: str | None = None
+
+    # Age below which an account holder is a minor. Invited professionals must be at least
+    # this age; patients below it may register and are flagged.
+    minor_age: int = 18
+
     # What a newly verified account is given from the synthetic pool.
     signup_panel_patients: int = 30
     signup_panel_hcps: int = 15
+
+    @property
+    def is_local(self) -> bool:
+        return self.environment == "local"
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Cookies are Secure everywhere except a local run over plain http."""
+        return not self.is_local
+
+    @property
+    def show_development_codes(self) -> bool:
+        """An on-screen one-time code is allowed only for a local run without a mail server."""
+        return self.demo_mode and self.is_local and not self.smtp_host
 
     def secret(self, name: str) -> str:
         """A required secret, or a clear error naming the variable that is missing."""

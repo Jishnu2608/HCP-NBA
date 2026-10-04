@@ -4,7 +4,7 @@ About 14 minutes. Start from the seeded state (Engine page, "Reset to seeded dat
 
 Every step signs in with a real account: email and password, no role picker. Demo accounts share the password in `NBA_DEMO_PASSWORD`; the administrator is `admin@admin.com` with the password in `NBA_ADMIN_PASSWORD`. Both are in the git-ignored `.env` file, not in this repository.
 
-Tip: each browser tab holds its own session. Keep two tabs open (for example care manager and patient) to show both sides of one interaction.
+Tip: the session lives in a browser cookie, so all tabs of one browser share one account. To show two sides of one interaction at once (for example care manager and patient), use a normal window and a private window, or two browser profiles.
 
 ## 1. The problem and the idea (1 minute)
 
@@ -82,11 +82,12 @@ Log in: `admin@admin.com`
 
 ## 7. Accounts and access (2 minutes)
 
-1. Sign out. *Sign up* as a new **Care Manager** with any email. The verify page shows the code in a development box (or emails it, if SMTP is configured). Enter it.
-2. You land on the adherence queue with a panel of 30 patients. No role was chosen after signing in; it came from the account.
-3. Type `/admin` or `/hcps` in the address bar: Access Denied. The API refuses the data too.
-4. Log in as `admin@admin.com` → *Users & assignments*. Open the new account: role and permissions are shown but locked; assignments and status are editable. Remove some patients and save, or disable the account.
-5. Note what the administrator cannot do: approve content. Only Compliance can.
+1. As `admin@admin.com` → *Invitations*: invite an email you can read as an **HCP**. (Without email configured, the link appears in a development box.)
+2. Sign out, open the invitation link. The role is shown and cannot be changed; the email is fixed. Enter name, date of birth and a password; enter the emailed code. You land on the HCP inbox with the blue **Verified** mark next to your name.
+3. As that HCP → *Team*: only Medical Representative and Care Manager can be invited. Invite a care manager the same way; the administrator's *Users & assignments* now shows the chain Administrator → HCP → Care Manager.
+4. *Patient sign-up* on the landing page creates a patient account with no role choice and no Verified mark.
+5. Type `/admin` or `/hcps` in the address bar as the patient: Access Denied. The API refuses the data too.
+6. As `admin@admin.com` → *Users & assignments*: role and permissions are locked; assignments and status are editable. Note what the administrator cannot do: approve content. Only Compliance can.
 
 ## Role access proof
 
@@ -95,4 +96,5 @@ Log in: `admin@admin.com`
 - An HCP sees their own profile without commercial fields (segment, value score).
 - Compliance cannot approve a recommendation; only Compliance can approve content; the administrator cannot.
 - Changing an account's assignments never changes its role or permissions.
-- A signed-out or disabled account's token stops working immediately.
+- A signed-out or disabled account's session stops working immediately.
+- An HCP cannot invite an MLR reviewer or another HCP, even with a hand-made request: the API answers 403.

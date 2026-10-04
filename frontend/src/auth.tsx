@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 import { ApiError, api, post, setSessionLostHandler } from "./api";
 import type { Permission } from "./permissions";
-import { pendingSignup, session } from "./session";
+import { pendingSignup } from "./session";
 import type { Challenge } from "./session";
 
 export type Role = "admin" | "compliance" | "medical_rep" | "care_manager" | "hcp" | "patient";
@@ -18,6 +18,10 @@ export interface User {
   home: string;
   hcp_id: string | null;
   patient_id: string | null;
+  email_verified: boolean;
+  /** Set by the server only after an authorised invitation (or for platform-provisioned staff). */
+  professionally_verified: boolean;
+  verification_source: "invitation" | "system" | null;
 }
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -29,12 +33,21 @@ export const ROLE_LABEL: Record<Role, string> = {
   patient: "Patient",
 };
 
+/** Patient self-registration. There is no role field: professionals join by invitation. */
 export interface SignupForm {
   name: string;
   email: string;
+  date_of_birth: string;
   password: string;
   confirm_password: string;
-  role: string;
+}
+
+export interface AcceptForm {
+  token: string;
+  name: string;
+  date_of_birth: string;
+  password: string;
+  confirm_password: string;
 }
 
 interface AuthState {
@@ -44,38 +57,37 @@ interface AuthState {
   /** Resolves to the account, or to a pending challenge if the email is not verified yet. */
   login: (email: string, password: string) => Promise<User | Challenge>;
   signup: (form: SignupForm) => Promise<Challenge>;
+  acceptInvitation: (form: AcceptForm) => Promise<Challenge>;
   verify: (code: string) => Promise<User>;
   resend: () => Promise<Challenge>;
   logout: () => Promise<void>;
-  /** Replace the session with one the server just issued (after a demo reset). */
-  adopt: (result: { access_token: string; user: User }) => User;
+  /** Use the account the server just signed in (after a demo reset). */
+  adopt: (result: { user: User }) => User;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(Boolean(session.token()));
+  const [loading, setLoading] = useState(true);
   const client = useQueryClient();
 
   const drop = useCallback(() => {
-    session.end();
     client.clear();
     setUser(null);
   }, [client]);
 
   useEffect(() => {
     setSessionLostHandler(drop);
-    if (!session.token()) return;
+    // The session cookie is invisible to this code, so ask the server who is signed in.
     api<User>("/auth/me")
       .then(setUser)
-      .catch(() => session.end())
+      .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, [drop]);
 
   const adopt = useCallback(
-    (result: { access_token: string; user: User }) => {
-      session.start(result.access_token);
+    (result: { user: User }) => {
       pendingSignup.clear();
       client.clear(); // never show one account data fetched as another
       setUser(result.user);
@@ -92,9 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       adopt,
       login: async (email, password) => {
         try {
-          return adopt(
-            await api("/auth/login", { method: "POST", form: { username: email, password } }),
-          );
+          return adopt(await post("/auth/login", { email, password }));
         } catch (error) {
           if (error instanceof ApiError && error.code === "verification_required") {
             return pendingSignup.save(error.detail);
@@ -103,25 +113,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
       signup: async (form) => pendingSignup.save(await post("/auth/signup", form)),
-      verify: async (code) => {
-        const pending = pendingSignup.get();
-        if (!pending) throw new Error("Nothing to verify. Sign up or sign in first.");
-        return adopt(
-          await post("/auth/verify-otp", {
-            verification_token: pending.verification_token,
-            code,
-          }),
-        );
-      },
-      resend: async () => {
-        const pending = pendingSignup.get();
-        if (!pending) throw new Error("Nothing to verify. Sign up or sign in first.");
-        return pendingSignup.save(
-          await post("/auth/resend-otp", { verification_token: pending.verification_token }),
-        );
-      },
+      acceptInvitation: async (form) => pendingSignup.save(await post("/invitations/accept", form)),
+      verify: async (code) => adopt(await post("/auth/verify-otp", { code })),
+      resend: async () => pendingSignup.save(await post("/auth/resend-otp")),
       logout: async () => {
-        // Ends the session on the server first, so the token is dead even if copied.
+        // Ends the session on the server, so the cookie is dead even if copied.
         await post("/auth/logout").catch(() => undefined);
         drop();
       },
@@ -138,5 +134,4 @@ export function useAuth(): AuthState {
   return ctx;
 }
 
-export const isChallenge = (value: User | Challenge): value is Challenge =>
-  "verification_token" in value;
+export const isChallenge = (value: User | Challenge): value is Challenge => "expiresAt" in value;

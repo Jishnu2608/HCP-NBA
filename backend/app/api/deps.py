@@ -1,24 +1,22 @@
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.auth.sessions import sessions
+from app.auth.sessions import SESSION_COOKIE, sessions
 from app.core.db import get_db
 from app.core.permissions import Permission, can_any
 from app.models import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """The identity seam. Everything downstream depends only on the returned account, so an
-    enterprise identity provider replaces `sessions.resolve` and nothing else changes."""
-    user = sessions.resolve(db, token)
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """The identity seam. The session comes from the HttpOnly cookie and is checked against
+    the server-side session table; everything downstream depends only on the returned
+    account, so an enterprise identity provider replaces `sessions.resolve` and nothing else
+    changes."""
+    user = sessions.resolve(db, request.cookies.get(SESSION_COOKIE))
     if user is None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             {"code": "not_authenticated", "message": "Sign in to continue."},
-            headers={"WWW-Authenticate": "Bearer"},
         )
     return user
 

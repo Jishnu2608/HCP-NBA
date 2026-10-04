@@ -6,8 +6,20 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api import analytics, auth, content, governance, me, nba, people, system, users
+from app.api import (
+    analytics,
+    auth,
+    content,
+    governance,
+    invitations,
+    me,
+    nba,
+    people,
+    system,
+    users,
+)
 from app.auth.service import ensure_system_admin
+from app.core import http_security
 from app.core.config import REPO_ROOT, get_settings
 from app.core.db import SessionLocal
 
@@ -27,21 +39,26 @@ async def lifespan(_: FastAPI):
     yield
 
 
+# The interactive API reference is a development aid: it is not served outside a local run.
 app = FastAPI(
     lifespan=lifespan,
     title=settings.app_name,
     version="0.1.0",
     description="Explainable, compliance-gated next-best-action engine "
     "for HCP and patient engagement.",
-    docs_url="/api/docs",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/docs" if settings.is_local else None,
+    redoc_url=None,
+    openapi_url="/api/openapi.json" if settings.is_local else None,
 )
 
-for module in (system, auth, users, nba, people, content, governance, me, analytics):
+ROUTERS = (system, auth, invitations, users, nba, people, content, governance, me, analytics)
+for module in ROUTERS:
     app.include_router(module.router)
 
 # One deployable unit: when the frontend has been built, this process serves it too.
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
+
+http_security.install(app, FRONTEND_DIST / "index.html")
 
 if (FRONTEND_DIST / "index.html").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")

@@ -175,8 +175,9 @@ export default function Admin() {
   const run = useMutation({
     mutationFn: (v: { fn: () => Promise<Json>; label: string }) => v.fn(),
     onSuccess: (data, v) => {
-      const { access_token, user, ...shown } = data;
-      if (access_token) adopt({ access_token, user });
+      // A reset ends every session; the server sets a new session cookie for this browser.
+      const { user, ...shown } = data;
+      if (user) adopt({ user });
       setResult({ label: v.label, data: shown });
       setConfirmReset(false);
       toast(`${v.label}: done`);

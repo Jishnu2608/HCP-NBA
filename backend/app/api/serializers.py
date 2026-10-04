@@ -1,6 +1,8 @@
 """Shapes rows into API responses. One place, so each role sees a consistent set of fields."""
 
+import re
 from datetime import date
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -62,13 +64,15 @@ def content_out(c: Content, today: date) -> dict:
 
 
 def nba_summary(db: Session, nba: Nba, *, with_identity: bool = True) -> dict:
+    """`with_identity=False` is the gate-outcome view (Compliance): the recommendation and
+    its gate results, without anything that identifies the person concerned."""
     name, segment = target_label(db, nba.target_type, nba.target_id)
     content = db.get(Content, nba.content_id) if nba.content_id else None
     return {
         "id": nba.id,
         "cycle_id": nba.cycle_id,
         "target_type": nba.target_type,
-        "target_id": nba.target_id,
+        "target_id": nba.target_id if with_identity else None,
         "target_name": name if with_identity else None,
         "segment": segment if with_identity else None,
         "action": nba.action,
@@ -102,8 +106,27 @@ def draft_out(d: MessageDraft) -> dict:
     }
 
 
-def audit_out(a: AuditLog) -> dict:
-    return {
+_EMAIL = re.compile(r"[^@\s\"']+@[^@\s\"']+\.[^@\s\"']+")
+_RECORD_ID = re.compile(r"\b(PAT_\d+|HCP_\d+)\b")
+
+
+def redact(value: Any) -> Any:
+    """Masks email addresses and patient / HCP ids anywhere inside an audit value."""
+    if isinstance(value, str):
+        return _RECORD_ID.sub("[record]", _EMAIL.sub("[email]", value))
+    if isinstance(value, dict):
+        return {k: redact(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact(v) for v in value]
+    return value
+
+
+def audit_out(
+    a: AuditLog, *, identified: bool = True, verified_actors: set[str] | None = None
+) -> dict:
+    """`identified=False` (readers without audit:read:identified) masks account emails and
+    patient / HCP ids, keeping what happened, when, and the actor's role."""
+    row = {
         "id": a.id,
         "ts": a.ts,
         "nba_id": a.nba_id,
@@ -112,11 +135,16 @@ def audit_out(a: AuditLog) -> dict:
         "action": a.action,
         "actor": a.actor,
         "actor_role": a.actor_role,
+        "actor_verified": a.actor in (verified_actors or set()),
         "compliance_ok": a.compliance_ok,
         "consent_ok": a.consent_ok,
         "reason": a.reason,
         "detail": a.detail,
     }
+    if not identified:
+        for key in ("entity_id", "actor", "reason", "detail"):
+            row[key] = redact(row[key])
+    return row
 
 
 def interaction_out(i: Interaction, contents: dict[str, Content] | None = None) -> dict:
@@ -177,6 +205,7 @@ def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True
             }
             for c in candidates
         ],
+        # Drafts address the person by name, so the gate-outcome view leaves them out.
         drafts=[
             draft_out(d)
             for d in db.scalars(
@@ -184,9 +213,11 @@ def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True
                 .where(MessageDraft.nba_id == nba.id)
                 .order_by(MessageDraft.variant_no)
             )
-        ],
+        ]
+        if with_identity
+        else [],
         audit=[
-            audit_out(a)
+            audit_out(a, identified=with_identity)
             for a in db.scalars(
                 select(AuditLog).where(AuditLog.nba_id == nba.id).order_by(AuditLog.id)
             )

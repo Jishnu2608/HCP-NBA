@@ -22,7 +22,9 @@ def normalize_email(email: str) -> str:
 class UserRepository(Protocol):
     def get(self, user_id: int) -> User | None: ...
     def get_by_email(self, email: str) -> User | None: ...
-    def create_pending(self, *, name: str, email: str, password_hash: str, role: str) -> User: ...
+    def create_pending(
+        self, *, name: str, email: str, password_hash: str, role: str, source: str = ...
+    ) -> User: ...
     def activate(self, user: User) -> None: ...
     def set_status(self, user: User, status: str) -> None: ...
     def record_login(self, user: User) -> None: ...
@@ -38,7 +40,15 @@ class SqlUserRepository:
     def get_by_email(self, email: str) -> User | None:
         return self.db.scalar(select(User).where(User.email == normalize_email(email)))
 
-    def create_pending(self, *, name: str, email: str, password_hash: str, role: str) -> User:
+    def create_pending(
+        self,
+        *,
+        name: str,
+        email: str,
+        password_hash: str,
+        role: str,
+        source: str = AccountSource.SIGNUP,
+    ) -> User:
         email = normalize_email(email)
         user = User(
             username=email,
@@ -48,7 +58,7 @@ class SqlUserRepository:
             role=role,
             verified=False,
             status=AccountStatus.PENDING,
-            source=AccountSource.SIGNUP,
+            source=source,
         )
         self.db.add(user)
         self.db.flush()

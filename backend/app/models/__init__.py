@@ -10,6 +10,7 @@ from app.models.tables import (
     FeatureSnapshot,
     Hcp,
     Interaction,
+    Invitation,
     MedicationFill,
     MessageDraft,
     ModelVersion,
@@ -22,6 +23,7 @@ from app.models.tables import (
     RepHcp,
     SimLatent,
     User,
+    UserSession,
 )
 
 __all__ = [
@@ -36,6 +38,7 @@ __all__ = [
     "FeatureSnapshot",
     "Hcp",
     "Interaction",
+    "Invitation",
     "MedicationFill",
     "MessageDraft",
     "ModelVersion",
@@ -48,4 +51,5 @@ __all__ = [
     "RepHcp",
     "SimLatent",
     "User",
+    "UserSession",
 ]

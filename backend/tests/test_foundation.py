@@ -1,7 +1,9 @@
 from datetime import date
 
 import pytest
+from conftest import auth
 
+from app.auth.service import ensure_system_admin
 from app.core import clock
 from app.core.db import Base
 
@@ -10,7 +12,7 @@ EXPECTED_TABLES = {
     "patient_therapy", "medication_fill", "adherence_snapshot", "consent",
     "content", "content_review", "engine_cycle", "nba", "nba_candidate", "message_draft",
     "interaction", "feature_snapshot", "audit_log", "model_version", "engine_config",
-    "sim_latent", "otp_challenge",
+    "sim_latent", "otp_challenge", "user_session", "invitation",
 }  # fmt: skip
 
 
@@ -24,7 +26,10 @@ def test_health(client):
 
 def test_meta_reports_counts_and_clock(client, db):
     clock.set_today(db, date(2026, 6, 30))
-    body = client.get("/api/meta").json()
+    assert client.get("/api/meta").status_code == 401  # not public
+    ensure_system_admin(db)
+    db.commit()
+    body = client.get("/api/meta", headers=auth(client, "admin")).json()
     assert body["as_of_date"] == "2026-06-30"
     assert body["row_counts"]["engine_config"] == 1
     assert body["row_counts"]["patient"] == 0

@@ -22,6 +22,7 @@ import {
   SearchInput,
   Select,
   KpiGrid,
+  PersonName,
   Stat,
   Toolbar,
   fmtDate,
@@ -39,8 +40,41 @@ const STATUS: Record<string, { tone: Tone; label: string; icon: ReactNode }> = {
 const SOURCE_LABEL: Record<string, string> = {
   system: "System",
   seed: "Demo account",
-  signup: "Registered",
+  signup: "Registered patient",
+  invitation: "Invited",
 };
+const AGE_LABEL: Record<string, string> = { minor: "Minor", adult: "Adult", unknown: "Not recorded" };
+
+/** Who brought an account in, from the administrator (or the platform) down to it. */
+function Lineage({ chain, source }: { chain: Json[]; source: string }) {
+  if (source === "seed" || source === "system") {
+    return <p className="text-sm text-ink-muted">Provisioned by the platform, not through an invitation.</p>;
+  }
+  if (source === "signup") {
+    return <p className="text-sm text-ink-muted">Registered as a patient. Patients do not need an invitation.</p>;
+  }
+  return (
+    <ol className="space-y-2">
+      {chain.map((p, i) => (
+        <li key={p.id} className="flex items-center gap-2.5">
+          <span
+            aria-hidden
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-subtle text-[11px] font-semibold text-ink-muted ring-1 ring-inset ring-line"
+          >
+            {i + 1}
+          </span>
+          <PersonName
+            name={p.name}
+            verified={p.professionally_verified}
+            source={p.verification_source}
+            className="text-sm font-semibold text-ink"
+          />
+          <span className="truncate text-[13px] text-ink-subtle">{p.role_label}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function AccountStatus({ status }: { status: string }) {
   const s = STATUS[status] ?? { tone: "neutral" as Tone, label: titleCase(status), icon: null };
@@ -215,9 +249,12 @@ function AccountPanel({ id }: { id: number }) {
       <div className="flex items-center gap-3">
         <Avatar name={a.name} size="lg" />
         <div className="min-w-0">
-          <div className="truncate text-lg font-semibold text-ink" title={a.name}>
-            {a.name}
-          </div>
+          <PersonName
+            name={a.name}
+            verified={a.professionally_verified}
+            source={a.verification_source}
+            className="max-w-full text-lg font-semibold text-ink"
+          />
           <div className="break-all text-sm text-ink-muted">{a.email}</div>
         </div>
       </div>
@@ -242,7 +279,21 @@ function AccountPanel({ id }: { id: number }) {
         </div>
         <div>
           <dt className="text-[13px] text-ink-subtle">Email verified</dt>
-          <dd className="mt-0.5 text-sm font-semibold text-ink">{a.verified ? "Yes" : "Not yet"}</dd>
+          <dd className="mt-0.5 text-sm font-semibold text-ink">{a.email_verified ? "Yes" : "Not yet"}</dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Professional verification</dt>
+          <dd className="mt-0.5 text-sm font-semibold text-ink">
+            {a.professionally_verified
+              ? a.verification_source === "system"
+                ? "Verified · platform"
+                : "Verified · invitation"
+              : "Not applicable"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Age</dt>
+          <dd className="mt-0.5 text-sm font-semibold text-ink">{AGE_LABEL[a.age_band] ?? "Not recorded"}</dd>
         </div>
         <div>
           <dt className="text-[13px] text-ink-subtle">Created</dt>
@@ -257,9 +308,15 @@ function AccountPanel({ id }: { id: number }) {
       </dl>
 
       <section>
+        <h3 className="mb-2 text-sm font-semibold text-ink">How this account joined</h3>
+        <Lineage chain={a.lineage ?? []} source={a.source} />
+      </section>
+
+      <section className="border-t border-line pt-5">
         <h3 className="text-sm font-semibold text-ink">What this role can do</h3>
         <p className="mt-0.5 text-[13px] text-ink-subtle">
-          Fixed at sign-up. Permissions come only from the role and cannot be edited here.
+          Fixed when the account was created (by its invitation, or patient sign-up). Permissions come only from the
+          role and cannot be edited here.
         </p>
         <ul className="mt-3 flex flex-wrap gap-1.5">
           {a.permissions.map((p: string) => (
@@ -367,9 +424,12 @@ export default function UsersPage() {
         <div className="flex min-w-0 items-center gap-3">
           <Avatar name={u.name} size="sm" />
           <div className="min-w-0">
-            <div className="truncate font-semibold text-ink" title={u.name}>
-              {u.name}
-            </div>
+            <PersonName
+              name={u.name}
+              verified={u.professionally_verified}
+              source={u.verification_source}
+              className="max-w-full font-semibold text-ink"
+            />
             <div className="truncate text-[13px] text-ink-subtle" title={u.email}>
               {u.email}
             </div>
@@ -377,7 +437,36 @@ export default function UsersPage() {
         </div>
       ),
     },
-    { key: "role", header: "Role", cell: (u) => <span className="text-ink">{ROLE_LABEL[u.role as Role]}</span> },
+    {
+      key: "role",
+      header: "Role",
+      cell: (u) => (
+        <span className="text-ink">
+          {ROLE_LABEL[u.role as Role]}
+          {u.age_band === "minor" && (
+            <Badge tone="info" className="ml-1.5">
+              Minor
+            </Badge>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "invited_by",
+      header: "Invited by",
+      hideOnMobile: true,
+      cell: (u) =>
+        u.invited_by ? (
+          <PersonName
+            name={u.invited_by.name}
+            verified={u.invited_by.professionally_verified}
+            source={u.invited_by.verification_source}
+            className="text-ink-muted"
+          />
+        ) : (
+          <span className="text-ink-subtle">{u.source === "seed" || u.source === "system" ? "Platform" : "—"}</span>
+        ),
+    },
     { key: "status", header: "Status", hideOnMobile: true, cell: (u) => <AccountStatus status={u.status} /> },
     { key: "assigned", header: "Assigned", cell: (u) => <span className="text-ink-muted">{assignmentText(u.assignment)}</span> },
     { key: "type", header: "Type", cell: (u) => <span className="text-ink-subtle">{SOURCE_LABEL[u.source]}</span> },
@@ -407,7 +496,8 @@ export default function UsersPage() {
           </Select>
           <Select label="Account type" value={source} onChange={(e) => setSource(e.target.value)} className="lg:w-52">
             <option value="">All account types</option>
-            <option value="signup">Registered</option>
+            <option value="invitation">Invited</option>
+            <option value="signup">Registered patients</option>
             <option value="seed">Demo accounts</option>
             <option value="system">System</option>
           </Select>

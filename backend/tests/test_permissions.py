@@ -4,10 +4,18 @@ import re
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from conftest import ApiClient
 
 from app.core.db import get_db
-from app.core.permissions import ROLE_HOME, ROLE_PERMISSIONS, SIGNUP_ROLES, can
+from app.core.permissions import (
+    INVITE_PERMISSION,
+    PROFESSIONAL_ROLES,
+    PUBLIC_SIGNUP_ROLE,
+    ROLE_HOME,
+    ROLE_PERMISSIONS,
+    can,
+    can_invite,
+)
 from app.core.permissions import Permission as P
 from app.main import app
 from app.models import User
@@ -16,18 +24,45 @@ from app.models.enums import Role
 # Reachable without signing in. Anything else under /api must refuse an anonymous caller.
 PUBLIC = {
     ("GET", "/api/health"),
-    ("GET", "/api/meta"),
-    ("GET", "/api/auth/roles"),
     ("POST", "/api/auth/signup"),
     ("POST", "/api/auth/verify-otp"),
     ("POST", "/api/auth/resend-otp"),
     ("POST", "/api/auth/login"),
+    ("POST", "/api/invitations/lookup"),
+    ("POST", "/api/invitations/accept"),
 }
 
 
 def test_every_role_has_a_permission_set_and_a_home():
     assert set(ROLE_PERMISSIONS) == set(Role) == set(ROLE_HOME)
-    assert Role.ADMIN not in SIGNUP_ROLES and set(SIGNUP_ROLES) == set(Role) - {Role.ADMIN}
+
+
+def test_only_patients_self_register_and_professionals_need_an_invitation():
+    assert PUBLIC_SIGNUP_ROLE == Role.PATIENT
+    assert PROFESSIONAL_ROLES == {Role.HCP, Role.MEDICAL_REP, Role.CARE_MANAGER, Role.COMPLIANCE}
+    assert Role.ADMIN not in INVITE_PERMISSION and Role.PATIENT not in INVITE_PERMISSION
+
+
+# The onboarding authority matrix, spelled out once. Everything not listed is forbidden.
+AUTHORITY = {
+    Role.ADMIN: {Role.HCP, Role.MEDICAL_REP, Role.CARE_MANAGER, Role.COMPLIANCE},
+    Role.HCP: {Role.MEDICAL_REP, Role.CARE_MANAGER},
+}
+
+
+@pytest.mark.parametrize("inviter", list(Role))
+@pytest.mark.parametrize("target", list(Role))
+def test_onboarding_authority_matrix(inviter, target):
+    expected = target in AUTHORITY.get(inviter, set())
+    assert can_invite(User(role=inviter), target) is expected
+
+
+def test_invite_authority_grants_no_data_access():
+    """An HCP who may invite a rep gains nothing a rep can see."""
+    hcp = User(role=Role.HCP)
+    assert not any(
+        can(hcp, p) for p in P if p.startswith(("patient:", "hcp:", "nba:", "content:", "audit"))
+    )
 
 
 def test_admin_has_every_staff_permission_except_content_approval():
@@ -73,7 +108,7 @@ def test_unknown_role_has_no_permissions():
 def test_every_api_route_refuses_anonymous_callers(db):
     app.dependency_overrides[get_db] = lambda: db
     try:
-        client = TestClient(app)
+        client = ApiClient(app)  # passes the CSRF check, so the auth check is what answers
         checked = 0
         for path, operations in app.openapi()["paths"].items():
             for method in operations:
@@ -83,7 +118,7 @@ def test_every_api_route_refuses_anonymous_callers(db):
                 response = client.request(method.upper(), url, json={})
                 assert response.status_code == 401, f"{method.upper()} {path} is not protected"
                 checked += 1
-        assert checked >= 35
+        assert checked >= 40
     finally:
         app.dependency_overrides.clear()
 

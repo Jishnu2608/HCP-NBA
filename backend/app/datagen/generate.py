@@ -14,9 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.auth.provisioning import assignments
 from app.auth.service import ensure_system_admin
+from app.auth.sessions import sessions
 from app.core import clock
 from app.core.config import get_settings
 from app.core.db import Base
+from app.core.permissions import PROFESSIONAL_ROLES
 from app.core.security import hash_password
 from app.datagen import behavior
 from app.datagen import reference as ref
@@ -46,7 +48,9 @@ from app.models.enums import (
     Outcome,
     Role,
     TargetType,
+    VerificationSource,
 )
+from app.models.tables import utcnow
 
 DEFAULT_AS_OF = date(2026, 9, 30)
 
@@ -514,6 +518,9 @@ def build_users(cfg: GenConfig, hcps: list[Hcp], patients: list[Patient]):
     domain = get_settings().demo_email_domain
 
     def user(username, name, role, **kw):
+        # Seeded staff were provisioned by the platform, not invited: they carry the
+        # professional verification with source "system".
+        professional = role in PROFESSIONAL_ROLES
         return User(
             username=username,
             email=f"{username}@{domain}",
@@ -523,6 +530,9 @@ def build_users(cfg: GenConfig, hcps: list[Hcp], patients: list[Patient]):
             verified=True,
             status=AccountStatus.ACTIVE,
             source=AccountSource.SEED,
+            professionally_verified=professional,
+            professionally_verified_at=utcnow() if professional else None,
+            verification_source=VerificationSource.SYSTEM if professional else None,
             **kw,
         )
 
@@ -552,6 +562,7 @@ def build_users(cfg: GenConfig, hcps: list[Hcp], patients: list[Patient]):
             f"{p.first_name} {p.last_name}",
             Role.PATIENT,
             patient_id=p.patient_id,
+            date_of_birth=p.birth_date,
         )
         for p in patients[: len(PATIENT_HEROES)]
     ]
@@ -594,9 +605,11 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
     cfg = cfg or GenConfig()
     if cfg.n_hcps < 12 or cfg.n_patients < len(PATIENT_HEROES):
         raise ValueError("scale too small: need at least 12 HCPs and 6 patients")
-    # Registered accounts are not demo data: carry them across the rebuild.
+    # Registered and invited accounts, invitations and the security audit trail are not
+    # demo data: carry them across the rebuild. No session survives it.
     registered = assignments.snapshot(db)
     wipe(db)
+    sessions.revoke_everyone(db)
     ensure_system_admin(db)
 
     contents = build_content(cfg.as_of)

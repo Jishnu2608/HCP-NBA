@@ -3,8 +3,7 @@
 from datetime import timedelta
 
 import pytest
-from conftest import auth, new_session
-from fastapi.testclient import TestClient
+from conftest import ApiClient, auth, cookie_header, new_session, session_of
 from sqlalchemy import select
 
 from app import cycle
@@ -27,7 +26,7 @@ def env():
     cycle.run(db)
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
-    client = TestClient(app)
+    client = ApiClient(app)
     yield client, db
     app.dependency_overrides.clear()
     db.close()
@@ -355,10 +354,11 @@ def test_reset_restores_the_seeded_starting_point(env):
     done = call(env, "admin", "POST", "/api/admin/reset", json={"patients": 60, "hcps": 12})
     assert done.status_code == 200, done.text
     assert done.json()["as_of_date"] == DEFAULT_AS_OF.isoformat()
-    # Every account row was re-created, so earlier tokens are void; the caller gets a new one.
+    # Every session ended (account ids can change); the caller gets a new one.
+    old = env[0].__dict__["_tokens"]["admin"]
+    assert env[0].get("/api/auth/me", headers=cookie_header(nba_session=old)).status_code == 401
     env[0].__dict__["_tokens"].clear()
-    fresh = done.json()["access_token"]
-    me = env[0].get("/api/auth/me", headers={"Authorization": f"Bearer {fresh}"})
+    me = env[0].get("/api/auth/me", headers=cookie_header(nba_session=session_of(done)))
     assert me.status_code == 200 and me.json()["role"] == "admin"
     assert len(db.scalars(select(Patient.patient_id)).all()) == 60
     assert db.scalars(select(Interaction).where(Interaction.source == "nba")).all() == []

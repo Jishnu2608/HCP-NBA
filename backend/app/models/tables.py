@@ -90,11 +90,22 @@ class User(Base):
     # patient roles this is the single record the account may see as "self".
     hcp_id: Mapped[str | None] = mapped_column(ForeignKey("hcp.hcp_id"))
     patient_id: Mapped[str | None] = mapped_column(ForeignKey("patient.patient_id"))
+    # Email verification: the account holder proved they control the address.
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
-    # system = the fixed admin, seed = demo accounts from the generator, signup = registered.
+    # system = the fixed admin, seed = demo accounts from the generator, signup = a patient
+    # who registered, invitation = a professional onboarded through an invitation.
     source: Mapped[str] = mapped_column(String(16), default="signup")
-    # Bumped on logout or disable: every token issued before the bump stops working.
+    # Kept for the account's lifetime; age and minor status are always derived from it on
+    # the server (core/age.py) and it is never returned to a browser.
+    date_of_birth: Mapped[date | None] = mapped_column(Date)
+    # Professional verification: separate from email verification. Set only by a completed
+    # invitation (or for platform-provisioned seed staff); no endpoint accepts it.
+    professionally_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    professionally_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    verification_source: Mapped[str | None] = mapped_column(String(16))
+    invited_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    # Bumped on password rotation. Sessions themselves live in user_session.
     token_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -114,6 +125,45 @@ class OtpChallenge(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     resend_available_at: Mapped[datetime] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class UserSession(Base):
+    """A signed-in browser. The cookie carries a random token; only its hash is stored."""
+
+    __tablename__ = "user_session"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    user_agent: Mapped[str | None] = mapped_column(String(160))
+
+
+class Invitation(Base):
+    """An invitation to join in a professional role. The role is fixed by the invitation;
+    the token itself is never stored, only its hash."""
+
+    __tablename__ = "invitation"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    email: Mapped[str] = mapped_column(String(254), index=True)
+    role: Mapped[str] = mapped_column(String(32))
+    invited_by_user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    # The inviter's role when the invitation was sent (lineage survives later changes).
+    inviter_role: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    delivery: Mapped[str] = mapped_column(String(16), default="email")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    revoked_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    replaced_by_id: Mapped[int | None] = mapped_column(ForeignKey("invitation.id"))
+    # The pending account created when the recipient filled in the form (before the code).
+    claimed_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
 
 
 class RepHcp(Base):

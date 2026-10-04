@@ -37,6 +37,43 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+# Settings whose value is a fraction between 0 and 1 (inclusive).
+FRACTIONS = {"pdc_threshold", "hcp_tiers"}
+NUMBER_MAX = 100_000
+
+
+def validate_value(key: str, value: Any) -> str | None:
+    """None if `value` has the same shape as the default (same keys, numbers where numbers
+    are expected, within bounds); otherwise a message saying what is wrong. Frequency caps
+    are a hard gate, so a malformed value must never reach the engine."""
+
+    def check(default: Any, given: Any, path: str) -> str | None:
+        where = path or key
+        if isinstance(default, dict):
+            if not isinstance(given, dict) or set(given) != set(default):
+                return f"{where} must have exactly the keys: {', '.join(sorted(default))}."
+            for name, sub in default.items():
+                problem = check(sub, given[name], f"{where}.{name}")
+                if problem:
+                    return problem
+            return None
+        if isinstance(default, bool) or isinstance(given, bool):
+            return None if type(given) is type(default) else f"{where} has the wrong type."
+        if isinstance(default, int | float):
+            if not isinstance(given, int | float) or given != given:  # NaN check
+                return f"{where} must be a number."
+            if given < 0 or given > NUMBER_MAX:
+                return f"{where} must be between 0 and {NUMBER_MAX}."
+            if isinstance(default, int) and not isinstance(given, int) and given != int(given):
+                return f"{where} must be a whole number."
+            if key in FRACTIONS and given > 1:
+                return f"{where} must be between 0 and 1."
+            return None
+        return None if type(given) is type(default) else f"{where} has the wrong type."
+
+    return check(DEFAULTS[key], value, "")
+
+
 def get_config(db: Session, key: str) -> Any:
     row = db.get(EngineConfig, key)
     return row.value if row else DEFAULTS[key]

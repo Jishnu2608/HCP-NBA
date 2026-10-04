@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.core import clock, rbac
@@ -105,6 +106,15 @@ def list_patients(
     }
 
 
+def _viewed(db: Session, user: User, target_type: str, target_id: str) -> None:
+    """Access to a full profile is recorded, as a health-data system must."""
+    audit.record(
+        db, "profile_viewed", target_type.lower(), target_id, actor=user.username,
+        actor_role=user.role,
+    )  # fmt: skip
+    db.commit()
+
+
 @router.get("/patients/{patient_id}")
 def patient_360(
     patient_id: str, user: User = Depends(patient_staff), db: Session = Depends(get_db)
@@ -116,6 +126,7 @@ def patient_360(
     )
     if p is None:
         raise not_found("Patient not found")
+    _viewed(db, user, TargetType.PATIENT, patient_id)
     today = clock.get_today(db)
     therapies = db.scalars(
         select(PatientTherapy).where(PatientTherapy.patient_id == patient_id)
@@ -227,6 +238,7 @@ def hcp_360(hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(
     h = db.scalar(select(Hcp).where(Hcp.hcp_id == hcp_id, rbac.hcp_filter(user, Hcp.hcp_id)))
     if h is None:
         raise not_found("HCP not found")
+    _viewed(db, user, TargetType.HCP, hcp_id)
     today = clock.get_today(db)
     return {
         "hcp_id": h.hcp_id,

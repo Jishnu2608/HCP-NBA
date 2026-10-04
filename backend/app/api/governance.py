@@ -2,21 +2,25 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit, cycle
 from app.api import serializers as out
+from app.api.auth import set_session_cookie
 from app.api.deps import get_current_user, require_permission
+from app.api.schemas import StrictBody
 from app.auth.repository import SqlUserRepository
 from app.auth.service import account_out
 from app.auth.sessions import sessions
 from app.core import clock
 from app.core.db import get_db
-from app.core.engine_config import DEFAULTS, get_config, set_config
-from app.core.permissions import Permission
+from app.core.engine_config import DEFAULTS, get_config, set_config, validate_value
+from app.core.permissions import Permission, can
 from app.datagen.generate import GenConfig, generate
 from app.engagement import delivery, simulator
 from app.models import AuditLog, EngineCycle, ModelVersion, Nba, User
@@ -31,34 +35,37 @@ admin = require_permission(Permission.ENGINE_OPERATE)
 model_readers = require_permission(Permission.MODELS_READ)
 
 
-class AdvanceBody(BaseModel):
+class AdvanceBody(StrictBody):
     days: int = Field(ge=1, le=30)
     retrain: bool = True
 
 
-class BulkSendBody(BaseModel):
+class BulkSendBody(StrictBody):
     limit: int = Field(default=300, ge=1, le=5000)
 
 
-class ResetBody(BaseModel):
+class ResetBody(StrictBody):
     patients: int = Field(default=3000, ge=50, le=20000)
     hcps: int = Field(default=300, ge=12, le=2000)
 
 
-class ConfigValue(BaseModel):
+class ConfigValue(StrictBody):
     value: Any
 
 
 @router.get("/audit")
 def audit_log(
-    action: str | None = None,
+    action: str | None = Query(None, max_length=48),
     nba_id: int | None = None,
-    actor: str | None = None,
+    actor: str | None = Query(None, max_length=254),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    _: User = Depends(auditors),
+    user: User = Depends(auditors),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Readers without audit:read:identified (Compliance) get account emails and patient /
+    HCP ids masked: what happened, when and by which role, without who it was about."""
+    identified = can(user, Permission.AUDIT_READ_IDENTIFIED)
     where = []
     if action:
         where.append(AuditLog.action == action)
@@ -72,8 +79,19 @@ def audit_log(
     )
     rows = db.scalars(
         select(AuditLog).where(*where).order_by(AuditLog.id.desc()).limit(limit).offset(offset)
+    ).all()
+    verified = set(
+        db.scalars(
+            select(User.username).where(
+                User.username.in_({a.actor for a in rows}), User.professionally_verified
+            )
+        )
     )
-    return {"total": total, "actions": actions, "items": [out.audit_out(a) for a in rows]}
+    return {
+        "total": total,
+        "actions": actions,
+        "items": [out.audit_out(a, identified=identified, verified_actors=verified) for a in rows],
+    }
 
 
 @router.get("/admin/config")
@@ -89,10 +107,11 @@ def write_config(
 ) -> dict:
     if key not in DEFAULTS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown setting")
-    if type(body.value) is not type(DEFAULTS[key]) and not (
-        isinstance(body.value, int | float) and isinstance(DEFAULTS[key], int | float)
-    ):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Value has the wrong type")
+    problem = validate_value(key, body.value)
+    if problem:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "invalid_setting", "message": problem}
+        )
     previous = get_config(db, key)
     set_config(db, key, body.value)
     audit.record(
@@ -189,9 +208,14 @@ def advance_clock(
 
 @router.post("/admin/reset")
 def reset_demo(
-    body: ResetBody | None = None, user: User = Depends(admin), db: Session = Depends(get_db)
-) -> dict:
-    """Throw everything away and rebuild the seeded demo dataset from scratch."""
+    request: Request,
+    body: ResetBody | None = None,
+    user: User = Depends(admin),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Throw the demo data away and rebuild it. Registered accounts, invitations and the
+    security audit trail are kept; every session ends (account ids may change), and the
+    caller gets a new one."""
     body = body or ResetBody()
     actor_email = user.email
     generate(db, GenConfig(n_patients=body.patients, n_hcps=body.hcps))
@@ -205,16 +229,22 @@ def reset_demo(
         actor_role=user.role,
         detail={"patients": body.patients, "hcps": body.hcps},
     )
-    db.commit()
     # The rebuild re-creates every account row, so the caller's session is re-issued.
     me = SqlUserRepository(db).get_by_email(actor_email)
-    return {
-        "as_of_date": result.cycle.as_of_date,
-        "cycle_id": result.cycle.id,
-        "stats": result.stats,
-        "access_token": sessions.issue(me),
-        "user": account_out(me),
-    }
+    token = sessions.issue(db, me, request.headers.get("user-agent"))
+    db.commit()
+    response = JSONResponse(
+        jsonable_encoder(
+            {
+                "as_of_date": result.cycle.as_of_date,
+                "cycle_id": result.cycle.id,
+                "stats": result.stats,
+                "user": account_out(me),
+            }
+        )
+    )
+    set_session_cookie(response, token)
+    return response
 
 
 @router.post("/admin/bulk-send")

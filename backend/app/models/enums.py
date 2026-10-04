@@ -19,7 +19,22 @@ class AccountStatus(StrEnum):
 class AccountSource(StrEnum):
     SYSTEM = "system"
     SEED = "seed"
-    SIGNUP = "signup"
+    SIGNUP = "signup"  # patient self-registration
+    INVITATION = "invitation"  # professional onboarded through an invitation
+
+
+class InvitationStatus(StrEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REVOKED = "revoked"
+    EXPIRED = "expired"
+
+
+class VerificationSource(StrEnum):
+    """How a professional account came to be verified (separate from email verification)."""
+
+    INVITATION = "invitation"  # completed an authorised invitation and its one-time code
+    SYSTEM = "system"  # provisioned by the platform (seeded demo staff)
 
 
 class TargetType(StrEnum):

@@ -1,29 +1,26 @@
-// The only module that touches browser storage. Everything else goes through these
-// functions, so moving the session to another store (cookie, in-memory, an identity
-// provider's SDK) is a change to this file alone. (The one exception is the theme
-// bootstrap script in index.html, which must run before the app loads to avoid a flash
-// of the wrong theme; it reads the same THEME_KEY.)
+// The only module that touches browser storage. (The one exception is the theme bootstrap
+// script in index.html, which must run before the app loads to avoid a flash of the wrong
+// theme; it reads the same THEME_KEY.)
 //
-// sessionStorage keeps the session across a page refresh and gives each browser tab its
-// own, which is what lets two roles be shown side by side in a demo. Display preferences
-// (theme, collapsed menu) live in localStorage, so they survive closing the browser.
+// Nothing here is a credential. The session and the verification step live in HttpOnly
+// cookies set by the server, which JavaScript cannot read. This module keeps only what the
+// screens need to display: the pending sign-up's email and timers, and display preferences.
 
-const TOKEN_KEY = "nba.session.token";
 const CHALLENGE_KEY = "nba.signup.challenge";
 const THEME_KEY = "nba.theme";
 const NAV_KEY = "nba.nav.collapsed";
+// Sessions from before the move to cookies; removed on load.
+const LEGACY_SESSION_KEY = "nba.session.token";
 
 const store = () => window.sessionStorage;
+try {
+  store().removeItem(LEGACY_SESSION_KEY);
+} catch {
+  /* storage unavailable */
+}
 
-export const session = {
-  token: (): string | null => store().getItem(TOKEN_KEY),
-  start: (token: string) => store().setItem(TOKEN_KEY, token),
-  end: () => store().removeItem(TOKEN_KEY),
-};
-
-/** A sign-up waiting for its one-time code. Holds no password and no session. */
+/** A sign-up waiting for its one-time code: display data only, no token, no password. */
 export interface Challenge {
-  verification_token: string;
   email: string;
   /** "failed": the email could not be sent; no code exists until a resend succeeds. */
   delivery: "email" | "development" | "failed";
@@ -33,7 +30,6 @@ export interface Challenge {
 }
 
 interface ChallengePayload {
-  verification_token: string;
   email: string;
   delivery?: "email" | "development" | "failed";
   expires_in?: number;
@@ -43,15 +39,18 @@ interface ChallengePayload {
 
 export const pendingSignup = {
   get: (): Challenge | null => {
-    const raw = store().getItem(CHALLENGE_KEY);
-    return raw ? (JSON.parse(raw) as Challenge) : null;
+    try {
+      const raw = store().getItem(CHALLENGE_KEY);
+      return raw ? (JSON.parse(raw) as Challenge) : null;
+    } catch {
+      return null;
+    }
   },
   /** Stores what the API returned; fields missing from a partial update keep their value. */
   save: (payload: ChallengePayload): Challenge => {
     const previous = pendingSignup.get();
     const now = Date.now();
     const challenge: Challenge = {
-      verification_token: payload.verification_token,
       email: payload.email,
       delivery: payload.delivery ?? previous?.delivery ?? "email",
       expiresAt: now + (payload.expires_in ?? 0) * 1000,

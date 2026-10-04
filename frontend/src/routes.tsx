@@ -7,6 +7,7 @@ import {
   Cpu,
   FileCheck2,
   Inbox,
+  MailPlus,
   Pill,
   ScrollText,
   Settings2,
@@ -50,7 +51,8 @@ const MyProfile = page(() => import("./pages/Portal").then((m) => ({ default: m.
 const Queue = page(() => import("./pages/Queue"));
 const UnderTheHood = page(() => import("./pages/UnderTheHood"));
 const UsersPage = page(() => import("./pages/Users"));
-import { CONTENT_READ, HCP_READ, NBA_READ, P, PATIENT_READ } from "./permissions";
+const InvitationsPage = page(() => import("./pages/Invitations"));
+import { CONTENT_READ, HCP_READ, INVITE_ANY, NBA_READ, P, PATIENT_READ } from "./permissions";
 import type { Permission } from "./permissions";
 
 type Can = (...anyOf: Permission[]) => boolean;
@@ -63,9 +65,12 @@ export interface AppRoute {
   /** Present for routes that appear in the navigation menu. */
   label?: (can: Can) => string;
   icon?: ReactNode;
-  /** Menu section the item is listed under. */
-  group?: NavGroup;
+  /** Menu section the item is listed under (a function when it depends on the account). */
+  group?: NavGroup | ((can: Can) => NavGroup);
 }
+
+export const groupOf = (route: AppRoute, can: Can): NavGroup | undefined =>
+  typeof route.group === "function" ? route.group(can) : route.group;
 
 export type NavGroup = "work" | "self" | "governance" | "admin";
 export const NAV_GROUPS: Array<{ key: NavGroup; label: string }> = [
@@ -205,6 +210,15 @@ export const ROUTES: AppRoute[] = [
     label: () => "Profile",
     icon: icon(UserRound),
     group: "self",
+  },
+  {
+    // Admin: every invitation, under Administration. HCP: the ones they sent, as "Team".
+    path: "/invitations",
+    anyOf: INVITE_ANY,
+    element: <InvitationsPage />,
+    label: (can) => (can(P.INVITATION_READ_ALL) ? "Invitations" : "Team"),
+    icon: icon(MailPlus),
+    group: (can) => (can(P.INVITATION_READ_ALL) ? "admin" : "self"),
   },
   // Detail pages: guarded the same way, not shown in the menu.
   { path: "/nba/:id", anyOf: NBA_READ, element: <NbaDetail /> },

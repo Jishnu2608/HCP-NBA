@@ -46,7 +46,7 @@ export default function Login() {
         <>
           New to Next Best Action?{" "}
           <Link to="/signup" className="font-semibold text-primary-ink underline-offset-4 hover:underline">
-            Create an account
+            Create a patient account
           </Link>
         </>
       }

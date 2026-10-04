@@ -1,13 +1,13 @@
-# Authentication and access architecture
+# Authentication, onboarding and access architecture
 
-How a request gets from "someone opened the site" to "this row of data", and where each decision is made.
+How a request gets from "someone opened the site" to "this row of data", and where each decision is made. The browser is treated as untrusted: every decision below is made on the server, and the web app only mirrors it.
 
 ```
 Authentication            who is this?            backend/app/auth/
       ↓
-Authenticated account     a row in `user`         api/deps.py: get_current_user
+Authenticated account     a row in `user`         api/deps.py: get_current_user (session cookie)
       ↓
-Role                      stored on the account   user.role (never from the client)
+Role                      stored on the account   set by patient sign-up or by an invitation
       ↓
 Permission set            what may they do?       core/permissions.py: ROLE_PERMISSIONS
       ↓
@@ -18,72 +18,105 @@ Existing NBA functionality                        api/*, nba/*, engagement/*
 UI scope                  what to show            frontend/src/routes.tsx (mirrors the server)
 ```
 
-The principle: **the persona is a property of the authenticated account**, not something chosen after signing in. The old "choose a demo persona" screen and its passwordless endpoint are gone.
+## 1. How accounts come into existence
 
-## 1. Authentication
+| Who | How | Role comes from |
+|---|---|---|
+| Patient | Public sign-up at `/signup` | The server (always `patient`; the request has no role field) |
+| HCP, Medical Representative, Care Manager, Compliance / MLR | Invitation link `/invite/<token>` | The stored invitation |
+| Administrator | Created by the system from configuration | Fixed |
+| Seeded demo staff and patients | The data generator | Seed data |
+
+### Onboarding authority (who may invite whom)
+
+| Inviter | May invite |
+|---|---|
+| Admin | HCP, Medical Representative, Care Manager, Compliance / MLR |
+| HCP | Medical Representative, Care Manager |
+| Medical Representative, Care Manager, Compliance, Patient | Nobody |
+
+This is an onboarding authority, not an organisational hierarchy, and it grants no data access. It is expressed as four permissions (`invite:hcp`, `invite:medical_rep`, `invite:care_manager`, `invite:compliance`) in the one `ROLE_PERMISSIONS` map; `can_invite(user, role)` is the only check, and `InvitationService` (`auth/invitations.py`) calls it on every operation. An HCP asking the API to invite an MLR gets 403 `invite_forbidden` whatever the UI shows.
+
+### Invitation lifecycle
+
+| Step | Endpoint | What happens |
+|---|---|---|
+| Invite | `POST /api/invitations` `{email, role}` | Authority checked. An invitation row stores a SHA-256 hash of a 256-bit random token, the email, the role, the inviter and the inviter's role, and a 72-hour expiry. The email is sent (HTML + plain text). An earlier pending invitation for the same email is revoked if the caller sent it (or is the administrator); otherwise 409. |
+| Open link | `POST /api/invitations/lookup` `{token}` | Public, rate-limited. Returns who invited whom as what, until when. Expired / used / revoked / invalid each have their own code and message; the token is never echoed. |
+| Accept | `POST /api/invitations/accept` `{token, name, date_of_birth, password, confirm_password}` | Public, rate-limited. There is no email or role field: both come from the invitation. Checks: still pending and in date, the inviter still active and still authorised, no existing account, age at least `NBA_MINOR_AGE`. Creates a *pending* account and emails a code to the invited address. The invitation is **not** accepted yet. |
+| Verify | `POST /api/auth/verify-otp` | The code proves control of the invited inbox. In one transaction the invitation is re-checked, marked accepted, and the account is activated and marked professionally verified, with `invited_by_user_id` recorded. |
+| Reissue | `POST /api/invitations/{id}/reissue` | New token and deadline; the old token stops working. Administrator for any invitation, others for their own. |
+| Revoke | `POST /api/invitations/{id}/revoke` | Pending invitations only. Disabling an account also revokes the invitations it sent. |
+| List | `GET /api/invitations` | Administrator: all (`invitation:read:all`). Others: only the ones they sent. Someone else's invitation id returns 404. |
+
+Lineage: `user.invited_by_user_id` links each invited account to its inviter, so the administrator sees chains such as Administrator → HCP → Medical Representative (`GET /api/admin/users/{id}` → `lineage`).
+
+### Verification: three separate facts
+
+| Fact | Column | Set by |
+|---|---|---|
+| Email verified | `user.verified` (API: `email_verified`) | Entering the one-time code |
+| Professionally verified | `user.professionally_verified`, `verification_source` | A completed invitation (`invitation`), or platform-provisioned seed staff (`system`). Never patients, never the administrator. No endpoint accepts it. |
+| Minor | not stored | Derived from `date_of_birth` in `core/age.py` |
+
+The web app shows the blue Verified mark (`VerifiedBadge`) only when the server says `professionally_verified` is true.
+
+### Date of birth and age
+
+Required for patient sign-up and invitation acceptance. Validated on the server (real calendar date, not in the future, not older than 120). Stored on the account; never returned to a browser. `core/age.py` is the single place age and minor status are computed (threshold `NBA_MINOR_AGE`, default 18, against the real date, not the demo clock). Professionals under the threshold are refused; minor patients may register and are shown to administrators as "Minor". The synthetic patient record keeps its own birth date (a model feature).
+
+## 2. Authentication and sessions
 
 | Step | Endpoint | Result |
 |---|---|---|
-| Register | `POST /api/auth/signup` | Account created with `status=pending`, `verified=false`. A one-time code is issued. Returns a short-lived *verification token*, not a session. |
-| Verify | `POST /api/auth/verify-otp` | Code checked. Account becomes `active` and `verified`, starting data is assigned, a session is issued. |
-| Resend | `POST /api/auth/resend-otp` | New code, after a 30-second cool-down. The earlier code stops working. |
-| Sign in | `POST /api/auth/login` | Email and password. Returns a session and the account (role, permissions, home route). |
-| Sign out | `POST /api/auth/logout` | Session revoked on the server. |
+| Patient sign-up | `POST /api/auth/signup` | Pending account, code emailed, HttpOnly verification cookie. If the email already has an account the response is identical, the owner is emailed a notice, and no code ever works (no enumeration). |
+| Verify | `POST /api/auth/verify-otp` `{code}` | Account active, starting data assigned, session cookie set. |
+| Resend | `POST /api/auth/resend-otp` | New code after a 30-second cool-down. |
+| Sign in | `POST /api/auth/login` `{email, password}` | Session cookie and the account. No role choice. |
+| Sign out | `POST /api/auth/logout` | This browser's session deleted on the server. |
 | Who am I | `GET /api/auth/me` | The account as the server sees it. |
 
-Sign-in outcomes:
+### Sessions (`auth/sessions.py`)
 
-| Situation | Response |
-|---|---|
-| Unknown email or wrong password | 401 `invalid_credentials` (identical for both, so emails cannot be probed) |
-| Correct password, email not verified | 403 `verification_required` with a verification token; no session |
-| Disabled account | 403 `account_disabled` |
+- A session is a row in `user_session`; the browser holds a random 256-bit token in the `nba_session` cookie (HttpOnly, SameSite=Lax, Secure outside a local run). Only the token's SHA-256 hash is stored.
+- Idle timeout 60 minutes, absolute lifetime 8 hours.
+- Signing in always creates a new session and deletes any session the browser presented (no session fixation). Signing out ends this browser only. Disabling an account, rotating passwords and a demo reset end all sessions.
+- Every request loads the account behind the session; the role is read from the database, never from the cookie or the request.
+- The verification step uses a separate short-lived signed token in the `nba_verify` cookie (HttpOnly, SameSite=Strict, path `/api/auth`). It can only be used to enter or resend the code.
 
-### Components (`backend/app/auth/`)
+### Request protection (`core/http_security.py`)
 
-| File | Interface | Local implementation | Replace with |
-|---|---|---|---|
-| `repository.py` | `UserRepository` | `SqlUserRepository` (SQLAlchemy; SQLite today) | PostgreSQL by connection string; a directory service by a new class |
-| `otp.py` | `OTPService` rules + `OtpSender` delivery | `EmailOtpSender` (SMTP) and `LocalDemoOtpSender` (development fallback) | SMS, authenticator app, an MFA provider: a new `OtpSender` |
-| `sessions.py` | `SessionService` | Signed token with user id and token version | Server-side session store or an identity provider's tokens |
-| `service.py` | `signup`, `verify_otp`, `resend_otp`, `login`, `logout` | Orchestrates the above | Unchanged |
-| `provisioning.py` | `AssignmentService` | Auto-assignment, admin edits, survive-reset | Unchanged |
+- **CSRF:** signed double-submit token. The server sets a readable `nba_csrf` cookie; the web app echoes it in `X-CSRF-Token` on every POST/PUT/PATCH/DELETE, including sign-in and sign-up. Missing or mismatched: 403 `csrf_failed`.
+- **Origin:** when the browser sends `Origin` (or `Referer`), it must be this host or one in `NBA_ALLOWED_ORIGINS`.
+- **Rate limits** (`core/ratelimit.py`, in-process): sign-in, sign-up, code entry and resend, invitation lookup / accept / create, per client address and per email or token.
+- **Headers:** Content-Security-Policy (scripts only from this site plus the hashed theme bootstrap; no framing), `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` (invitation tokens never leak in a Referer), `Permissions-Policy`, HSTS outside a local run, `Cache-Control: no-store` on the API.
+- **Errors:** unhandled errors return a generic 500 body and are logged server-side; validation errors list field names but never echo submitted values.
+- **Input:** every request body extends `StrictBody` (`extra="forbid"`): fields such as `role`, `user_id`, `professionally_verified` or `is_minor` are rejected with 422, never silently ignored. Strings have length limits; engine settings are checked against the shape and bounds of their defaults.
+- **Logs:** no passwords, codes, session or invitation tokens. The access log rewrites `/invite/<token>` to `/invite/[redacted]`.
+- **API reference** (`/api/docs`) is served only in a local run.
 
 ### One-time code rules
 
-- 6 random digits. Only an HMAC hash is stored (`otp_challenge` table).
-- Expires after 10 minutes. Five wrong attempts invalidate it.
-- Single use: the row is deleted on success, on expiry and on lock-out.
-- Delivery is email. With SMTP configured the code is sent and never returned by the API. Without it, and only while demo mode is on, the code is returned to the verify page and shown in a box that says no email was sent.
+- 6 random digits; only an HMAC hash (with a key derived for this purpose) is stored.
+- Expires after 10 minutes; five wrong attempts invalidate it; single use.
+- Delivered by email. Without a mail server, and only in a local run with demo mode on, the code is shown in a box that says no email was sent. Invitation links follow the same rule (`dev_link` shown to the inviter).
 
-### Sessions
+## 3. RBAC by permission
 
-The token carries the user id and the account's `token_version`. It does **not** carry authority: on every request the account is loaded from the database and the role is read from there. Sign-out and disable increment `token_version`, which invalidates every token issued before. A token with an added `role` claim, or signed with another key, gains nothing (covered by tests).
-
-The browser keeps the token in `sessionStorage` through one module, `frontend/src/session.ts`. It survives a refresh and is separate per tab.
-
-### The administrator
-
-One fixed account (`admin@admin.com`), created by the data generator and ensured at application start-up. The sign-up endpoint rejects the administrator role, and `GET /api/auth/roles` does not list it.
-
-## 2. RBAC by permission
-
-`backend/app/core/permissions.py` holds the `Permission` enum and one map, `ROLE_PERMISSIONS`. Every protected endpoint declares the permission it needs with `require_permission(...)`. A test fails if a router or the scoping code compares role names, and another fails if any `/api` route outside a short public list answers an anonymous caller.
+`core/permissions.py` holds the `Permission` enum and one map, `ROLE_PERMISSIONS`. Every protected endpoint declares the permission it needs with `require_permission(...)`. Tests fail if a router or the scoping code compares role names, or if any `/api` route outside a short public list answers an anonymous caller.
 
 | Role | Permissions |
 |---|---|
-| admin | `patient:read:all`, `hcp:read:all`, `nba:read:all`, `nba:review:patient`, `nba:review:hcp`, `content:read:all`, `audit:read`, `analytics:read`, `models:read`, `engine:operate`, `config:manage`, `user:manage` |
+| admin | `patient:read:all`, `hcp:read:all`, `nba:read:all`, `nba:review:patient`, `nba:review:hcp`, `content:read:all`, `audit:read`, `audit:read:identified`, `analytics:read`, `models:read`, `engine:operate`, `config:manage`, `user:manage`, `invite:hcp`, `invite:medical_rep`, `invite:care_manager`, `invite:compliance`, `invitation:read:all` |
 | compliance | `content:read:all`, `content:approve`, `nba:read:gated`, `audit:read`, `analytics:read`, `models:read` |
 | medical_rep | `hcp:read:assigned`, `nba:read:hcp_assigned`, `nba:review:hcp`, `content:read:approved_hcp` |
 | care_manager | `patient:read:assigned`, `nba:read:patient_assigned`, `nba:review:patient`, `content:read:approved_patient` |
-| hcp | `self:profile:read`, `self:inbox`, `self:patients:read` |
+| hcp | `self:profile:read`, `self:inbox`, `self:patients:read`, `invite:medical_rep`, `invite:care_manager` |
 | patient | `self:profile:read`, `self:inbox`, `self:consent:manage` |
 
-The administrator deliberately lacks `content:approve`: MLR approval stays with Compliance, so whoever runs the engine cannot clear their own content.
+The administrator deliberately lacks `content:approve`: MLR approval stays with Compliance.
 
-## 3. Data scope
-
-Permissions say what kind of thing an account may do. Assignments say to which records.
+## 4. Data scope
 
 ```
 User → Role → Assigned entities
@@ -94,53 +127,39 @@ hcp           → user.hcp_id                 (own record)
 patient       → user.patient_id             (own record)
 ```
 
-`backend/app/core/rbac.py` turns a permission plus assignments into a SQL filter:
-
 | Permission form | Rows |
 |---|---|
 | `*:read:all` | every row |
 | `*:read:assigned` | rows linked to the account in the assignment tables |
-| `nba:read:gated` | blocked or held-back recommendations, with the person's identity removed |
-| `self:*` | the single record linked to the account; endpoints under `/api/me` take no id from the request |
+| `nba:read:gated` | blocked or held-back recommendations with the person removed: no name, no segment, no target id, no drafts (they address the person by name), masked audit detail |
+| `self:*` | the single record linked to the account; `/api/me` endpoints take no id from the request |
 
-Out-of-scope ids return 404, so they cannot be probed. An account with no linked record gets `no_assignment` and the UI says so.
+Out-of-scope ids return 404. The audit log masks account emails and patient / HCP ids for readers without `audit:read:identified`. Opening a Patient 360 or HCP 360 is itself audited (`profile_viewed`).
 
 ### Assignments are not permissions
 
-- A new account is given assignments automatically on verification (see README).
-- The administrator can replace them at any time: `PUT /api/admin/users/{id}/assignments`.
-- Neither path reads or writes `user.role`. There is no endpoint that changes a role.
-- Seeded demo assignments are never altered by a sign-up.
-- A demo reset rebuilds the synthetic data and restores registered accounts with their assignments.
+- New accounts get starting assignments on verification (unchanged by invitations: the inviting HCP is not assigned to the people they invite).
+- The administrator can replace assignments: `PUT /api/admin/users/{id}/assignments`.
+- Neither path writes `user.role`. No endpoint changes a role.
 
-## 4. UI
+## 5. What survives a demo reset
 
-`frontend/src/routes.tsx` is one table: each route names the permissions that allow it. The navigation menu and the route guards are both derived from it, using the permission list returned by `GET /api/auth/me`.
+`POST /api/admin/reset` rebuilds the synthetic data. Carried across: registered and invited accounts with their assignments, invitations with lineage (references re-linked by email, because account ids can change), and the security audit rows (accounts, sign-ins, invitations). All sessions end; the caller gets a new session cookie.
+
+## 6. UI
+
+`frontend/src/routes.tsx` is one table: each route names the permissions that allow it. Menu and guards derive from it using the permission list from `GET /api/auth/me`. The session cookie is invisible to JavaScript, so the app asks `/auth/me` on load. `session.ts` stores only display data (the pending sign-up's email and timers) and theme preferences.
 
 | Situation | Behaviour |
 |---|---|
 | Signed out, any application address | Redirect to `/login` |
-| Signed in, `/`, `/login`, `/signup` | Redirect to the account's home route |
-| Signed in, address the role may not open | Access Denied page |
-| Signed in, unknown address | Page not found |
-| Sign-in after being redirected | Returns to the requested page only if the account may open it |
+| Signed in, `/`, `/login`, `/signup` | Redirect to the account's home |
+| `/invite/<token>` | Own page whether signed in or not; signed in as another account shows "Sign out to accept" |
+| Signed in, address the role may not open | Access Denied |
+| Unknown address | Page not found |
 
-The UI check is for presentation. Removing or bypassing it shows empty pages, because the API refuses the data.
+UI checks are presentation only. Removing or bypassing them shows nothing new: the API refuses the data.
 
-## 5. Where the existing NBA functionality plugs in
+## 7. Tests
 
-Nothing in the engine, gates, drafting, simulator or analytics changed. The routers that expose them now ask for permissions:
-
-| Area | Permission |
-|---|---|
-| Work queue, recommendation detail | any `nba:read:*`; acting needs `nba:review:patient` or `nba:review:hcp` plus the row being in scope |
-| Patient 360 / HCP 360 | `patient:read:*` / `hcp:read:*` |
-| Content library | `content:read:*`; review needs `content:approve` |
-| Audit log, metrics, models | `audit:read`, `analytics:read`, `models:read` |
-| Engine operations, settings | `engine:operate`, `config:manage` |
-| Users and assignments | `user:manage` |
-| Portal | `self:*` |
-
-## 6. Tests
-
-`backend/tests/test_auth.py` and `backend/tests/test_permissions.py` cover: sign-up validation, duplicate email, code success / wrong / expired / reused / locked / resend, email delivery and fallback, sign-in success and failure, unverified and disabled accounts, sign-out revoking the token, forged tokens, automatic assignment per role, cross-role and cross-entity denial, administrator account management, assignment changes leaving role and permissions untouched, reset preserving accounts, and the full flow sign-up → code → dashboard → sign-out → sign-in.
+`test_auth.py`, `test_invitations.py`, `test_security.py` and `test_permissions.py` cover, among others: patient-only sign-up and DOB validation; forged `role` / verification / minor / status fields rejected; the full 6 × 6 inviter-by-target matrix through the API; HCP → MLR refused; invitation email content; email binding; expiry, single use, reissue, revoke, inviter disabled, revoked between acceptance and code; minor professional refused; lineage; badge only after invitation; cookie flags; CSRF and origin; session fixation, logout, idle and absolute expiry; reset ending sessions; rate limits; headers; generic 500s; no secrets in logs; compliance redaction.

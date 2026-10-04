@@ -625,6 +625,67 @@ export function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md"
   );
 }
 
+/** The professional verification mark. Shown only when the server says the account is
+ *  professionally verified (an authorised invitation completed, or platform-provisioned
+ *  staff); never derived from the role. Small blue disc, white check, label on hover/focus. */
+export function VerifiedBadge({
+  source,
+  size = "sm",
+  className,
+}: {
+  source?: "invitation" | "system" | null;
+  size?: "sm" | "md";
+  className?: string;
+}) {
+  const label =
+    source === "system"
+      ? "Verified professional — provisioned by the platform"
+      : "Verified professional — onboarded through an authorized invitation";
+  const px = size === "md" ? 18 : 15;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      tabIndex={0}
+      className={cx(
+        "group relative inline-flex shrink-0 rounded-full align-[-2px] focus:outline-none focus-visible:ring-[3px] focus-visible:ring-primary/30",
+        className,
+      )}
+    >
+      <svg width={px} height={px} viewBox="0 0 16 16" aria-hidden focusable="false">
+        <circle cx="8" cy="8" r="8" fill="var(--primary)" />
+        <path d="M4.6 8.3l2.2 2.2 4.6-4.8" fill="none" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden w-max max-w-[240px] -translate-x-1/2 rounded-md bg-nav px-2.5 py-1.5 text-left text-xs font-medium leading-snug text-nav-ink shadow-lg group-hover:block group-focus-visible:block"
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+/** Name followed by the verification mark when the server reports it. */
+export function PersonName({
+  name,
+  verified,
+  source,
+  className,
+}: {
+  name: ReactNode;
+  verified?: boolean;
+  source?: "invitation" | "system" | null;
+  className?: string;
+}) {
+  return (
+    <span className={cx("inline-flex min-w-0 items-center gap-1.5", className)}>
+      <span className="min-w-0 truncate">{name}</span>
+      {verified && <VerifiedBadge source={source} />}
+    </span>
+  );
+}
+
 /* ------------------------------------------------------- states and alerts */
 
 export function Skeleton({ className }: { className?: string }) {

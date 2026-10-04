@@ -20,6 +20,7 @@ export const P = {
   CONTENT_READ_APPROVED_PATIENT: "content:read:approved_patient",
   CONTENT_APPROVE: "content:approve",
   AUDIT_READ: "audit:read",
+  AUDIT_READ_IDENTIFIED: "audit:read:identified",
   ANALYTICS_READ: "analytics:read",
   MODELS_READ: "models:read",
   ENGINE_OPERATE: "engine:operate",
@@ -29,6 +30,11 @@ export const P = {
   SELF_INBOX: "self:inbox",
   SELF_CONSENT_MANAGE: "self:consent:manage",
   SELF_PATIENTS_READ: "self:patients:read",
+  INVITE_HCP: "invite:hcp",
+  INVITE_MEDICAL_REP: "invite:medical_rep",
+  INVITE_CARE_MANAGER: "invite:care_manager",
+  INVITE_COMPLIANCE: "invite:compliance",
+  INVITATION_READ_ALL: "invitation:read:all",
 } as const;
 
 export type Permission = (typeof P)[keyof typeof P];
@@ -41,6 +47,13 @@ export const NBA_READ: Permission[] = [
 ];
 export const PATIENT_READ: Permission[] = [P.PATIENT_READ_ALL, P.PATIENT_READ_ASSIGNED];
 export const HCP_READ: Permission[] = [P.HCP_READ_ALL, P.HCP_READ_ASSIGNED];
+/** Any onboarding authority. Which roles may actually be invited comes from the server. */
+export const INVITE_ANY: Permission[] = [
+  P.INVITE_HCP,
+  P.INVITE_MEDICAL_REP,
+  P.INVITE_CARE_MANAGER,
+  P.INVITE_COMPLIANCE,
+];
 export const CONTENT_READ: Permission[] = [
   P.CONTENT_READ_ALL,
   P.CONTENT_READ_APPROVED_HCP,

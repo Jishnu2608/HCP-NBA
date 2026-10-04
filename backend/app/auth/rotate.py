@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.auth.sessions import sessions
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.security import hash_password
@@ -32,7 +33,8 @@ def apply_passwords(db: Session) -> dict[str, int]:
     system = db.scalars(select(User).where(User.source == AccountSource.SYSTEM)).all()
     for user in [*system, *seeded]:
         user.password_hash = hashes[AccountSource(user.source)]
-        user.token_version += 1  # sessions opened with the old password stop working
+        user.token_version += 1  # pending verification tokens stop working
+        sessions.revoke_all(db, user)  # sessions opened with the old password end
         counts[user.source] += 1
     audit.record(db, "passwords_rotated", "user", "system+seed", detail=counts)
     return counts

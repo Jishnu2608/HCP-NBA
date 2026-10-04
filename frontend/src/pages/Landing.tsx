@@ -170,7 +170,7 @@ export default function Landing() {
               to="/signup"
               className="hidden min-h-10 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary transition-colors hover:bg-primary-hover sm:inline-flex"
             >
-              Create account
+              Patient sign-up
             </Link>
           </nav>
         </div>
@@ -187,13 +187,16 @@ export default function Landing() {
               The right message, to the right person, on the right channel, at the right moment.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <CtaLink to="/signup" variant="accent">
-                Create account <ArrowRight className="h-4 w-4" aria-hidden />
+              <CtaLink to="/login" variant="accent">
+                Sign in <ArrowRight className="h-4 w-4" aria-hidden />
               </CtaLink>
-              <CtaLink to="/login" variant="quiet">
-                Sign in
+              <CtaLink to="/signup" variant="quiet">
+                Patients: create an account
               </CtaLink>
             </div>
+            <p className="mt-4 text-[13px] leading-5 text-ink-subtle">
+              Healthcare professionals and team members join through an invitation from their organization.
+            </p>
           </div>
           <RecommendationPreview />
         </section>
@@ -371,15 +374,16 @@ export default function Landing() {
                 See the workspace for your role
               </h2>
               <p className="mt-2 text-[15px] leading-6 text-nav-ink-muted">
-                Sign up with a role, confirm your email, and the matching workspace opens with synthetic records.
+                Professionals join by invitation and get the Verified mark; patients create their own account. Either
+                way you confirm your email, and the workspace for your role opens with synthetic records.
               </p>
             </div>
             <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-              <CtaLink to="/signup" variant="accent">
-                Create account <ArrowRight className="h-4 w-4" aria-hidden />
+              <CtaLink to="/login" variant="accent">
+                Sign in <ArrowRight className="h-4 w-4" aria-hidden />
               </CtaLink>
-              <CtaLink to="/login" variant="light">
-                Sign in
+              <CtaLink to="/signup" variant="light">
+                Patient sign-up
               </CtaLink>
             </div>
           </div>
@@ -408,7 +412,7 @@ export default function Landing() {
                 <UserCheck className="h-3.5 w-3.5" aria-hidden /> Sign in
               </Link>
               <Link to="/signup" className="flex items-center gap-1.5 text-ink-muted hover:text-ink">
-                <ClipboardList className="h-3.5 w-3.5" aria-hidden /> Create account
+                <ClipboardList className="h-3.5 w-3.5" aria-hidden /> Patient sign-up
               </Link>
             </div>
           </nav>

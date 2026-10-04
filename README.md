@@ -62,14 +62,15 @@ Authenticated account → Role → Permissions → Data scope → UI
 
 | Role | Sees | Can do |
 |---|---|---|
-| Administrator | Every module and all data, including users and assignments | Run the engine, change settings, manage accounts, review recommendations. **Cannot approve content.** |
-| Compliance / MLR Reviewer | Content library, blocked and held-back recommendations (identities hidden), audit log, metrics | Approve or reject content. The only role that can. |
+| Administrator | Every module and all data, including users, invitations and assignments | Run the engine, change settings, manage accounts, review recommendations, invite any professional role. **Cannot approve content.** |
+| Compliance / MLR Reviewer | Content library, blocked and held-back recommendations (identities hidden), audit log with identities masked, metrics | Approve or reject content. The only role that can. |
 | Medical Representative | Assigned HCPs and their recommendations, approved HCP content | Approve, edit, reject, send; log visit outcome |
 | Care Manager | Assigned patients and their recommendations, approved patient content | Approve, edit, reject, send; log call outcome |
-| Healthcare Professional | Own profile, own inbox, adherence summary of own patients who consent to sharing | Read and respond to content |
+| Healthcare Professional | Own profile, own inbox, adherence summary of own patients who consent to sharing | Read and respond to content; invite a Medical Representative or Care Manager |
 | Patient | Own medications, messages and consent | Change consent, respond, confirm a refill |
 
-- The role is fixed when the account is created. No endpoint changes it.
+- The role is fixed when the account is created: by patient sign-up, or by the invitation. No endpoint changes it.
+- Inviting is an onboarding authority, not a hierarchy: Administrator → HCP, MR, CM, MLR; HCP → MR, CM; nobody else invites. Only the administrator can bring in an MLR reviewer.
 - Permissions come from one map (`backend/app/core/permissions.py`). Endpoints ask for a permission, never a role name.
 - Which records an account may see comes from its assignments, which are separate from the role. Changing an assignment never changes permissions.
 - Out-of-scope records return "not found"; a missing permission returns "forbidden".
@@ -77,17 +78,23 @@ Authenticated account → Role → Permissions → Data scope → UI
 
 More detail: [docs/architecture-auth-rbac.md](docs/architecture-auth-rbac.md).
 
-## Signing in and signing up
+## Signing in, signing up and invitations
 
 ```
-Landing page → Log in or Sign up → (sign-up only) emailed code → role dashboard
+Patients:       Sign up (name, date of birth, email, password) → emailed code → patient dashboard
+Professionals:  Invitation email → /invite/<link> → name, date of birth, password → emailed code → role dashboard
+Everyone:       Log in with email and password → the account's own dashboard
 ```
 
 - **Log in** with email and password. The account's role decides the dashboard; nothing is chosen afterwards.
-- **Sign up** with name, email, password and one of five roles. The administrator role cannot be self-registered.
+- **Patient sign-up** is public and always creates a patient account. There is no role choice.
+- **Professional accounts** (HCP, Medical Representative, Care Manager, Compliance / MLR) are created only through an invitation. The invitation fixes the role and the email; the recipient cannot change either. Links work once and expire after 72 hours; the inviter can resend (which cancels the old link) or revoke them.
 - A new account must confirm a 6-digit code before it becomes active. The code expires after 10 minutes, works once, allows 5 attempts, and is stored only as a hash.
+- **Verified mark:** an invited professional who completes the code gets a blue check next to their name. Seeded demo staff carry it as platform-provisioned. Patients and the administrator do not. Email verification and professional verification are separate.
+- **Date of birth** is required at sign-up and acceptance, checked on the server, and never shown to other users. Professionals must be at least 18 (configurable); patients under that age may register and are marked as minors for administrators.
 - On confirmation the account receives starting data from the synthetic pool: one own record for a patient or HCP, a panel of patients for a care manager, a set of HCPs for a medical representative.
-- An administrator can change assignments, and disable or re-enable accounts, on the Users and assignments page.
+- The administrator manages invitations on **Invitations** and accounts on **Users and assignments** (assignments, disable or re-enable, who invited whom). An HCP sees the invitations they sent under **Team**.
+- Sessions are kept in a cookie the page's JavaScript cannot read. Sign-out ends the session on the server. Two different accounts in two tabs of the same browser are no longer possible; use a private window or another browser profile for the second one.
 
 Account credentials are not documented in this repository. See "Secrets and accounts" below.
 
@@ -100,6 +107,8 @@ Email only.
 - Without a mail server, and only while demo mode is on, the verify page shows the code in a box that states no email was sent.
 - A new code can be requested after 30 seconds; each new code replaces the previous one.
 - After a successful check, the account is activated, given its starting data, signed in and sent to its role's dashboard.
+- Invitation emails go through the same mail server. Without one, in a local run, the inviter sees the invitation link in a box that says no email was sent.
+- Someone signing up with an email that already has an account sees the same "check your email" screen; the owner receives a notice instead of a code. The form cannot be used to find out who is registered.
 
 To configure email, add the `NBA_SMTP_*` settings listed in [.env.example](.env.example) to `.env` and restart. Any SMTP service on port 587 with STARTTLS works; with Gmail, use an app password (it needs two-step verification on the account), not the account password.
 
@@ -136,7 +145,10 @@ If PowerShell refuses to run the scripts, allow local scripts for your user once
 
 - **Administrator:** the email in `NBA_ADMIN_EMAIL` (default shown in [.env.example](.env.example)) with the password that `setup.ps1` generated in your `.env` as `NBA_ADMIN_PASSWORD`. Choose your own by editing `.env`, then run `python -m app.auth.rotate` from `backend` and restart.
 - **Demo accounts** for the other roles are created with the synthetic data and share `NBA_DEMO_PASSWORD`. An administrator can see their emails on the Users and assignments page.
-- **Your own account:** sign up with any role except Administrator. Without email configured, the verification code is shown on screen in development mode.
+- **A professional account of your own:** sign in as the administrator, open **Invitations**, invite your email with a role, and open the link from the email (or, without email configured, from the development box).
+- **A patient account:** use **Patient sign-up**. Without email configured, the verification code is shown on screen in development mode.
+
+`NBA_PUBLIC_BASE_URL` sets the start of links in emails; set it to the address people will open (for example your LAN address when testing on a phone).
 
 ### Optional: email delivery of verification codes
 
@@ -154,7 +166,7 @@ Run the API and the frontend dev server side by side for instant reload:
 npm run dev
 ```
 
-Open http://localhost:5173 while developing; it forwards `/api` to port 8000. `.\scripts\run.ps1` instead serves the last frontend build from port 8000, so run `npm run build` after frontend changes when using it.
+Open http://localhost:5173 while developing; it forwards `/api` to port 8000 (allowed by `NBA_ALLOWED_ORIGINS`). The interactive API reference at `/api/docs` is available only in a local run; its "Try it out" calls need the CSRF header, so the backend tests are the easier way to exercise the API. `.\scripts\run.ps1` instead serves the last frontend build from port 8000, so run `npm run build` after frontend changes when using it.
 
 Before committing:
 
@@ -183,7 +195,7 @@ The server listens only on this computer by default. To open it from a phone on 
 
 ### Resetting the data
 
-The Engine page has **Reset to seeded data**, which keeps registered accounts. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
+The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, invitations and the security audit trail, and signs everyone out. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
 
 ## Secrets and accounts
 
@@ -202,11 +214,16 @@ Set through `NBA_`-prefixed environment variables or `.env`. Names only; see [.e
 | Variable | Purpose |
 |---|---|
 | `NBA_DATABASE_URL` | Database. SQLite file by default; any SQLAlchemy URL, for example PostgreSQL |
-| `NBA_JWT_SECRET` | Signs session tokens. Required. |
+| `NBA_JWT_SECRET` | Master signing secret (verification step, CSRF, code hashing). Required. |
 | `NBA_ADMIN_EMAIL`, `NBA_ADMIN_PASSWORD` | The administrator account. Password required. |
 | `NBA_SEED_DEMO_ACCOUNTS`, `NBA_DEMO_PASSWORD` | Whether demo accounts are created with the synthetic data, and their password |
-| `NBA_DEMO_MODE` | Allows the on-screen verification code when no mail server is configured |
-| `NBA_SMTP_*` | Mail server for verification codes |
+| `NBA_DEMO_MODE` | Allows on-screen codes and invitation links in a local run without a mail server |
+| `NBA_SMTP_*`, `NBA_SUPPORT_EMAIL` | Mail server for codes and invitations; contact shown in emails |
+| `NBA_PUBLIC_BASE_URL`, `NBA_INVITATION_TTL_HOURS` | Start of links in emails; invitation lifetime |
+| `NBA_ENVIRONMENT` | `local` by default. Anything else turns on Secure cookies and HSTS and turns off the API reference and on-screen codes |
+| `NBA_SESSION_IDLE_MINUTES`, `NBA_ACCESS_TOKEN_MINUTES` | Session idle timeout and absolute lifetime |
+| `NBA_ALLOWED_ORIGINS` | Extra origins allowed to send changes (the Vite dev server) |
+| `NBA_MINOR_AGE` | Age threshold for minors |
 | `NBA_LLM_PROVIDER` | Drafting provider. Offline templates by default. |
 
 Engine policy (risk weights, thresholds, contact limits, channel costs) is edited on the Engine page and stored in the database.
@@ -238,7 +255,7 @@ One process and one deployable unit: the API also serves the built web applicati
 | API | FastAPI, Pydantic |
 | Database | SQLAlchemy, Alembic; SQLite locally, PostgreSQL-ready |
 | Features and models | pandas, scikit-learn |
-| Authentication | Server-side accounts, scrypt password hashes, signed session tokens |
+| Authentication | Server-side accounts and sessions, scrypt password hashes, HttpOnly session cookie with CSRF protection, invitation-only professional onboarding |
 | Frontend | React, TypeScript, Vite, Tailwind, TanStack Query, Recharts; one design system with light and dark themes ([docs/design-system.md](docs/design-system.md)) |
 
 ```
@@ -264,12 +281,13 @@ scripts/                setup and run
 1. Eligibility gates are deterministic code, never a model. They run at generation, at approval and at send.
 2. The language model only words an action that already passed every gate. It never decides consent, approval, contact limits, authorisation or selection.
 3. Every recommendation carries a rationale and an audit trail. Blocked ones stay visible in audit and are never sendable.
-4. Authorisation is by permission, enforced in the API. The role is read from the account on every request, never from the client.
-5. Assignments decide data scope and are separate from the role.
-6. Only Compliance approves content. The administrator cannot.
-7. The simulator's hidden behaviour traits are never readable by the engine, features or models.
-8. Model features are computed as they stood before each historical touch; no look-ahead.
-9. No secret in the repository.
+4. Authorisation is by permission, enforced in the API. The role is read from the account on every request, never from the client. The browser is treated as untrusted: request bodies cannot carry fields the endpoint does not define.
+5. Professional roles exist only through invitations, and who may invite whom is one permission table.
+6. Assignments decide data scope and are separate from the role.
+7. Only Compliance approves content. The administrator cannot.
+8. The simulator's hidden behaviour traits are never readable by the engine, features or models.
+9. Model features are computed as they stood before each historical touch; no look-ahead.
+10. No secret in the repository.
 
 ## Path to production
 
@@ -291,8 +309,10 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 
 - Models are trained on synthetic behaviour; measured quality is modest by design and real-world results will differ.
 - Outreach delivery is simulated. No outreach message leaves the system.
-- **Email verification codes:** working with a configured SMTP account and checked once end to end with Gmail, but real delivery has no automated test (tests use a fake sender). A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
-- No forgot-password, password change, login lockout, rate limiting or MFA at sign-in yet.
+- **Email verification codes and invitation emails:** codes were checked once end to end with Gmail; invitation emails are covered by tests with a fake mailbox and a browser run without a mail server, but no invitation has yet been sent through real SMTP. Real delivery has no automated test. A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
+- Rate limits are kept in the server's memory: they reset on restart and are not shared between processes.
+- No forgot-password, password change, account lockout or MFA at sign-in yet.
+- A professional cannot be invited to an email that already has a patient account.
 - An administrator can disable accounts but not delete them from the app.
 - The hosted language-model provider has not been exercised; drafting uses offline templates.
 - No browser end-to-end tests yet; behaviour is covered by backend tests and manual checks, including a scripted layout check at phone, tablet and desktop widths. Real browser zoom and operating-system display scaling have not been tested.
