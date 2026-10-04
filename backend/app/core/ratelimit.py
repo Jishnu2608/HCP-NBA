@@ -1,68 +1,118 @@
-"""Request rate limits for the public authentication and invitation endpoints.
+"""Rate limits for sign-in, sign-up, one-time codes and invitations.
 
-A sliding window per (bucket, key), kept in this process's memory. That is enough for one
-server process; several processes or hosts would need a shared store (Redis or the
-database) behind the same `limit()` call.
+Each counted attempt is a row in `rate_limit_hit` (bucket, keyed hash of the key, time),
+so limits survive a restart and are shared by every server process using the database.
+A limit is a sliding window: an attempt is refused while `limit` attempts already fall
+inside the last `window` seconds, and the answer carries `Retry-After`.
+
+Keys are chosen so that knowing someone's email is not enough to lock them out:
+
+  sign-in failures   per email + client address (5 / 15 min) and per address (20 / 15 min);
+                     only failures count, and a successful sign-in clears its email + address
+                     counter. An attacker on another address cannot block the owner.
+  sign-up            per address (5 / 15 min)
+  code emails        per email + address (3 / 10 min), counted only when a code (or the
+                     equivalent notice) is actually sent; the 30-second resend cool-down
+                     still applies on top
+  code entry         per pending account (5 / 10 min), so a fresh code does not reset it
+  invitation accept  per address (5 / 15 min); lookups per address (30 / 10 min); invitations
+                     sent per inviter (30 / hour)
+
+The keys themselves (addresses, emails) are never stored, only a keyed hash.
 """
 
-import threading
-import time
-from collections import defaultdict, deque
+from datetime import timedelta
 
 from fastapi import Request
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
 
 from app.auth.errors import AuthError
 from app.core.config import get_settings
+from app.core.security import fingerprint
+from app.models import RateLimitHit
+from app.models.tables import utcnow
 
-# bucket -> (requests allowed, window in seconds)
+MINUTE = 60
+# bucket -> (attempts allowed, window in seconds)
 LIMITS: dict[str, tuple[int, int]] = {
-    "login": (10, 300),
-    "signup": (5, 600),
-    "verify": (20, 600),
-    "resend": (6, 600),
-    "invite_lookup": (30, 600),
-    "invite_accept": (10, 600),
-    "invite_create": (30, 3600),
+    "login_fail_account": (5, 15 * MINUTE),
+    "login_fail_ip": (20, 15 * MINUTE),
+    "signup_ip": (5, 15 * MINUTE),
+    "otp_send": (3, 10 * MINUTE),
+    "otp_verify": (5, 10 * MINUTE),
+    "invite_accept_ip": (5, 15 * MINUTE),
+    "invite_lookup_ip": (30, 10 * MINUTE),
+    "invite_create": (30, 60 * MINUTE),
 }
+LONGEST = max(window for _, window in LIMITS.values())
 
-_hits: dict[tuple[str, str], deque[float]] = defaultdict(deque)
-_lock = threading.Lock()
+MESSAGE = "Too many attempts. Please try again later."
+
+
+def _now():
+    return utcnow()
 
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def hit(bucket: str, key: str) -> None:
-    """Counts one request; raises 429 once the bucket's limit for this key is reached."""
-    if not get_settings().rate_limit_enabled:
+def _hash(bucket: str, key: str) -> str:
+    return fingerprint(f"{bucket}|{key}")
+
+
+def _enabled() -> bool:
+    return get_settings().rate_limit_enabled
+
+
+def check(db: Session, bucket: str, key: str) -> None:
+    """Raises 429 if the limit for this key is already used up. Records nothing."""
+    if not _enabled():
         return
     allowed, window = LIMITS[bucket]
-    now = time.monotonic()
-    with _lock:
-        stamps = _hits[(bucket, key)]
-        while stamps and now - stamps[0] >= window:
-            stamps.popleft()
-        if len(stamps) >= allowed:
-            retry = int(window - (now - stamps[0])) + 1
-            raise AuthError(
-                429,
-                "rate_limited",
-                "Too many attempts. Please wait a few minutes and try again.",
-                headers={"Retry-After": str(retry)},
-                retry_after=retry,
-            )
-        stamps.append(now)
+    now = _now()
+    since = now - timedelta(seconds=window)
+    count, oldest = db.execute(
+        select(func.count(), func.min(RateLimitHit.ts)).where(
+            RateLimitHit.bucket == bucket,
+            RateLimitHit.key_hash == _hash(bucket, key),
+            RateLimitHit.ts > since,
+        )
+    ).one()
+    if count >= allowed:
+        retry = max(1, int((oldest + timedelta(seconds=window) - now).total_seconds()) + 1)
+        # Generic on purpose: nothing about which limit, which key, or whether an account
+        # exists.
+        raise AuthError(429, "rate_limited", MESSAGE, headers={"Retry-After": str(retry)})
 
 
-def limit(request: Request, bucket: str, *keys: str | None) -> None:
-    """Applies the bucket per client address and per each extra key (email, token hash)."""
-    hit(bucket, f"ip:{client_ip(request)}")
-    for key in keys:
-        if key:
-            hit(bucket, f"key:{key}")
+def record(db: Session, bucket: str, key: str) -> None:
+    """Counts one attempt. The caller's transaction commits it."""
+    if not _enabled():
+        return
+    now = _now()
+    db.execute(delete(RateLimitHit).where(RateLimitHit.ts <= now - timedelta(seconds=LONGEST)))
+    db.add(RateLimitHit(bucket=bucket, key_hash=_hash(bucket, key), ts=now))
+    db.flush()
 
 
-def reset() -> None:
-    with _lock:
-        _hits.clear()
+def consume(db: Session, bucket: str, key: str) -> None:
+    """Check, then count this attempt."""
+    check(db, bucket, key)
+    record(db, bucket, key)
+
+
+def clear(db: Session, bucket: str, key: str) -> None:
+    """Forget the attempts for this key (a successful sign-in clears its failures)."""
+    if not _enabled():
+        return
+    db.execute(
+        delete(RateLimitHit).where(
+            RateLimitHit.bucket == bucket, RateLimitHit.key_hash == _hash(bucket, key)
+        )
+    )
+
+
+def reset(db: Session) -> None:
+    db.execute(delete(RateLimitHit))

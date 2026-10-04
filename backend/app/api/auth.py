@@ -18,11 +18,10 @@ from app.auth import service
 from app.auth.errors import AuthError
 from app.auth.repository import normalize_email
 from app.auth.service import AuthResult
-from app.auth.sessions import SESSION_COOKIE, VERIFY_COOKIE, sessions
+from app.auth.sessions import SESSION_COOKIE, VERIFY_COOKIE, Decoy, sessions
 from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.core.security import token_hash
 from app.models import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -126,13 +125,41 @@ def _agent(request: Request) -> str | None:
 # --- Routes ----------------------------------------------------------------------------------
 
 
+def _pending_identity(db: Session, token: str | None, ip: str) -> tuple[str, str]:
+    """(rate-limit key for code entry, email) of the account waiting for its code. A new
+    code issues a new verification token, so the key is the account, not the token."""
+    found = sessions.resolve_verification(db, token)
+    if isinstance(found, Decoy):
+        return f"decoy:{found.email}", found.email
+    if found is not None:
+        return f"user:{found.id}", found.email
+    return f"none:{ip}", ""
+
+
+def counted_send(db: Session, ip: str, email: str, action: Callable[[], AuthResult]):
+    """Runs an action that emails a code (or the equivalent notice), within the per email +
+    address limit; the attempt is counted only when the action succeeds."""
+
+    def wrapped() -> AuthResult:
+        result = action()
+        ratelimit.record(db, "otp_send", f"{normalize_email(email)}|{ip}")
+        return result
+
+    ratelimit.check(db, "otp_send", f"{normalize_email(email)}|{ip}")
+    return wrapped
+
+
 @router.post("/signup", status_code=201)
 def signup(body: SignupBody, request: Request, db: Session = Depends(get_db)) -> JSONResponse:
     """Registers a patient and issues a one-time code. No session yet. Professional roles
-    are not available here: they come only from an invitation."""
-    ratelimit.limit(request, "signup", normalize_email(body.email))
-    return run(
+    are not available here: they come only from an invitation. The answer is the same
+    whether or not the email already has an account."""
+    ip = ratelimit.client_ip(request)
+    ratelimit.consume(db, "signup_ip", ip)
+    action = counted_send(
         db,
+        ip,
+        body.email,
         lambda: service.signup(
             db,
             name=body.name,
@@ -141,15 +168,16 @@ def signup(body: SignupBody, request: Request, db: Session = Depends(get_db)) ->
             password=body.password,
             confirm=body.confirm_password,
         ),
-        status=201,
     )
+    return run(db, action, status=201)
 
 
 @router.post("/verify-otp")
 def verify_otp(body: VerifyBody, request: Request, db: Session = Depends(get_db)) -> JSONResponse:
     """Confirms the code, activates the account, assigns its data and starts a session."""
     pending = request.cookies.get(VERIFY_COOKIE)
-    ratelimit.limit(request, "verify", token_hash(pending) if pending else None)
+    key, _ = _pending_identity(db, pending, ratelimit.client_ip(request))
+    ratelimit.consume(db, "otp_verify", key)
     # Whatever session this browser had before, it ends here (no session fixation).
     sessions.revoke(db, request.cookies.get(SESSION_COOKIE))
     return run(db, lambda: service.verify_otp(db, pending, body.code, _agent(request)))
@@ -158,16 +186,21 @@ def verify_otp(body: VerifyBody, request: Request, db: Session = Depends(get_db)
 @router.post("/resend-otp")
 def resend_otp(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
     pending = request.cookies.get(VERIFY_COOKIE)
-    ratelimit.limit(request, "resend", token_hash(pending) if pending else None)
-    return run(db, lambda: service.resend_otp(db, pending))
+    ip = ratelimit.client_ip(request)
+    _, email = _pending_identity(db, pending, ip)
+    return run(db, counted_send(db, ip, email, lambda: service.resend_otp(db, pending)))
 
 
 @router.post("/login")
 def login(body: LoginBody, request: Request, db: Session = Depends(get_db)) -> JSONResponse:
-    """Email and password. The stored role decides everything after this."""
-    ratelimit.limit(request, "login", normalize_email(body.email))
+    """Email and password. The stored role decides everything after this. Only failed
+    attempts count towards the limit; see core/ratelimit.py."""
+    ip = ratelimit.client_ip(request)
+    account_key, ip_key = service.login_keys(body.email, ip)
+    ratelimit.check(db, "login_fail_account", account_key)
+    ratelimit.check(db, "login_fail_ip", ip_key)
     sessions.revoke(db, request.cookies.get(SESSION_COOKIE))
-    return run(db, lambda: service.login(db, body.email, body.password, _agent(request)))
+    return run(db, lambda: service.login(db, body.email, body.password, _agent(request), ip))
 
 
 @router.post("/logout")

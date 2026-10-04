@@ -108,7 +108,24 @@ Email only.
 - A new code can be requested after 30 seconds; each new code replaces the previous one.
 - After a successful check, the account is activated, given its starting data, signed in and sent to its role's dashboard.
 - Invitation emails go through the same mail server. Without one, in a local run, the inviter sees the invitation link in a box that says no email was sent.
-- Someone signing up with an email that already has an account sees the same "check your email" screen; the owner receives a notice instead of a code. The form cannot be used to find out who is registered.
+- Someone signing up with an email that already has an account sees the same "Check your email to continue" screen; the owner receives a notice instead of a code. The form cannot be used to find out who is registered.
+- A failed sign-in always says "Incorrect email or password", whether the email is unknown, the password is wrong or the account is disabled.
+
+### Rate limits
+
+Enforced by the server and stored in the database, so they survive a restart and cannot be reset from the browser. A refused request gets "Too many attempts" and a `Retry-After` time; nothing is ever locked permanently.
+
+| Limit | Key | Allowed | Notes |
+|---|---|---|---|
+| Failed sign-ins | email + client address | 5 / 15 min | Only failures count; a successful sign-in clears it. Someone on another address cannot lock the owner out. |
+| Failed sign-ins | client address | 20 / 15 min | Stops one address trying many emails. |
+| Patient sign-up | client address | 5 / 15 min | Every attempt counts. |
+| Code emails (sign-up, resend, invitation acceptance) | email + client address | 3 / 10 min | Counted only when an email is actually sent; the 30-second resend cool-down still applies. |
+| Code entry | the pending account | 5 / 10 min | A new code does not reset it; each code also locks after 5 wrong tries. |
+| Invitation acceptance | client address | 5 / 15 min | |
+| Invitation lookup | client address | 30 / 10 min | |
+| Invitations sent | inviter | 30 / hour | |
+
 
 To configure email, add the `NBA_SMTP_*` settings listed in [.env.example](.env.example) to `.env` and restart. Any SMTP service on port 587 with STARTTLS works; with Gmail, use an app password (it needs two-step verification on the account), not the account password.
 
@@ -311,7 +328,6 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 - Models are trained on synthetic behaviour; measured quality is modest by design and real-world results will differ.
 - Outreach delivery is simulated. No outreach message leaves the system.
 - **Email verification codes and invitation emails:** both were checked end to end once with Gmail: a sign-up code, and an invitation that was accepted, verified with its emailed code and produced an active, verified HCP account. Real delivery has no automated test (tests use a fake mailbox), and the invitation email has not been checked in Outlook or Apple Mail. A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
-- Rate limits are kept in the server's memory: they reset on restart and are not shared between processes.
 - No forgot-password, password change, account lockout or MFA at sign-in yet.
 - A professional cannot be invited to an email that already has a patient account.
 - An administrator can disable accounts but not delete them from the app.

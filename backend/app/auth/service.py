@@ -23,7 +23,7 @@ from app.auth.otp import Issued, get_sender, otp_service
 from app.auth.provisioning import assignments
 from app.auth.repository import SqlUserRepository, normalize_email
 from app.auth.sessions import Decoy, sessions
-from app.core import age
+from app.core import age, ratelimit
 from app.core.config import get_settings
 from app.core.permissions import PUBLIC_SIGNUP_ROLE, ROLE_HOME, permissions_for
 from app.core.security import fingerprint, hash_password, verify_password
@@ -79,8 +79,12 @@ def _signed_in(db: Session, user: User, user_agent: str | None) -> AuthResult:
     )
 
 
+CHECK_EMAIL = "Check your email to continue."
+
+
 def _challenge_body(email: str, issued: Issued) -> dict:
     body = {
+        "message": CHECK_EMAIL,
         "email": email,
         "delivery": issued.delivery,
         "expires_in": issued.expires_in,
@@ -101,7 +105,10 @@ def issue_or_report(db: Session, user: User) -> AuthResult:
     except AuthError as exc:
         if exc.code != "otp_delivery_failed":
             raise
-        body = {"email": user.email, "delivery": "failed", "expires_in": 0, "resend_in": 0}
+        body = {
+            "message": CHECK_EMAIL, "email": user.email, "delivery": "failed",
+            "expires_in": 0, "resend_in": 0,
+        }  # fmt: skip
         return AuthResult(body=body, verify_token=token)
     return AuthResult(body=_challenge_body(user.email, issued), verify_token=token)
 
@@ -188,6 +195,9 @@ def signup(
             and existing.status == AccountStatus.PENDING
         )
         if not reusable:
+            # Same work as a real sign-up (one password hash), so the response time does
+            # not give away that the email is registered. The hash is discarded.
+            hash_password(password)
             return _decoy(db, email)
         # An unfinished sign-up for this address: start it again with the new details.
         # Nothing is activated until the code sent to the inbox is entered.
@@ -320,34 +330,46 @@ def resend_otp(db: Session, verify_token: str | None) -> AuthResult:
 # --- Sign-in / sign-out -------------------------------------------------------------------
 
 
-def _login_failed(db: Session, email: str, reason: str) -> None:
+def login_keys(email: str, ip: str) -> tuple[str, str]:
+    """Rate-limit keys for sign-in failures: this email from this address, and this address."""
+    return f"{normalize_email(email)}|{ip}", ip
+
+
+def _login_failed(db: Session, email: str, ip: str, reason: str) -> AuthError:
+    """Records the failure (audit and rate limit) and returns the one generic error used for
+    every failure: unknown email, wrong password and disabled account look the same."""
     audit.record(
         db, "login_failed", "auth", fingerprint(email), actor=ANONYMOUS, actor_role=ANONYMOUS,
         detail={"reason": reason},
     )  # fmt: skip
+    account_key, ip_key = login_keys(email, ip)
+    ratelimit.record(db, "login_fail_account", account_key)
+    ratelimit.record(db, "login_fail_ip", ip_key)
+    return invalid_credentials()
 
 
-def login(db: Session, email: str, password: str, user_agent: str | None) -> AuthResult:
+def login(
+    db: Session, email: str, password: str, user_agent: str | None, ip: str = "unknown"
+) -> AuthResult:
     repo = SqlUserRepository(db)
     email = normalize_email(email)
     user = repo.get_by_email(email)
     if user is None:
         verify_password(password, _DUMMY_HASH)
-        _login_failed(db, email, "invalid_credentials")
-        raise invalid_credentials()
+        raise _login_failed(db, email, ip, "unknown_email")
     if not verify_password(password, user.password_hash):
-        _login_failed(db, email, "invalid_credentials")
-        raise invalid_credentials()
+        raise _login_failed(db, email, ip, "wrong_password")
     if user.status == AccountStatus.DISABLED:
-        _login_failed(db, email, "account_disabled")
-        raise AuthError(403, "account_disabled", "This account has been disabled.")
+        # Not "account disabled": the answer must not reveal anything about the account.
+        raise _login_failed(db, email, ip, "account_disabled")
     if not user.verified:
         # Right password, unverified account: hand back a way to finish verification,
         # never a session. A code is issued only if none is currently active.
         status = otp_service.status(db, user)
         if status["expires_in"] == 0:
             result = issue_or_report(db, user)
-            extra, token = result.body, result.verify_token
+            extra = {k: v for k, v in result.body.items() if k != "message"}
+            token = result.verify_token
         else:
             # A code is already active. Say how it was delivered, never the code itself.
             extra = {"email": user.email, **status, "delivery": get_sender().channel}
@@ -361,6 +383,8 @@ def login(db: Session, email: str, password: str, user_agent: str | None) -> Aut
         )
     repo.record_login(user)
     audit.record(db, "login_succeeded", "user", user.id, actor=user.username, actor_role=user.role)
+    # A successful sign-in clears this email + address's failure count (not the address's).
+    ratelimit.clear(db, "login_fail_account", login_keys(email, ip)[0])
     return _signed_in(db, user, user_agent)
 
 

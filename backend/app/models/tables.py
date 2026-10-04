@@ -145,6 +145,20 @@ class UserSession(Base):
     user_agent: Mapped[str | None] = mapped_column(String(160))
 
 
+class RateLimitHit(Base):
+    """One counted attempt for a rate limit. The key (an address, an email + address pair,
+    an account) is stored only as a keyed hash. Rows older than the longest window are
+    deleted as new ones arrive."""
+
+    __tablename__ = "rate_limit_hit"
+    __table_args__ = (Index("ix_rate_limit_hit_lookup", "bucket", "key_hash", "ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bucket: Mapped[str] = mapped_column(String(32))
+    key_hash: Mapped[str] = mapped_column(String(32))
+    ts: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class Invitation(Base):
     """An invitation to join in a professional role. The role is fixed by the invitation;
     the token itself is never stored, only its hash."""

@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import Field
 from sqlalchemy.orm import Session
 
-from app.api.auth import run
+from app.api.auth import counted_send, run
 from app.api.deps import get_current_user, require_permission
 from app.api.schemas import StrictBody
 from app.auth import invitations, service
@@ -84,7 +84,7 @@ def list_invitations(
 def create(
     body: InviteBody, request: Request, user: User = Depends(inviter), db: Session = Depends(get_db)
 ) -> dict:
-    ratelimit.limit(request, "invite_create", f"user:{user.id}")
+    ratelimit.consume(db, "invite_create", f"user:{user.id}")
     try:
         result = _created(db, user, invitations.create(db, user, body.email, body.role))
     except AuthError:
@@ -115,7 +115,7 @@ def revoke(
 @router.post("/lookup")
 def lookup(body: TokenBody, request: Request, db: Session = Depends(get_db)) -> dict:
     """What the invitation is for. Public; the token is never echoed back."""
-    ratelimit.limit(request, "invite_lookup", token_hash(body.token))
+    ratelimit.consume(db, "invite_lookup_ip", ratelimit.client_ip(request))
     try:
         result = invitations.lookup(db, body.token)
     finally:
@@ -127,7 +127,8 @@ def lookup(body: TokenBody, request: Request, db: Session = Depends(get_db)) -> 
 def accept(body: AcceptBody, request: Request, db: Session = Depends(get_db)) -> JSONResponse:
     """Creates the pending account for the invited email and role, and emails the code.
     The invitation is accepted only when that code is entered."""
-    ratelimit.limit(request, "invite_accept", token_hash(body.token))
+    ip = ratelimit.client_ip(request)
+    ratelimit.consume(db, "invite_accept_ip", ip)
 
     def action():
         user = invitations.accept(
@@ -140,4 +141,5 @@ def accept(body: AcceptBody, request: Request, db: Session = Depends(get_db)) ->
         )
         return service.issue_or_report(db, user)
 
-    return run(db, action, status=201)
+    # One invitation is bound to one email, so its token stands in for the email here.
+    return run(db, counted_send(db, ip, f"invite:{token_hash(body.token)}", action), status=201)

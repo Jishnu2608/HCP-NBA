@@ -88,7 +88,20 @@ Required for patient sign-up and invitation acceptance. Validated on the server 
 
 - **CSRF:** signed double-submit token. The server sets a readable `nba_csrf` cookie; the web app echoes it in `X-CSRF-Token` on every POST/PUT/PATCH/DELETE, including sign-in and sign-up. Missing or mismatched: 403 `csrf_failed`.
 - **Origin:** when the browser sends `Origin` (or `Referer`), it must be this host or one in `NBA_ALLOWED_ORIGINS`.
-- **Rate limits** (`core/ratelimit.py`, in-process): sign-in, sign-up, code entry and resend, invitation lookup / accept / create, per client address and per email or token.
+- **Rate limits** (`core/ratelimit.py`, stored in the `rate_limit_hit` table, keys only as keyed hashes): 429 `rate_limited`, "Too many attempts. Please try again later.", `Retry-After`. No permanent lockout.
+
+| Limit | Key | Allowed | Notes |
+|---|---|---|---|
+| Failed sign-ins | email + client address | 5 / 15 min | Only failures count; a successful sign-in clears it. Someone on another address cannot lock the owner out. |
+| Failed sign-ins | client address | 20 / 15 min | Stops one address trying many emails. |
+| Patient sign-up | client address | 5 / 15 min | Every attempt counts. |
+| Code emails (sign-up, resend, invitation acceptance) | email + client address | 3 / 10 min | Counted only when an email is actually sent; the 30-second resend cool-down still applies. |
+| Code entry | the pending account | 5 / 10 min | A new code does not reset it; each code also locks after 5 wrong tries. |
+| Invitation acceptance | client address | 5 / 15 min | |
+| Invitation lookup | client address | 30 / 10 min | |
+| Invitations sent | inviter | 30 / hour | |
+
+- **Generic sign-in failure:** unknown email, wrong password and disabled account all return 401 "Incorrect email or password."
 - **Headers:** Content-Security-Policy (scripts only from this site plus the hashed theme bootstrap; no framing), `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` (invitation tokens never leak in a Referer), `Permissions-Policy`, HSTS outside a local run, `Cache-Control: no-store` on the API.
 - **Errors:** unhandled errors return a generic 500 body and are logged server-side; validation errors list field names but never echo submitted values.
 - **Input:** every request body extends `StrictBody` (`extra="forbid"`): fields such as `role`, `user_id`, `professionally_verified` or `is_minor` are rejected with 422, never silently ignored. Strings have length limits; engine settings are checked against the shape and bounds of their defaults.

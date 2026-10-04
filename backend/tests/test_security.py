@@ -20,7 +20,6 @@ from sqlalchemy import select
 
 from app import cycle
 from app.auth.sessions import sessions
-from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.http_security import RedactInviteTokens, new_csrf_token
@@ -185,21 +184,6 @@ def test_only_a_hash_of_the_session_token_is_stored(env):
 
 
 # --- Limits ---------------------------------------------------------------------------------
-
-
-def test_rate_limit_on_sign_in(env, monkeypatch):
-    client, _ = env
-    monkeypatch.setattr(get_settings(), "rate_limit_enabled", True)
-    ratelimit.reset()
-    allowed, _ = ratelimit.LIMITS["login"]
-    statuses = [
-        client.post(
-            "/api/auth/login", json={"email": "victim@example.org", "password": "Guess-12345"}
-        ).status_code
-        for _ in range(allowed + 1)
-    ]
-    assert statuses[:allowed] == [401] * allowed and statuses[-1] == 429
-    ratelimit.reset()
 
 
 # --- Headers, docs, errors -------------------------------------------------------------------

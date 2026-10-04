@@ -591,7 +591,11 @@ def test_disable_signs_the_account_out_and_blocks_sign_in(env):
     assert off.json()["role"] == "medical_rep"
     assert client.get("/api/nba", headers=as_user(session)).status_code == 401
     refused = login(client, "to.disable@example.org")
-    assert refused.status_code == 403 and code_of(refused) == "account_disabled"
+    # The same answer as a wrong password: sign-in never reveals that an account exists
+    # or is disabled.
+    wrong = login(client, "to.disable@example.org", "Not-the-password-1")
+    assert refused.status_code == 401 and code_of(refused) == "invalid_credentials"
+    assert refused.json() == wrong.json()
 
     on = client.patch(f"/api/admin/users/{uid}/status", json={"status": "active"}, headers=admin)
     assert on.status_code == 200 and login(client, "to.disable@example.org").status_code == 200

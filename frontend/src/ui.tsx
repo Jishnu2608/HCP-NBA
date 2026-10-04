@@ -845,6 +845,8 @@ export function errorMessage(error: unknown): string {
     if (error.status === 0) return "We couldn't reach the server. Check your connection and try again.";
     if (error.status >= 500) return ERROR_COPY.server.message;
     if (error.status === 422 && !error.code) return "Some of the information is missing or not in the expected form.";
+    // The limit itself is enforced by the server; this is only its wording on screen.
+    if (error.code === "rate_limited") return "Too many attempts. Please wait a few minutes and try again.";
     return error.message || ERROR_COPY[errorKind(error)].message;
   }
   // Errors raised deliberately by this app's own code carry readable messages; anything
