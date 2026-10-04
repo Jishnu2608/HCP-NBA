@@ -3,6 +3,7 @@
 // validates every field again and decides everything that matters (role, age, verification).
 import { useState } from "react";
 import { ApiError } from "../api";
+import { ResidenceFields } from "../legal";
 import { PasswordField, TextField } from "../ui";
 
 export interface AccountValues {
@@ -11,6 +12,8 @@ export interface AccountValues {
   date_of_birth: string;
   password: string;
   confirm_password: string;
+  country: string;
+  region: string | null;
 }
 
 export const EMPTY_ACCOUNT: AccountValues = {
@@ -19,6 +22,8 @@ export const EMPTY_ACCOUNT: AccountValues = {
   date_of_birth: "",
   password: "",
   confirm_password: "",
+  country: "",
+  region: null,
 };
 
 const PASSWORD_RULE = /^(?=.*[A-Za-z])(?=.*\d).{10,}$/;
@@ -40,6 +45,8 @@ export function accountProblems(v: AccountValues, emailFixed: boolean) {
     password: !PASSWORD_RULE.test(v.password) ? "Use at least 10 characters, with a letter and a number." : null,
     confirm_password:
       v.confirm_password !== v.password || !v.confirm_password ? "The two passwords do not match." : null,
+    country: !v.country ? "Choose your country of residence." : null,
+    region: v.country === "US" && !v.region ? "Choose your state." : null,
   };
 }
 
@@ -51,6 +58,8 @@ const FIELD_OF: Record<string, keyof AccountValues> = Object.fromEntries([
   ["age_requirement", "date_of_birth"],
   ["weak_password", "password"],
   ["password_mismatch", "confirm_password"],
+  ["invalid_country", "country"],
+  ["invalid_region", "region"],
 ]);
 
 export function fieldError(error: unknown): { field: keyof AccountValues; message: string } | null {
@@ -130,6 +139,12 @@ export function AccountFields({
         }
       />
       <div className="hidden sm:block" aria-hidden />
+      <ResidenceFields
+        country={values.country}
+        region={values.region}
+        onChange={(country, region) => setValues({ ...values, country, region })}
+        errors={{ country: err("country"), region: err("region") }}
+      />
       <PasswordField
         label="Password"
         autoComplete="new-password"

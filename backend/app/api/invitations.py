@@ -46,6 +46,9 @@ class AcceptBody(StrictBody):
     date_of_birth: str = Field(max_length=10)
     password: str = Field(max_length=128)
     confirm_password: str = Field(max_length=128)
+    country: str = Field(max_length=2)
+    region: str | None = Field(default=None, max_length=3)
+    accept_terms: bool
 
 
 def _created(db: Session, actor: User, result) -> dict:
@@ -138,6 +141,9 @@ def accept(body: AcceptBody, request: Request, db: Session = Depends(get_db)) ->
             date_of_birth=body.date_of_birth,
             password=body.password,
             confirm=body.confirm_password,
+            country=body.country,
+            region=body.region,
+            accept_terms=body.accept_terms,
         )
         return service.issue_or_report(db, user)
 

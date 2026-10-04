@@ -52,8 +52,15 @@ def build_request(db: Session, nba: Nba) -> DraftRequest:
 
 
 def _safe_draft(provider: LLMProvider, request: DraftRequest) -> tuple[DraftResult, str | None]:
-    """Provider output if it validates, otherwise the template. Second item is why it fell back."""
-    if provider is not _TEMPLATE:
+    """Provider output if it validates, otherwise the template. Second item is why it fell back.
+
+    A provider other than the built-in template calls an external service, and the request
+    names the person. It is used only when the operator has allowed identifiable data to
+    leave the application (`NBA_ALLOW_EXTERNAL_IDENTIFIABLE_DATA`), for example once a
+    data-processing agreement is in place; otherwise the template is used."""
+    if provider is not _TEMPLATE and not get_settings().allow_external_identifiable_data:
+        reason = "external provider not permitted to receive identifiable data"
+    elif provider is not _TEMPLATE:
         try:
             result = provider.draft(request)
             result.output = validate(result.output, request)

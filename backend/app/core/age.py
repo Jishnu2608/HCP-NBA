@@ -8,7 +8,7 @@ account holder's age is a fact about the person, not about the simulation.
 from datetime import UTC, date, datetime
 
 from app.auth.errors import AuthError
-from app.core.config import get_settings
+from app.core import jurisdiction
 from app.models import User
 
 OLDEST = 120
@@ -40,15 +40,18 @@ def parse_dob(value: str | date) -> date:
     return dob
 
 
-def is_minor_dob(dob: date | None) -> bool | None:
-    """True / False, or None when no date of birth is on file (system and seeded staff)."""
+def is_minor_dob(
+    dob: date | None, country: str | None = None, region: str | None = None
+) -> bool | None:
+    """True / False, or None when no date of birth is on file (system and seeded staff).
+    The age of adulthood depends on where the person lives (core/jurisdiction.py)."""
     if dob is None:
         return None
-    return age_on(dob, today()) < get_settings().minor_age
+    return age_on(dob, today()) < jurisdiction.adult_age(country, region)
 
 
 def is_minor(user: User) -> bool | None:
-    return is_minor_dob(user.date_of_birth)
+    return is_minor_dob(user.date_of_birth, user.country, user.region)
 
 
 def age_band(user: User) -> str:

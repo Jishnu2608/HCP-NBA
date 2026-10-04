@@ -2,7 +2,9 @@ import { MailOpen, UserRound } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { ApiError } from "../api";
 import { useAuth } from "../auth";
+import { Agreements } from "../legal";
 import { Button, ErrorNote } from "../ui";
 import { AccountFields, accountProblems, fieldError, useAccountForm } from "./AccountFields";
 import AuthLayout from "./AuthLayout";
@@ -15,7 +17,21 @@ export default function Signup() {
   const form = useAccountForm();
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const invalid = Object.values(accountProblems(form.values, false)).some(Boolean);
+  // Never pre-ticked; the server refuses the sign-up without them.
+  const [terms, setTerms] = useState(false);
+  const [health, setHealth] = useState(false);
+  const code = error instanceof ApiError ? error.code : null;
+  const agreementErrors = {
+    terms:
+      (form.submitted && !terms) || code === "terms_required"
+        ? "Agree to the Terms and acknowledge the Privacy Policy to continue."
+        : null,
+    health:
+      (form.submitted && !health) || code === "health_consent_required"
+        ? "A patient account needs this consent."
+        : null,
+  };
+  const invalid = Object.values(accountProblems(form.values, false)).some(Boolean) || !terms || !health;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -24,7 +40,7 @@ export default function Signup() {
     setBusy(true);
     setError(null);
     try {
-      await signup(form.values);
+      await signup({ ...form.values, accept_terms: terms, consent_health_data: health });
       navigate("/signup/verify");
     } catch (e) {
       setError(e);
@@ -60,7 +76,17 @@ export default function Signup() {
 
         <AccountFields form={form} serverError={error} />
 
-        {!fieldError(error) && <ErrorNote error={error} />}
+        <Agreements
+          terms={terms}
+          health={health}
+          onTerms={setTerms}
+          onHealth={setHealth}
+          errors={agreementErrors}
+        />
+
+        {!fieldError(error) && code !== "terms_required" && code !== "health_consent_required" && (
+          <ErrorNote error={error} />
+        )}
         <Button type="submit" variant="primary" size="lg" busy={busy} className="w-full sm:w-auto">
           {busy ? "Creating account" : "Create account"}
         </Button>

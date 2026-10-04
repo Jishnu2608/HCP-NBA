@@ -15,6 +15,7 @@ from app.api import (
     me,
     nba,
     people,
+    privacy,
     system,
     users,
 )
@@ -22,6 +23,7 @@ from app.auth.service import ensure_system_admin
 from app.core import http_security
 from app.core.config import REPO_ROOT, get_settings
 from app.core.db import SessionLocal
+from app.maintenance import purge_expired
 
 settings = get_settings()
 
@@ -33,6 +35,7 @@ async def lifespan(_: FastAPI):
     try:
         with SessionLocal() as db:
             ensure_system_admin(db)
+            purge_expired(db)
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")
@@ -54,6 +57,9 @@ app = FastAPI(
 ROUTERS = (system, auth, invitations, users, nba, people, content, governance, me, analytics)
 for module in ROUTERS:
     app.include_router(module.router)
+app.include_router(privacy.legal)
+app.include_router(privacy.router)
+app.include_router(privacy.admin)
 
 # One deployable unit: when the frontend has been built, this process serves it too.
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"

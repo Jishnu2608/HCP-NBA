@@ -3,6 +3,7 @@ import json
 import pytest
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.datagen.generate import GenConfig, generate
 from app.llm import service
 from app.llm.base import DraftOutput, DraftRequest, DraftResult, MessageVariant
@@ -118,10 +119,27 @@ class FakeProvider:
 
 
 @pytest.fixture
-def cycled(db):
+def cycled(db, monkeypatch):
+    """A cycle, with external providers allowed to receive identifiable data (the operator
+    setting the fake providers below stand in for)."""
+    monkeypatch.setattr(get_settings(), "allow_external_identifiable_data", True)
     generate(db, GenConfig(seed=5, n_patients=120, n_hcps=24, n_reps=3, n_care_managers=2))
     result = run_cycle(db)
     return db, result
+
+
+def test_external_provider_gets_no_identifiable_data_unless_allowed(cycled, monkeypatch):
+    db, _ = cycled
+    monkeypatch.setattr(get_settings(), "allow_external_identifiable_data", False)
+    called = []
+
+    class Recording(FakeProvider):
+        def draft(self, request):
+            called.append(request)
+            return super().draft(request)
+
+    rows = service.draft_for_nba(db, sms_nba(db), Recording(body="Hi."))
+    assert called == [] and {r.provider for r in rows} == {"template"}
 
 
 def sms_nba(db) -> Nba:

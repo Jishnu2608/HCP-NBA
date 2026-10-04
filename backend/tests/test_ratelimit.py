@@ -9,6 +9,8 @@ from conftest import (
     ADMIN_LOGIN,
     ADULT_DOB,
     PASSWORD,
+    PATIENT_AGREEMENTS,
+    PRO_AGREEMENTS,
     ApiClient,
     challenge_of,
     cookie_header,
@@ -75,7 +77,7 @@ def login(client, email, password, address="10.0.0.1"):
 def signup(client, email, address="10.0.0.1"):
     body = {
         "name": "Rate Test", "email": email, "date_of_birth": ADULT_DOB,
-        "password": PASSWORD, "confirm_password": PASSWORD,
+        "password": PASSWORD, "confirm_password": PASSWORD, **PATIENT_AGREEMENTS,
     }  # fmt: skip
     return client.post("/api/auth/signup", json=body, headers=ip(address))
 
@@ -270,7 +272,7 @@ def test_codes_are_never_logged_or_returned_with_mail_configured(env, monkeypatc
 def accept_from(client, token: str, address: str):
     body = {
         "token": token, "name": "X Y", "date_of_birth": ADULT_DOB,
-        "password": PASSWORD, "confirm_password": PASSWORD,
+        "password": PASSWORD, "confirm_password": PASSWORD, **PRO_AGREEMENTS,
     }  # fmt: skip
     return client.post("/api/invitations/accept", json=body, headers=ip(address))
 

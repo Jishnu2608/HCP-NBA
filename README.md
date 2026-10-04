@@ -111,6 +111,18 @@ Email only.
 - Someone signing up with an email that already has an account sees the same "Check your email to continue" screen; the owner receives a notice instead of a code. The form cannot be used to find out who is registered.
 - A failed sign-in always says "Incorrect email or password", whether the email is unknown, the password is wrong or the account is disabled.
 
+### Privacy, terms and consent
+
+- **Documents:** Privacy Policy, Terms & Conditions and Cookie Policy at `/legal/privacy`, `/legal/terms` and `/legal/cookies`, linked from every page footer, sign-up, invitation acceptance and Data & privacy. They are versioned files on the server; earlier versions stay readable. They are **drafts pending legal review**: facts only the operator can supply (entity, address, privacy contact, DPO, EU representative, governing law, hosting region) come from `NBA_LEGAL_*` settings and show as "[To be confirmed]" until set.
+- **Agreements at sign-up:** an unticked box to agree to the Terms and acknowledge the Privacy Policy, and, for patients only, a separate unticked box giving explicit consent to process health information. The server refuses a sign-up or invitation acceptance without them and records each one with the document version, time, the person's country / state, and where it was given. Records are never edited.
+- **Re-acceptance:** when a new document version requires it (or a patient withdraws health-information consent), the server refuses everything except reading the documents, Data & privacy and sign-out until it is accepted. Existing accounts, including the administrator and demo accounts, are asked once at their next sign-in.
+- **Data & privacy** (every signed-in person): accepted versions, consents with withdrawal, consent history, a download of your own data, and privacy requests (access, correction, deletion, restriction, portability, objection, consent withdrawal). Requests are tickets worked by a person on **Privacy requests** (administrator); submitting one does not change or delete anything by itself.
+- **Residence:** sign-up asks for country (and US state). Adulthood is decided per jurisdiction (18 unless an override applies; Alabama and Nebraska 19, Mississippi 21, all to be confirmed by counsel).
+- **Cookies:** only the session, CSRF and verification cookies and two display preferences, all necessary or chosen by you. No analytics, advertising or tracking, so there is no cookie banner.
+- **External language models** receive no identifiable patient or professional data unless `NBA_ALLOW_EXTERNAL_IDENTIFIABLE_DATA` is turned on.
+
+The application makes no claim of HIPAA, GDPR, CCPA or any other compliance or certification; it is designed with applicable privacy and security requirements in mind, and its legal documents must be reviewed by qualified counsel before production use.
+
 ### Rate limits
 
 Enforced by the server and stored in the database, so they survive a restart and cannot be reset from the browser. A refused request gets "Too many attempts" and a `Retry-After` time; nothing is ever locked permanently.
@@ -240,7 +252,9 @@ Set through `NBA_`-prefixed environment variables or `.env`. Names only; see [.e
 | `NBA_ENVIRONMENT` | `local` by default. Anything else turns on Secure cookies and HSTS and turns off the API reference and on-screen codes |
 | `NBA_SESSION_IDLE_MINUTES`, `NBA_ACCESS_TOKEN_MINUTES` | Session idle timeout and absolute lifetime |
 | `NBA_ALLOWED_ORIGINS` | Extra origins allowed to send changes (the Vite dev server) |
-| `NBA_MINOR_AGE` | Age threshold for minors |
+| `NBA_MINOR_AGE` | Default age of adulthood (jurisdiction overrides in `core/jurisdiction.py`) |
+| `NBA_LEGAL_*`, `NBA_PRIVACY_RESPONSE_DAYS` | Operator details shown in the legal documents; unset = "[To be confirmed]" |
+| `NBA_ALLOW_EXTERNAL_IDENTIFIABLE_DATA` | Allow an external drafting provider to receive names (off by default) |
 | `NBA_LLM_PROVIDER` | Drafting provider. Offline templates by default. |
 
 Engine policy (risk weights, thresholds, contact limits, channel costs) is edited on the Engine page and stored in the database.
@@ -306,6 +320,7 @@ scripts/                setup and run
 9. Model features are computed as they stood before each historical touch; no look-ahead.
 10. No secret in the repository.
 11. The audit trail is append-only, and account and invitation ids are never reused, so every entry keeps pointing at the account it was written for.
+12. Nothing tells an outsider whether an email is registered: sign-up and failed sign-in answer the same way either way, and rate limits are enforced on the server, never in the browser.
 
 ## Path to production
 
@@ -328,9 +343,13 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 - Models are trained on synthetic behaviour; measured quality is modest by design and real-world results will differ.
 - Outreach delivery is simulated. No outreach message leaves the system.
 - **Email verification codes and invitation emails:** both were checked end to end once with Gmail: a sign-up code, and an invitation that was accepted, verified with its emailed code and produced an active, verified HCP account. Real delivery has no automated test (tests use a fake mailbox), and the invitation email has not been checked in Outlook or Apple Mail. A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
-- No forgot-password, password change, account lockout or MFA at sign-in yet.
+- No forgot-password, password change or MFA at sign-in yet. There is deliberately no permanent account lockout: repeated failures are slowed by time-limited rate limits instead, so nobody can lock another person out.
+- Rate limits count by the client address the server sees. Behind a reverse proxy or load balancer every request would share one address; reading the forwarded client address is not configured yet.
+- Unverified accounts: the correct password for an account that has not confirmed its email answers "verify your email" instead of the generic sign-in failure, so the owner can finish. Anyone holding that password can see the account exists.
 - A professional cannot be invited to an email that already has a patient account.
-- An administrator can disable accounts but not delete them from the app.
+- An administrator can disable accounts but not delete them from the app; deletion requests are carried out by a person.
+- **Legal documents are drafts.** Legal bases, retention periods, HIPAA applicability, sub-processors, hosting region, transfer mechanisms, governing law and adult-age rules are marked to be confirmed. No retention periods are enforced except for expired security records (sessions, codes, rate-limit counters).
+- No guardian / parental-consent flow for minors, and no consent model yet for content sent to healthcare professionals.
 - The hosted language-model provider has not been exercised; drafting uses offline templates.
 - No browser end-to-end tests yet; behaviour is covered by backend tests and manual checks, including a scripted layout check at phone, tablet and desktop widths. Real browser zoom and operating-system display scaling have not been tested.
 - Explanation texts from the engine format dates day-month-year, while the interface uses US dates.

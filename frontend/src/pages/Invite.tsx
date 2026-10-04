@@ -15,6 +15,7 @@ import type { FormEvent, ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, post } from "../api";
 import { useAuth } from "../auth";
+import { Agreements } from "../legal";
 import { Button, ErrorNote, Skeleton, fmtDateTime } from "../ui";
 import { AccountFields, accountProblems, fieldError, useAccountForm } from "./AccountFields";
 import AuthLayout from "./AuthLayout";
@@ -146,7 +147,12 @@ export default function Invite() {
     if (info) setValues((v) => ({ ...v, email: info.email }));
   }, [info, setValues]);
   const values = form.values;
-  const invalid = Object.values(accountProblems(values, true)).some(Boolean);
+  const [terms, setTerms] = useState(false);
+  const termsError =
+    (form.submitted && !terms) || (error instanceof ApiError && error.code === "terms_required")
+      ? "Agree to the Terms and acknowledge the Privacy Policy to continue."
+      : null;
+  const invalid = Object.values(accountProblems(values, true)).some(Boolean) || !terms;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -162,6 +168,9 @@ export default function Invite() {
         date_of_birth: values.date_of_birth,
         password: values.password,
         confirm_password: values.confirm_password,
+        country: values.country,
+        region: values.region,
+        accept_terms: terms,
       });
       navigate("/signup/verify");
     } catch (e) {
@@ -234,7 +243,9 @@ export default function Invite() {
 
         <AccountFields form={form} emailFixed serverError={error} />
 
-        {!fieldError(error) && <ErrorNote error={error} />}
+        <Agreements terms={terms} onTerms={setTerms} errors={{ terms: termsError }} />
+
+        {!fieldError(error) && !termsError && <ErrorNote error={error} />}
         <Button type="submit" variant="primary" size="lg" busy={busy} className="w-full sm:w-auto">
           {busy ? "Sending code" : "Accept and continue"}
         </Button>

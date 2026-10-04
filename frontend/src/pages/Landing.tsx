@@ -415,6 +415,12 @@ export default function Landing() {
                 <ClipboardList className="h-3.5 w-3.5" aria-hidden /> Patient sign-up
               </Link>
             </div>
+            <div className="space-y-2">
+              <div className="font-semibold text-ink">Legal</div>
+              <Link to="/legal/privacy" className="block text-ink-muted hover:text-ink">Privacy Policy</Link>
+              <Link to="/legal/terms" className="block text-ink-muted hover:text-ink">Terms & Conditions</Link>
+              <Link to="/legal/cookies" className="block text-ink-muted hover:text-ink">Cookie Policy</Link>
+            </div>
           </nav>
         </div>
       </footer>

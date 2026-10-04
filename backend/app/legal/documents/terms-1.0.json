@@ -1,0 +1,151 @@
+{
+  "title": "Terms & Conditions",
+  "effective_date": "2026-10-04",
+  "last_updated": "2026-10-04",
+  "requires_reacceptance": true,
+  "draft": true,
+  "summary": "The terms for using Next Best Action. This is a draft prepared for a proof-of-concept application; clauses marked for legal review do not yet create obligations and must be reviewed by qualified counsel before production use.",
+  "sections": [
+    {
+      "id": "acceptance",
+      "heading": "1. Accepting these terms",
+      "blocks": [
+        {"p": "These terms apply between you and {{controller_name}} (\"we\", \"us\") when you use the Next Best Action application. You accept them when you create an account. If you use the application on behalf of an organisation, that organisation's agreement with us may also apply and takes precedence where it conflicts with these terms."}
+      ]
+    },
+    {
+      "id": "service",
+      "heading": "2. What the service is",
+      "blocks": [
+        {"p": "Next Best Action suggests the next useful communication with a patient or a healthcare professional, explains why, and lets authorised staff review and send it. It is a proof-of-concept that uses synthetic (invented) patient and professional records."},
+        {"note": "The application supports communication decisions only. It is not a medical device, does not provide medical advice, diagnosis or treatment, and is not for emergencies. In an emergency, contact your local emergency services."}
+      ]
+    },
+    {
+      "id": "eligibility",
+      "heading": "3. Eligibility and accounts",
+      "blocks": [
+        {"list": [
+          "Anyone may create a patient account. People under the age of adulthood where they live may do so; further requirements for minors may apply in the future.",
+          "Healthcare professional, medical representative, care manager and compliance reviewer accounts are available only by invitation from someone authorised to invite that role, and only to adults. The invitation decides the role; it cannot be changed by the person invited.",
+          "You must give accurate information, including your date of birth and country of residence.",
+          "One account per person. Do not create an account for someone else."
+        ]}
+      ]
+    },
+    {
+      "id": "security",
+      "heading": "4. Keeping your account secure",
+      "blocks": [
+        {"list": [
+          "Keep your password confidential and do not share your account.",
+          "Do not forward invitation links; they are for the person named in them.",
+          "Tell us promptly at {{privacy_email}} if you believe your account has been used without your permission.",
+          "We may suspend sign-in after repeated failed attempts, for a limited time, to protect accounts."
+        ]}
+      ]
+    },
+    {
+      "id": "acceptable-use",
+      "heading": "5. Acceptable use",
+      "blocks": [
+        {"p": "You must not:"},
+        {"list": [
+          "access, or try to access, information your role or assignments do not allow, or test the application's security without written permission;",
+          "use another person's account or invitation;",
+          "enter real patient or healthcare-professional information into this proof-of-concept;",
+          "send content that has not been approved through the content-review process, or try to bypass consent, contact limits or review steps;",
+          "interfere with the application, overload it, or copy it by automated means;",
+          "use the application in breach of any law or professional obligation."
+        ]}
+      ]
+    },
+    {
+      "id": "roles",
+      "heading": "6. Responsibilities by role",
+      "blocks": [
+        {"table": {"head": ["Role", "Responsibilities"], "rows": [
+          ["Healthcare professionals", "Clinical decisions remain yours. Use your own professional judgement and applicable guidelines; do not rely on the application for diagnosis or treatment."],
+          ["Care managers and medical representatives", "Review every recommendation before approving it; send only approved content; respect each person's consent and contact preferences; act only on the records assigned to you."],
+          ["Compliance reviewers", "Approve or reject content according to your organisation's review standards. Only compliance reviewers may approve content."],
+          ["Administrators", "Manage accounts, invitations and assignments responsibly. Administrators cannot approve content and cannot change a person's role."],
+          ["Patients", "Keep your contact and sharing choices up to date. Messages are reminders and support, not medical advice; talk to your healthcare professional about your treatment."]
+        ]}}
+      ]
+    },
+    {
+      "id": "recommendations",
+      "heading": "7. Recommendations, automation and AI",
+      "blocks": [
+        {"list": [
+          "Recommendations are operational suggestions about communication, produced by rules and statistical models. They can be wrong or incomplete.",
+          "A person reviews every recommendation before anything is sent. Fixed rules for content approval, consent and contact limits apply regardless of what a model suggests.",
+          "Draft wording may be generated by templates or, if enabled, by a language model; drafts are checked and must be reviewed by a person.",
+          "No outcome is guaranteed, including any improvement in medication adherence or health."
+        ]}
+      ]
+    },
+    {
+      "id": "availability",
+      "heading": "8. Availability and changes to the service",
+      "blocks": [
+        {"p": "The application is provided as a proof-of-concept and may change, be interrupted or be withdrawn. Demonstration data may be reset at any time."}
+      ]
+    },
+    {
+      "id": "ip",
+      "heading": "9. Intellectual property",
+      "blocks": [
+        {"p": "The application, its software and its content belong to us or our licensors. You may use them only to use the service as intended. Content you enter remains yours; you allow us to use it to provide the service."}
+      ]
+    },
+    {
+      "id": "third-parties",
+      "heading": "10. Third-party services",
+      "blocks": [
+        {"p": "The application uses third-party providers, for example to send email. Their services are subject to their own terms. The providers used are listed in the Privacy Policy."}
+      ]
+    },
+    {
+      "id": "liability",
+      "heading": "11. Disclaimers and limitation of liability",
+      "blocks": [
+        {"p": "The service is provided \"as is\" for demonstration purposes. To the extent permitted by law, we exclude implied warranties and limit our liability. Nothing in these terms limits liability that cannot be limited by law."},
+        {"review": "Disclaimer and liability wording must be drafted and reviewed by counsel for each jurisdiction before production; this section does not yet set specific limits."}
+      ]
+    },
+    {
+      "id": "termination",
+      "heading": "12. Suspension, termination and deletion",
+      "blocks": [
+        {"list": [
+          "We may suspend or disable an account that breaches these terms or puts others at risk.",
+          "Disabling an account signs it out everywhere and revokes any invitations it sent.",
+          "You can ask for your account to be deleted at any time in Data & privacy. Requests are reviewed by a person; some records (for example the audit log) may be kept where required, as described in the Privacy Policy."
+        ]}
+      ]
+    },
+    {
+      "id": "law",
+      "heading": "13. Governing law and disputes",
+      "blocks": [
+        {"p": "These terms are governed by the laws of {{governing_law}}. Mandatory consumer-protection rules of the country where you live continue to apply."},
+        {"review": "Governing law, venue and dispute resolution are to be decided and drafted by counsel."}
+      ]
+    },
+    {
+      "id": "changes",
+      "heading": "14. Changes to these terms",
+      "blocks": [
+        {"p": "We will publish changes as a new version with a new effective date. Earlier versions remain available. If a change is significant, we will ask you to review and accept it before you continue."}
+      ]
+    },
+    {
+      "id": "contact",
+      "heading": "15. Contact",
+      "blocks": [
+        {"p": "{{controller_name}}, {{controller_address}}. Email: {{privacy_email}}."}
+      ]
+    }
+  ]
+}

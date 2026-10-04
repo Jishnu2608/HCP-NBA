@@ -23,12 +23,14 @@ from app.auth.otp import Issued, get_sender, otp_service
 from app.auth.provisioning import assignments
 from app.auth.repository import SqlUserRepository, normalize_email
 from app.auth.sessions import Decoy, sessions
-from app.core import age, ratelimit
+from app.core import age, jurisdiction, ratelimit
 from app.core.config import get_settings
 from app.core.permissions import PUBLIC_SIGNUP_ROLE, ROLE_HOME, permissions_for
 from app.core.security import fingerprint, hash_password, verify_password
+from app.legal import consents
 from app.mail.templates import account_exists_email
 from app.mail.transport import get_mailer
+from app.maintenance import purge_expired
 from app.models import User
 from app.models.enums import AccountSource, AccountStatus, Role
 from app.models.tables import utcnow
@@ -52,11 +54,13 @@ class AuthResult:
     extra: dict = field(default_factory=dict)
 
 
-def account_out(user: User) -> dict:
+def account_out(user: User, db: Session | None = None) -> dict:
     """What the client may know about the signed-in account. Permissions come from the
     server-side role map; the client never supplies or decides them. The date of birth is
-    never included."""
-    return {
+    never included. With a database session, `pending_consents` lists what the account
+    must accept before the API serves anything else."""
+    extra = {"pending_consents": consents.pending(db, user)} if db is not None else {}
+    return extra | {
         "id": user.id,
         "name": user.display_name,
         "email": user.email,
@@ -73,7 +77,7 @@ def account_out(user: User) -> dict:
 
 def _signed_in(db: Session, user: User, user_agent: str | None) -> AuthResult:
     return AuthResult(
-        body={"user": account_out(user)},
+        body={"user": account_out(user, db)},
         session_token=sessions.issue(db, user, user_agent),
         clear_verify=True,
     )
@@ -175,16 +179,49 @@ def _random_code() -> str:
     return f"{secrets.randbelow(10**6):06d}"
 
 
+def require_agreements(accept_terms: bool, health_data: bool | None = None) -> None:
+    """The mandatory acknowledgement, and (for patients) the separate explicit consent to
+    process health information. Neither is ever assumed: both must be actively given."""
+    if accept_terms is not True:
+        raise AuthError(
+            422,
+            "terms_required",
+            "Read and agree to the Terms & Conditions and acknowledge the Privacy Policy.",
+        )
+    if health_data is not None and health_data is not True:
+        raise AuthError(
+            422,
+            "health_consent_required",
+            "A patient account needs your consent to process your health information.",
+        )
+
+
+def record_agreements(db: Session, user: User, source: str) -> None:
+    consents.accept(db, user, consents.required_kinds(user), source)
+
+
 def signup(
-    db: Session, *, name: str, email: str, date_of_birth: str, password: str, confirm: str
+    db: Session,
+    *,
+    name: str,
+    email: str,
+    date_of_birth: str,
+    password: str,
+    confirm: str,
+    country: str,
+    region: str | None,
+    accept_terms: bool,
+    consent_health_data: bool,
 ) -> AuthResult:
     """Public registration. Always creates a patient: professional roles exist only through
     an invitation, and no role is accepted from the request."""
     repo = SqlUserRepository(db)
     name = validate_name(name)
     email = validate_email(email)
+    country, region = jurisdiction.validate(country, region)
     dob = age.parse_dob(date_of_birth)
     validate_password(password, confirm)
+    require_agreements(accept_terms, consent_health_data)
     get_sender()  # no way to deliver a code at all: refuse before anything is stored
 
     existing = repo.get_by_email(email)
@@ -203,6 +240,7 @@ def signup(
         # Nothing is activated until the code sent to the inbox is entered.
         existing.display_name = name
         existing.date_of_birth = dob
+        existing.country, existing.region = country, region
         existing.password_hash = hash_password(password)
         user = existing
     else:
@@ -214,7 +252,9 @@ def signup(
             source=AccountSource.SIGNUP,
         )
         user.date_of_birth = dob
+        user.country, user.region = country, region
     db.flush()
+    record_agreements(db, user, "signup")
     result = issue_or_report(db, user)
     audit.record(
         db,
@@ -385,6 +425,7 @@ def login(
     audit.record(db, "login_succeeded", "user", user.id, actor=user.username, actor_role=user.role)
     # A successful sign-in clears this email + address's failure count (not the address's).
     ratelimit.clear(db, "login_fail_account", login_keys(email, ip)[0])
+    purge_expired(db)
     return _signed_in(db, user, user_agent)
 
 

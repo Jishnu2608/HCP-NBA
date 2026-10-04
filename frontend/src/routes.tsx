@@ -6,7 +6,9 @@ import {
   ClipboardList,
   Cpu,
   FileCheck2,
+  FileLock2,
   Inbox,
+  Lock,
   MailPlus,
   Pill,
   ScrollText,
@@ -52,6 +54,8 @@ const Queue = page(() => import("./pages/Queue"));
 const UnderTheHood = page(() => import("./pages/UnderTheHood"));
 const UsersPage = page(() => import("./pages/Users"));
 const InvitationsPage = page(() => import("./pages/Invitations"));
+const PrivacyPage = page(() => import("./pages/Privacy"));
+const PrivacyRequestsPage = page(() => import("./pages/PrivacyRequests"));
 import { CONTENT_READ, HCP_READ, INVITE_ANY, NBA_READ, P, PATIENT_READ } from "./permissions";
 import type { Permission } from "./permissions";
 
@@ -219,6 +223,22 @@ export const ROUTES: AppRoute[] = [
     label: (can) => (can(P.INVITATION_READ_ALL) ? "Invitations" : "Team"),
     icon: icon(MailPlus),
     group: (can) => (can(P.INVITATION_READ_ALL) ? "admin" : "self"),
+  },
+  {
+    path: "/privacy",
+    anyOf: [P.PRIVACY_SELF],
+    element: <PrivacyPage />,
+    label: () => "Data & privacy",
+    icon: icon(Lock),
+    group: "self",
+  },
+  {
+    path: "/privacy-requests",
+    anyOf: [P.PRIVACY_MANAGE],
+    element: <PrivacyRequestsPage />,
+    label: () => "Privacy requests",
+    icon: icon(FileLock2),
+    group: "admin",
   },
   // Detail pages: guarded the same way, not shown in the menu.
   { path: "/nba/:id", anyOf: NBA_READ, element: <NbaDetail /> },

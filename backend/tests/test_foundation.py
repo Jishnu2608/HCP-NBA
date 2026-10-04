@@ -13,6 +13,7 @@ EXPECTED_TABLES = {
     "content", "content_review", "engine_cycle", "nba", "nba_candidate", "message_draft",
     "interaction", "feature_snapshot", "audit_log", "model_version", "engine_config",
     "sim_latent", "otp_challenge", "user_session", "invitation", "rate_limit_hit",
+    "consent_record", "privacy_request",
 }  # fmt: skip
 
 

@@ -1,6 +1,7 @@
 import { Activity, Lock, ShieldCheck, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { LegalLinks } from "../legal";
 import { ThemeToggle } from "../theme";
 import { cx } from "../ui";
 
@@ -89,9 +90,12 @@ export default function AuthLayout({
           <div className="mt-8">{children}</div>
           {footer && <div className="mt-8 border-t border-line pt-6 text-sm text-ink-muted">{footer}</div>}
         </div>
-        <p className="mx-auto mt-10 max-w-md text-center text-xs text-ink-subtle lg:hidden">
-          Synthetic demonstration data. A communication-decision tool, not a clinical one.
-        </p>
+        <div className="mx-auto mt-10 flex w-full max-w-2xl flex-col items-center gap-2 lg:mt-12">
+          <LegalLinks className="justify-center" />
+          <p className="text-center text-xs text-ink-subtle lg:hidden">
+            Synthetic demonstration data. A communication-decision tool, not a clinical one.
+          </p>
+        </div>
       </main>
     </div>
   );

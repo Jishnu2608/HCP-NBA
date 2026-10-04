@@ -30,6 +30,10 @@ PUBLIC = {
     ("POST", "/api/auth/login"),
     ("POST", "/api/invitations/lookup"),
     ("POST", "/api/invitations/accept"),
+    # Legal documents are readable by anyone, before signing up.
+    ("GET", "/api/legal/documents"),
+    ("GET", "/api/legal/documents/{kind}"),
+    ("GET", "/api/legal/jurisdictions"),
 }
 
 

@@ -239,7 +239,7 @@ def reset_demo(
                 "as_of_date": result.cycle.as_of_date,
                 "cycle_id": result.cycle.id,
                 "stats": result.stats,
-                "user": account_out(me),
+                "user": account_out(me, db),
             }
         )
     )

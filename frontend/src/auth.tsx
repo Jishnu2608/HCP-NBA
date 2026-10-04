@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { ApiError, api, post, setSessionLostHandler } from "./api";
+import { ApiError, api, post, setAcceptanceRequiredHandler, setSessionLostHandler } from "./api";
 import type { Permission } from "./permissions";
 import { pendingSignup } from "./session";
 import type { Challenge } from "./session";
@@ -22,6 +22,8 @@ export interface User {
   /** Set by the server only after an authorised invitation (or for platform-provisioned staff). */
   professionally_verified: boolean;
   verification_source: "invitation" | "system" | null;
+  /** What this account must accept before the server serves anything else. */
+  pending_consents: string[];
 }
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -40,6 +42,10 @@ export interface SignupForm {
   date_of_birth: string;
   password: string;
   confirm_password: string;
+  country: string;
+  region: string | null;
+  accept_terms: boolean;
+  consent_health_data: boolean;
 }
 
 export interface AcceptForm {
@@ -48,6 +54,9 @@ export interface AcceptForm {
   date_of_birth: string;
   password: string;
   confirm_password: string;
+  country: string;
+  region: string | null;
+  accept_terms: boolean;
 }
 
 interface AuthState {
@@ -61,6 +70,8 @@ interface AuthState {
   verify: (code: string) => Promise<User>;
   resend: () => Promise<Challenge>;
   logout: () => Promise<void>;
+  /** Ask the server again who is signed in (after accepting updated documents). */
+  refresh: () => Promise<void>;
   /** Use the account the server just signed in (after a demo reset). */
   adopt: (result: { user: User }) => User;
 }
@@ -79,6 +90,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setSessionLostHandler(drop);
+    // Re-read the account so the re-acceptance screen appears.
+    setAcceptanceRequiredHandler(() => {
+      api<User>("/auth/me").then(setUser).catch(() => undefined);
+    });
     // The session cookie is invisible to this code, so ask the server who is signed in.
     api<User>("/auth/me")
       .then(setUser)
@@ -116,6 +131,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       acceptInvitation: async (form) => pendingSignup.save(await post("/invitations/accept", form)),
       verify: async (code) => adopt(await post("/auth/verify-otp", { code })),
       resend: async () => pendingSignup.save(await post("/auth/resend-otp")),
+      refresh: async () => {
+        setUser(await api<User>("/auth/me"));
+      },
       logout: async () => {
         // Ends the session on the server, so the cookie is dead even if copied.
         await post("/auth/logout").catch(() => undefined);

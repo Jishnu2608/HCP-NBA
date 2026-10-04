@@ -1,0 +1,46 @@
+{
+  "title": "Cookie Policy",
+  "effective_date": "2026-10-04",
+  "last_updated": "2026-10-04",
+  "requires_reacceptance": false,
+  "draft": true,
+  "summary": "The cookies and browser storage the application uses. All of them are needed for the application to work or remember a choice you made; there are no analytics, advertising or tracking cookies, so there is nothing to opt in or out of.",
+  "sections": [
+    {
+      "id": "cookies",
+      "heading": "1. Cookies",
+      "blocks": [
+        {"table": {"head": ["Name", "Purpose", "Type", "Duration"], "rows": [
+          ["nba_session", "Keeps you signed in. It cannot be read by scripts on the page.", "Strictly necessary", "Until you sign out, after 60 minutes without use, or 8 hours at most"],
+          ["nba_csrf", "Protects your account against requests forged by other websites.", "Strictly necessary", "Browser session"],
+          ["nba_verify", "Links the email-verification step to the browser where you signed up. It cannot be read by scripts.", "Strictly necessary", "30 minutes"]
+        ]}}
+      ]
+    },
+    {
+      "id": "storage",
+      "heading": "2. Browser storage",
+      "blocks": [
+        {"table": {"head": ["Key", "Purpose", "Where", "Duration"], "rows": [
+          ["nba.theme", "Remembers the light or dark theme you chose.", "Local storage", "Until you clear it"],
+          ["nba.nav.collapsed", "Remembers whether you collapsed the side menu.", "Local storage", "Until you clear it"],
+          ["nba.signup.challenge", "Shows your email and the code timers while you verify a new account. No code or password is stored.", "Session storage", "Until the tab is closed"]
+        ]}}
+      ]
+    },
+    {
+      "id": "none",
+      "heading": "3. What we do not use",
+      "blocks": [
+        {"p": "We do not use analytics, advertising, social-media or other third-party cookies, tracking pixels or similar technologies, and the application loads no third-party scripts or fonts. If that changes, this policy will be updated and your choice will be asked for before any optional cookie is set."}
+      ]
+    },
+    {
+      "id": "control",
+      "heading": "4. Your choices",
+      "blocks": [
+        {"p": "Because these cookies and storage items are needed for the application to work, they cannot be switched off in the application. You can delete them in your browser settings; you will then be signed out and your display choices will be reset."}
+      ]
+    }
+  ]
+}

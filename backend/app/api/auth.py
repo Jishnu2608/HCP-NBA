@@ -33,6 +33,11 @@ class SignupBody(StrictBody):
     date_of_birth: str = Field(max_length=10)
     password: str = Field(max_length=128)
     confirm_password: str = Field(max_length=128)
+    country: str = Field(max_length=2)
+    region: str | None = Field(default=None, max_length=3)
+    # Both must be actively ticked; neither has a default.
+    accept_terms: bool
+    consent_health_data: bool
 
 
 class LoginBody(StrictBody):
@@ -167,6 +172,10 @@ def signup(body: SignupBody, request: Request, db: Session = Depends(get_db)) ->
             date_of_birth=body.date_of_birth,
             password=body.password,
             confirm=body.confirm_password,
+            country=body.country,
+            region=body.region,
+            accept_terms=body.accept_terms,
+            consent_health_data=body.consent_health_data,
         ),
     )
     return run(db, action, status=201)
@@ -216,5 +225,5 @@ def logout(
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)) -> dict:
-    return service.account_out(user)
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    return service.account_out(user, db)

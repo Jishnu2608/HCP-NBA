@@ -35,6 +35,8 @@ export const P = {
   INVITE_CARE_MANAGER: "invite:care_manager",
   INVITE_COMPLIANCE: "invite:compliance",
   INVITATION_READ_ALL: "invitation:read:all",
+  PRIVACY_SELF: "privacy:self",
+  PRIVACY_MANAGE: "privacy:manage",
 } as const;
 
 export type Permission = (typeof P)[keyof typeof P];

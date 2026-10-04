@@ -56,6 +56,10 @@ class Permission(StrEnum):
     INVITE_COMPLIANCE = "invite:compliance"
     # See every invitation, not only the ones you sent.
     INVITATION_READ_ALL = "invitation:read:all"
+    # Privacy: every account manages its own documents, consents, requests and export;
+    # handling other people's privacy requests is separate.
+    PRIVACY_SELF = "privacy:self"
+    PRIVACY_MANAGE = "privacy:manage"
 
 
 P = Permission
@@ -84,6 +88,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.INVITE_CARE_MANAGER,
             P.INVITE_COMPLIANCE,
             P.INVITATION_READ_ALL,
+            P.PRIVACY_SELF,
+            P.PRIVACY_MANAGE,
         }
     ),
     Role.COMPLIANCE: frozenset(
@@ -94,6 +100,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.AUDIT_READ,
             P.ANALYTICS_READ,
             P.MODELS_READ,
+            P.PRIVACY_SELF,
         }
     ),
     Role.MEDICAL_REP: frozenset(
@@ -102,6 +109,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.NBA_READ_HCP_ASSIGNED,
             P.NBA_REVIEW_HCP,
             P.CONTENT_READ_APPROVED_HCP,
+            P.PRIVACY_SELF,
         }
     ),
     Role.CARE_MANAGER: frozenset(
@@ -110,6 +118,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.NBA_READ_PATIENT_ASSIGNED,
             P.NBA_REVIEW_PATIENT,
             P.CONTENT_READ_APPROVED_PATIENT,
+            P.PRIVACY_SELF,
         }
     ),
     # An HCP may bring in the representative and care manager they work with. Never an MLR
@@ -121,9 +130,12 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.SELF_PATIENTS_READ,
             P.INVITE_MEDICAL_REP,
             P.INVITE_CARE_MANAGER,
+            P.PRIVACY_SELF,
         }
     ),
-    Role.PATIENT: frozenset({P.SELF_PROFILE_READ, P.SELF_INBOX, P.SELF_CONSENT_MANAGE}),
+    Role.PATIENT: frozenset(
+        {P.SELF_PROFILE_READ, P.SELF_INBOX, P.SELF_CONSENT_MANAGE, P.PRIVACY_SELF}
+    ),
 }
 
 # The only role anyone may register as without an invitation.

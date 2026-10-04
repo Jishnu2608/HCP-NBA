@@ -11,6 +11,7 @@ from conftest import (
     ADMIN_LOGIN,
     ADULT_DOB,
     PASSWORD,
+    PATIENT_AGREEMENTS,
     ApiClient,
     as_user,
     auth,
@@ -61,6 +62,7 @@ def register(
             "date_of_birth": dob,
             "password": password,
             "confirm_password": password if confirm is None else confirm,
+            **PATIENT_AGREEMENTS,
             **extra,
         },
     )

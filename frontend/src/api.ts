@@ -46,6 +46,12 @@ export const setSessionLostHandler = (handler: () => void) => {
   onSessionLost = handler;
 };
 
+// Called when the server refuses because updated documents must be accepted first.
+let onAcceptanceRequired: () => void = () => {};
+export const setAcceptanceRequiredHandler = (handler: () => void) => {
+  onAcceptanceRequired = handler;
+};
+
 export async function api<T = Json>(
   path: string,
   options: { method?: string; body?: unknown } = {},
@@ -76,6 +82,7 @@ export async function api<T = Json>(
   if (!response.ok) {
     const error = new ApiError(response.status, payload?.detail ?? response.statusText);
     if (response.status === 401 && error.code === "not_authenticated") onSessionLost();
+    if (response.status === 403 && error.code === "acceptance_required") onAcceptanceRequired();
     throw error;
   }
   return payload as T;

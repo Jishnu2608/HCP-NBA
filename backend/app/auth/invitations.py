@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.auth.errors import AuthError
 from app.auth.repository import SqlUserRepository
-from app.core import age
+from app.core import age, jurisdiction
 from app.core.config import get_settings
 from app.core.permissions import (
     INVITE_PERMISSION,
@@ -318,22 +318,39 @@ def lookup(db: Session, token: str) -> dict:
 
 
 def accept(
-    db: Session, token: str, *, name: str, date_of_birth: str, password: str, confirm: str
+    db: Session,
+    token: str,
+    *,
+    name: str,
+    date_of_birth: str,
+    password: str,
+    confirm: str,
+    country: str,
+    region: str | None,
+    accept_terms: bool,
 ) -> User:
     """Creates (or refreshes) the pending account for the invited email with the invited
     role. The caller then issues the one-time code to that email."""
-    from app.auth.service import validate_name, validate_password
+    from app.auth.service import (
+        record_agreements,
+        require_agreements,
+        validate_name,
+        validate_password,
+    )
 
     inv = _by_token(db, token)
     name = validate_name(name)
+    country, region = jurisdiction.validate(country, region)
     dob = age.parse_dob(date_of_birth)
-    if age.is_minor_dob(dob):
+    if age.is_minor_dob(dob, country, region):
         raise AuthError(
             422,
             "age_requirement",
-            f"Professional accounts are for people aged {get_settings().minor_age} or over.",
+            "Professional accounts are for adults "
+            f"(aged {jurisdiction.adult_age(country, region)} or over where you live).",
         )
     validate_password(password, confirm)
+    require_agreements(accept_terms)
 
     repo = SqlUserRepository(db)
     user = repo.get_by_email(inv.email)
@@ -345,6 +362,7 @@ def accept(
         # An unfinished acceptance (for example on another device): start again. The
         # account was never active, so this is not a role change of a working account.
         user.display_name, user.date_of_birth = name, dob
+        user.country, user.region = country, region
         user.password_hash = hash_password(password)
         user.role = inv.role
     else:
@@ -356,8 +374,10 @@ def accept(
             source=AccountSource.INVITATION,
         )
         user.date_of_birth = dob
+        user.country, user.region = country, region
     inv.claimed_user_id = user.id
     db.flush()
+    record_agreements(db, user, "invitation")
     audit.record(
         db, "invitation_claimed", "invitation", inv.id, actor=user.username,
         actor_role=user.role, detail={"user": user.id},

@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { NavLink, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
@@ -18,12 +18,17 @@ import AccessDenied from "./pages/AccessDenied";
 import { BrandMark } from "./pages/AuthLayout";
 import { AppErrorBoundary, ErrorScreen } from "./pages/ErrorPage";
 import Invite from "./pages/Invite";
+import LegalPage from "./pages/LegalPage";
+import Reaccept from "./pages/Reaccept";
+
+const RestrictedPrivacy = lazy(() => import("./pages/Privacy"));
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import VerifyOtp from "./pages/VerifyOtp";
 import type { Permission } from "./permissions";
 import { NAV_GROUPS, ROUTES, groupOf } from "./routes";
+import { LegalLinks } from "./legal";
 import { preferences } from "./session";
 import { ThemeToggle } from "./theme";
 import { Avatar, IconButton, Loading, PersonName, Skeleton, cx, fmtDate } from "./ui";
@@ -374,6 +379,9 @@ function Shell({ children }: { children: ReactNode }) {
             </AppErrorBoundary>
           </div>
         </main>
+        <footer className="mx-auto w-full max-w-[1440px] border-t border-line px-4 py-4 sm:px-6 lg:px-8">
+          <LegalLinks />
+        </footer>
       </div>
     </div>
   );
@@ -403,6 +411,15 @@ export default function App() {
 
   // An invitation link opens on its own page whether or not someone is signed in, so a
   // person signed in as another account is told so instead of being redirected away.
+  // The legal documents are readable by anyone, signed in or not, and while acceptance is pending.
+  if (matchPath("/legal/:kind", location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/legal/:kind" element={<LegalPage />} />
+      </Routes>
+    );
+  }
+
   if (matchPath("/invite/:token", location.pathname)) {
     return (
       <Routes>
@@ -432,6 +449,27 @@ export default function App() {
         />
       </Routes>
     );
+  }
+
+  // Updated Terms / Privacy Policy, or a withdrawn health-information consent: the server
+  // refuses everything else until they are accepted, and this screen explains why.
+  if (user.pending_consents?.length) {
+    // Data & privacy stays reachable (the server allows it): requests, export, history.
+    if (location.pathname === "/privacy") {
+      return (
+        <div className="min-h-dvh bg-canvas">
+          <div className="mx-auto max-w-[1200px] px-4 py-6 sm:px-6 sm:py-8">
+            <NavLink to="/" className="mb-4 inline-flex min-h-10 items-center text-sm font-semibold text-primary-ink">
+              ← Back to review
+            </NavLink>
+            <Suspense fallback={<Loading />}>
+              <RestrictedPrivacy />
+            </Suspense>
+          </div>
+        </div>
+      );
+    }
+    return <Reaccept />;
   }
 
   return (

@@ -18,7 +18,18 @@ from app.auth.errors import AuthError
 from app.core.config import get_settings
 from app.core.permissions import Permission as P
 from app.core.permissions import can
-from app.models import AuditLog, CareManagerPatient, Hcp, Invitation, Nba, Patient, RepHcp, User
+from app.models import (
+    AuditLog,
+    CareManagerPatient,
+    ConsentRecord,
+    Hcp,
+    Invitation,
+    Nba,
+    Patient,
+    PrivacyRequest,
+    RepHcp,
+    User,
+)
 from app.models.enums import AccountSource, NbaStatus, RiskSegment, TargetType
 
 PATIENTS, HCPS, OWN_PATIENT, OWN_HCP = "patients", "hcps", "patient", "hcp"
@@ -286,7 +297,24 @@ class AssignmentService:
                 .order_by(AuditLog.id)
             )
         ]
-        return {"accounts": accounts, "invitations": invites, "audit": audit_rows}
+
+        # Consent records and privacy requests belong to the person, not to the demo data:
+        # kept for every account that exists again after the rebuild (matched by email).
+        def by_email(model, *user_columns):
+            rows = []
+            for r in db.scalars(select(model).order_by(model.id)):
+                row = {c.name: getattr(r, c.name) for c in model.__table__.columns}
+                row.pop("id")
+                rows.append({"row": row, "emails": {c: emails.get(row[c]) for c in user_columns}})
+            return rows
+
+        return {
+            "accounts": accounts,
+            "invitations": invites,
+            "audit": audit_rows,
+            "consents": by_email(ConsentRecord, "user_id"),
+            "privacy_requests": by_email(PrivacyRequest, "user_id", "handled_by_user_id"),
+        }
 
     def restore(self, db: Session, saved: dict) -> None:
         """Re-creates kept accounts, invitations and security audit rows after a rebuild.
@@ -341,6 +369,14 @@ class AssignmentService:
             old = item["row"]
             if old["id"] in new_ids and old["replaced_by_id"] in new_ids:
                 new_ids[old["id"]].replaced_by_id = new_ids[old["replaced_by_id"]].id
+        for model, key in ((ConsentRecord, "consents"), (PrivacyRequest, "privacy_requests")):
+            for item in saved.get(key, []):
+                if item["emails"]["user_id"] not in ids:
+                    continue
+                row = dict(item["row"])
+                for column, email in item["emails"].items():
+                    row[column] = ids.get(email)
+                db.add(model(**row))
         db.flush()
 
 

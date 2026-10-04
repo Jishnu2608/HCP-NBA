@@ -81,9 +81,27 @@ class Settings(BaseSettings):
     # Shown in emails as the contact for questions; falls back to the sender address.
     support_email: str | None = None
 
-    # Age below which an account holder is a minor. Invited professionals must be at least
-    # this age; patients below it may register and are flagged.
+    # Default age of adulthood. Jurisdictions with a different age override it in
+    # core/jurisdiction.py. Invited professionals must be adults where they live; patients
+    # below it may register and are flagged.
     minor_age: int = 18
+
+    # --- Legal documents: facts only the operator can supply. Unset values appear in the
+    # Privacy Policy and Terms as "[To be confirmed]" and keep the "draft" banner on. ---
+    legal_controller_name: str | None = None
+    legal_controller_address: str | None = None
+    legal_privacy_email: str | None = None
+    legal_dpo_contact: str | None = None
+    legal_eu_representative: str | None = None
+    legal_governing_law: str | None = None
+    legal_hosting_region: str | None = None
+    # Days within which privacy requests are answered (to be confirmed by counsel).
+    privacy_response_days: int | None = None
+
+    # Drafting providers that call an external service never receive identifiable patient
+    # or HCP data unless the operator turns this on (for example after a data-processing
+    # agreement is in place).
+    allow_external_identifiable_data: bool = False
 
     # What a newly verified account is given from the synthetic pool.
     signup_panel_patients: int = 30

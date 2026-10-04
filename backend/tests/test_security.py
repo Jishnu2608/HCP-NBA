@@ -8,6 +8,7 @@ import pytest
 from conftest import (
     ADMIN_LOGIN,
     PASSWORD,
+    PATIENT_AGREEMENTS,
     ApiClient,
     auth,
     challenge_of,
@@ -239,7 +240,7 @@ def test_codes_tokens_and_passwords_never_reach_the_log(env, caplog):
         "/api/auth/signup",
         json={
             "name": "Log Check", "email": "log.check@example.org", "date_of_birth": "1980-01-01",
-            "password": PASSWORD, "confirm_password": PASSWORD,
+            "password": PASSWORD, "confirm_password": PASSWORD, **PATIENT_AGREEMENTS,
         },
     )  # fmt: skip
     code = challenge_of(signup)["dev_otp"]

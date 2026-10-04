@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.auth.sessions import SESSION_COOKIE, sessions
 from app.core.db import get_db
 from app.core.permissions import Permission, can_any
+from app.legal import consents
 from app.models import User
 
 
@@ -18,7 +19,22 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
             status.HTTP_401_UNAUTHORIZED,
             {"code": "not_authenticated", "message": "Sign in to continue."},
         )
+    # Until the current Terms / Privacy Policy (and, for patients, consent to process health
+    # information) are accepted, only reading them, accepting, privacy requests, export and
+    # sign-out are possible. Enforced here, so no client can skip it.
+    path = request.url.path
+    if not path.startswith(ALLOWED_WHILE_PENDING) and consents.pending(db, user):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {
+                "code": "acceptance_required",
+                "message": "Review and accept the updated terms to continue.",
+            },
+        )
     return user
+
+
+ALLOWED_WHILE_PENDING = ("/api/auth/me", "/api/auth/logout", "/api/legal/", "/api/privacy/")
 
 
 def require_permission(*permissions: Permission):

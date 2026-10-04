@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 from conftest import (
+    PATIENT_AGREEMENTS,
     ApiClient,
     accept,
     as_user,
@@ -372,6 +373,7 @@ def test_patient_signup_never_gets_the_badge(env):
         json={
             "name": "Pat Doe", "email": "pat.doe@example.org", "date_of_birth": "1970-01-01",
             "password": "Patient-pass-123", "confirm_password": "Patient-pass-123",
+            **PATIENT_AGREEMENTS,
         },
     )  # fmt: skip
     session = signed_in(verify(client, challenge_of(response)))

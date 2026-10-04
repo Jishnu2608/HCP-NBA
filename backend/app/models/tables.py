@@ -103,6 +103,10 @@ class User(Base):
     # Kept for the account's lifetime; age and minor status are always derived from it on
     # the server (core/age.py) and it is never returned to a browser.
     date_of_birth: Mapped[date | None] = mapped_column(Date)
+    # Country of residence (ISO 3166-1 alpha-2) and, for the US, the state. Decides which
+    # age-of-adulthood and privacy rules apply (core/jurisdiction.py). Nothing finer.
+    country: Mapped[str | None] = mapped_column(String(2))
+    region: Mapped[str | None] = mapped_column(String(3))
     # Professional verification: separate from email verification. Set only by a completed
     # invitation (or for platform-provisioned seed staff); no endpoint accepts it.
     professionally_verified: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -143,6 +147,44 @@ class UserSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     user_agent: Mapped[str | None] = mapped_column(String(160))
+
+
+class ConsentRecord(Base):
+    """Append-only record of agreeing to, acknowledging or withdrawing something: which
+    document or consent statement, which version, when, where the person said they live,
+    and from which screen. Never updated: the current state is the latest row per kind."""
+
+    __tablename__ = "consent_record"
+    __table_args__ = (Index("ix_consent_record_user_kind", "user_id", "kind", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    kind: Mapped[str] = mapped_column(String(32))
+    version: Mapped[str] = mapped_column(String(16))
+    action: Mapped[str] = mapped_column(String(16))  # accepted / withdrawn
+    jurisdiction: Mapped[str | None] = mapped_column(String(8))
+    source: Mapped[str] = mapped_column(String(16))  # signup / invitation / settings / reacceptance
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PrivacyRequest(Base):
+    """A data-subject request (access, correction, erasure, ...). Handled by a person with
+    privacy:manage; the requester sees its status. Submitting does not perform it."""
+
+    __tablename__ = "privacy_request"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    type: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="submitted", index=True)
+    details: Mapped[str | None] = mapped_column(Text)
+    resolution: Mapped[str | None] = mapped_column(Text)
+    jurisdiction: Mapped[str | None] = mapped_column(String(8))
+    handled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    respond_by: Mapped[date | None] = mapped_column(Date)
 
 
 class RateLimitHit(Base):

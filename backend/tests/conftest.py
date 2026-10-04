@@ -81,12 +81,27 @@ def sign_in(client, username: str) -> str:
         response = login(client, email, password)
         assert response.status_code == 200, response.text
         cache[username] = session_of(response)
+        # Seeded accounts have no consent records yet: accept the current documents, as the
+        # re-acceptance screen does, so the rest of the API answers.
+        pending = response.json()["user"]["pending_consents"]
+        if pending:
+            accepted = client.post(
+                "/api/privacy/accept",
+                json={"kinds": pending},
+                headers=cookie_header(nba_session=cache[username]),
+            )
+            assert accepted.status_code == 200, accepted.text
     return cache[username]
 
 
 def auth(client, username: str) -> dict:
     return cookie_header(nba_session=sign_in(client, username))
 
+
+# What every sign-up and invitation acceptance must include: residence and the actively
+# ticked agreements (patients also give the separate health-information consent).
+PRO_AGREEMENTS = {"country": "US", "region": "CA", "accept_terms": True}
+PATIENT_AGREEMENTS = {**PRO_AGREEMENTS, "consent_health_data": True}
 
 # Generated per run. Satisfies the sign-up policy: 10+ characters, a letter and a digit.
 PASSWORD = f"Pw-{secrets.token_urlsafe(10)}7"
@@ -129,7 +144,7 @@ def token_of(invite_response) -> str:
 def accept(client, token: str, name="Jordan Lee", dob=ADULT_DOB, password=PASSWORD, **extra):
     body = {
         "token": token, "name": name, "date_of_birth": dob,
-        "password": password, "confirm_password": password, **extra,
+        "password": password, "confirm_password": password, **PRO_AGREEMENTS, **extra,
     }  # fmt: skip
     return client.post("/api/invitations/accept", json=body)
 
