@@ -20,6 +20,27 @@ def test_schema_has_all_tables():
     assert set(Base.metadata.tables) == EXPECTED_TABLES
 
 
+def test_account_and_invitation_ids_are_never_reused(db):
+    """Deleting the newest account must not hand its id (and its audit history) to the
+    next one."""
+    from app.models import User
+
+    def add(name: str) -> int:
+        user = User(username=name, email=f"{name}@example.org", display_name=name,
+                    password_hash="x", role="patient")  # fmt: skip
+        db.add(user)
+        db.flush()
+        return user.id
+
+    add("first")
+    newest = add("second")
+    db.delete(db.get(User, newest))
+    db.flush()
+    assert add("third") > newest
+    for table in ("user", "invitation"):
+        assert Base.metadata.tables[table].dialect_options["sqlite"]["autoincrement"]
+
+
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 

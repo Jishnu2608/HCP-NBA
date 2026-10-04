@@ -77,6 +77,10 @@ class PatientHcp(Base):
 
 class User(Base):
     __tablename__ = "user"
+    # Account ids are never reused (SQLite AUTOINCREMENT; PostgreSQL sequences already
+    # behave this way), so the audit trail of a deleted account can never be mistaken for
+    # a later one. This also holds across a demo reset.
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # Internal handle, used as the actor name in the audit log. Equals the email for sign-ups.
@@ -146,6 +150,8 @@ class Invitation(Base):
     the token itself is never stored, only its hash."""
 
     __tablename__ = "invitation"
+    # Never reused, like account ids: the audit log refers to invitations by id.
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
