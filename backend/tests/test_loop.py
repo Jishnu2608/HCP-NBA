@@ -1,4 +1,4 @@
-"""The closed loop: approve, send, respond, advance the clock, next recommendation."""
+"""The closed loop: approve, send, respond, play out, real days pass, next recommendation."""
 
 from datetime import timedelta
 
@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app import cycle
 from app.core import clock
 from app.core.db import get_db
-from app.datagen.generate import DEFAULT_AS_OF, GenConfig, generate
+from app.datagen.generate import GenConfig, generate
 from app.features import engagement as eng
 from app.features.population import load_population
 from app.main import app
@@ -17,6 +17,10 @@ from app.models import AuditLog, Interaction, MedicationFill, Nba, Patient
 from app.models.enums import NbaStatus, Outcome
 
 INBOX = ("portal", "email", "sms")
+# The synthetic history ends on the real date it was generated; a week later is simulated in
+# tests by pinning the date (the application itself always uses the real date).
+DEFAULT_AS_OF = clock.today()
+WEEK_LATER = DEFAULT_AS_OF + timedelta(days=7)
 
 
 @pytest.fixture(scope="module")
@@ -251,14 +255,19 @@ def test_bulk_send_goes_through_the_same_gates_and_audit(env):
     assert len(sends) == done["sent"] > 0
 
 
-def test_only_admin_can_advance_or_reset(env):
+def test_only_admin_can_play_out_or_reset(env):
     for user in ("cm01", "rep01", "compliance1", "pat00001", "hcp0001"):
-        assert call(env, user, "POST", "/api/admin/advance", json={"days": 7}).status_code == 403
+        assert call(env, user, "POST", "/api/admin/play-out").status_code == 403
         assert call(env, user, "POST", "/api/admin/reset").status_code == 403
-    assert call(env, "admin", "POST", "/api/admin/advance", json={"days": 0}).status_code == 422
+    # There is no way to move the date.
+    assert call(env, "admin", "POST", "/api/admin/advance", json={"days": 7}).status_code in (
+        404,
+        405,
+    )
+    assert call(env, "admin", "GET", "/api/clock").status_code in (404, 405)
 
 
-def test_advancing_the_clock_resolves_responses_and_reruns_the_engine(env):
+def test_play_out_resolves_responses_and_real_days_bring_refills(env):
     _, db = env
     # Send a batch so there is something for the world to respond to.
     batch = db.scalars(
@@ -276,52 +285,59 @@ def test_advancing_the_clock_resolves_responses_and_reruns_the_engine(env):
     assert len(pending_before) >= 40
     fills_before = len(db.scalars(select(MedicationFill.id)).all())
 
-    result = call(env, "admin", "POST", "/api/admin/advance", json={"days": 7, "retrain": False})
-    assert result.status_code == 200, result.text
-    body = result.json()
-    assert body["to"] == (DEFAULT_AS_OF + timedelta(days=7)).isoformat()
-    assert clock.get_today(db) == DEFAULT_AS_OF + timedelta(days=7)
+    # A week of real time has passed when the administrator plays the responses out.
+    with clock.override(WEEK_LATER):
+        result = call(env, "admin", "POST", "/api/admin/play-out")
+        assert result.status_code == 200, result.text
+        body = result.json()
+        assert body["as_of_date"] == WEEK_LATER.isoformat()
+        assert clock.simulated_through(db) == WEEK_LATER
 
-    assert db.scalars(select(Interaction).where(Interaction.outcome == Outcome.PENDING)).all() == []
-    responses = body["responses"]
-    assert sum(v for k, v in responses.items() if k != "natural_fills") == len(pending_before)
-    assert responses["natural_fills"] > 0
-    assert len(db.scalars(select(MedicationFill.id)).all()) > fills_before
-    assert (
-        db.scalars(
-            select(MedicationFill).where(MedicationFill.fill_date > clock.get_today(db))
+        assert (
+            db.scalars(select(Interaction).where(Interaction.outcome == Outcome.PENDING)).all()
+            == []
+        )
+        responses = body["responses"]
+        assert sum(v for k, v in responses.items() if k != "natural_fills") == len(pending_before)
+        assert responses["natural_fills"] > 0
+        assert len(db.scalars(select(MedicationFill.id)).all()) > fills_before
+        # Nothing is recorded in the future.
+        assert (
+            db.scalars(select(MedicationFill).where(MedicationFill.fill_date > WEEK_LATER)).all()
+            == []
+        )
+
+        # Outcomes were written back on the interactions the engine sent, and audited.
+        outcomes = {
+            i.outcome
+            for i in db.scalars(select(Interaction).where(Interaction.nba_id.in_(sent_ids)))
+        }
+        assert Outcome.PENDING not in outcomes and len(outcomes) >= 2
+        captured = db.scalars(
+            select(AuditLog).where(
+                AuditLog.action == "response_captured", AuditLog.actor == "simulator"
+            )
         ).all()
-        == []
-    )
+        assert len(captured) == len(pending_before)
 
-    # Outcomes were written back on the interactions the engine sent, and audited.
-    outcomes = {
-        i.outcome for i in db.scalars(select(Interaction).where(Interaction.nba_id.in_(sent_ids)))
-    }
-    assert Outcome.PENDING not in outcomes and len(outcomes) >= 2
-    captured = db.scalars(
-        select(AuditLog).where(
-            AuditLog.action == "response_captured", AuditLog.actor == "simulator"
-        )
-    ).all()
-    assert len(captured) == len(pending_before)
-
-    # A new cycle exists for the new date; last week's unreviewed queue was superseded.
-    new = db.scalars(select(Nba).where(Nba.cycle_id == body["cycle_id"])).all()
-    assert new and all(n.as_of_date == clock.get_today(db) for n in new)
-    stale = db.scalars(
-        select(Nba).where(
-            Nba.cycle_id != body["cycle_id"], Nba.status == NbaStatus.READY_FOR_REVIEW
-        )
-    ).all()
-    assert stale == []
-    assert db.scalar(select(AuditLog).where(AuditLog.action == "clock_advanced")).actor == "admin"
+        # A new cycle exists for the date; the earlier unreviewed queue was superseded.
+        new = db.scalars(select(Nba).where(Nba.cycle_id == body["cycle_id"])).all()
+        assert new and all(n.as_of_date == WEEK_LATER for n in new)
+        stale = db.scalars(
+            select(Nba).where(
+                Nba.cycle_id != body["cycle_id"], Nba.status == NbaStatus.READY_FOR_REVIEW
+            )
+        ).all()
+        assert stale == []
+        played = db.scalar(select(AuditLog).where(AuditLog.action == "responses_played_out"))
+        assert played.actor == "admin"
 
 
 def test_analytics_show_engine_versus_baseline_and_the_adherence_trend(env):
     assert call(env, "cm01", "GET", "/api/analytics/overview").status_code == 403
-    data = call(env, "admin", "GET", "/api/analytics/overview").json()
-    assert data["as_of_date"] == (DEFAULT_AS_OF + timedelta(days=7)).isoformat()
+    with clock.override(WEEK_LATER):
+        data = call(env, "admin", "GET", "/api/analytics/overview").json()
+    assert data["as_of_date"] == WEEK_LATER.isoformat()
 
     sources = {(r["target_type"], r["source"]) for r in data["engagement"]["by_channel"]}
     assert {("PATIENT", "engine"), ("PATIENT", "baseline"), ("HCP", "baseline")} <= sources

@@ -89,7 +89,6 @@ ALLOWED = {
     ("GET", "/api/nba"): {"admin", "compliance", "rep", "cm"},
     ("GET", "/api/admin/users"): {"admin"},
     ("GET", "/api/analytics/overview"): {"admin", "compliance"},
-    ("GET", "/api/clock"): {"admin", "compliance", "rep", "cm", "hcp", "patient"},
     ("GET", "/api/patients"): {"admin", "cm"},
     ("GET", "/api/patients/PAT_00001"): {"admin", "cm"},
     ("GET", "/api/hcps"): {"admin", "rep"},

@@ -12,12 +12,11 @@ from sqlalchemy.orm import Session
 from app import audit, cycle
 from app.api import serializers as out
 from app.api.auth import set_session_cookie
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import require_permission
 from app.api.schemas import StrictBody
 from app.auth.repository import SqlUserRepository
 from app.auth.service import account_out
 from app.auth.sessions import sessions
-from app.core import clock
 from app.core.db import get_db
 from app.core.engine_config import DEFAULTS, get_config, set_config, validate_value
 from app.core.permissions import Permission, can
@@ -33,11 +32,6 @@ auditors = require_permission(Permission.AUDIT_READ)
 configurer = require_permission(Permission.CONFIG_MANAGE)
 admin = require_permission(Permission.ENGINE_OPERATE)
 model_readers = require_permission(Permission.MODELS_READ)
-
-
-class AdvanceBody(StrictBody):
-    days: int = Field(ge=1, le=30)
-    retrain: bool = True
 
 
 class BulkSendBody(StrictBody):
@@ -131,7 +125,9 @@ def write_config(
 def run_cycle(
     retrain: bool = False, user: User = Depends(admin), db: Session = Depends(get_db)
 ) -> dict:
-    """Refresh features, regenerate recommendations and drafts for the current demo date."""
+    """Catch the synthetic population up to today, refresh features, regenerate
+    recommendations and drafts."""
+    simulator.catch_up(db)
     result = cycle.run(db, retrain=retrain)
     audit.record(
         db,
@@ -182,25 +178,19 @@ def list_models(_: User = Depends(model_readers), db: Session = Depends(get_db))
     ]
 
 
-@router.get("/clock")
-def read_clock(_: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    return {"as_of_date": clock.get_today(db)}
-
-
-@router.post("/admin/advance")
-def advance_clock(
-    body: AdvanceBody, user: User = Depends(admin), db: Session = Depends(get_db)
-) -> dict:
-    """Move the demo date forward: responses and refills land, then the engine runs again."""
-    result = simulator.advance(db, body.days, retrain=body.retrain)
+@router.post("/admin/play-out")
+def play_out(user: User = Depends(admin), db: Session = Depends(get_db)) -> dict:
+    """Simulated people respond now to what was sent to them; their own refills are caught
+    up to today; the engine runs again. The date is never moved."""
+    result = simulator.play_out(db)
     audit.record(
         db,
-        "clock_advanced",
+        "responses_played_out",
         "engine_cycle",
         result["cycle_id"],
         actor=user.username,
         actor_role=user.role,
-        detail={"days": body.days, "responses": result["responses"]},
+        detail={"responses": result["responses"]},
     )
     db.commit()
     return result

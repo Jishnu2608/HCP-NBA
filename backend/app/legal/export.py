@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.api.serializers import location_label
-from app.clinical import care
+from app.clinical import care, hcps
 from app.legal import consents, requests
 from app.models import (
     Consent,
@@ -92,7 +92,7 @@ def _hcp(db: Session, hcp_id: str) -> dict:
         "record": {
             "name": f"Dr. {h.first_name} {h.last_name}",
             "npi": h.npi,
-            "specialty": h.specialty,
+            "specialties": hcps.specialties_of(db, h.hcp_id),
             "organization": h.organization,
             "city": h.city,
             "state": h.state,

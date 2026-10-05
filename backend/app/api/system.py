@@ -21,7 +21,7 @@ def health() -> dict[str, str]:
 def meta(
     _: User = Depends(require_permission(Permission.MODELS_READ)), db: Session = Depends(get_db)
 ) -> dict:
-    """Environment, demo clock and row counts per table. Technical reviewers only: row counts
+    """Environment, current date and row counts per table. Technical reviewers only: row counts
     of the account and audit tables are not public information."""
     settings = get_settings()
     counts = {

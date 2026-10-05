@@ -68,11 +68,11 @@ Log in: `hcp0001@nba.demo` (Dr. Elena Marsh): *Inbox* shows the email; *My patie
 
 Log in: `admin@admin.com`
 
-1. *Engine* → **Send top 400** (a team working its queues), then **Advance 7 days**.
+1. *Engine* → **Send top 400** (a team working its queues), then **Play out now** (the simulated population responds; refills they make on their own follow real days).
 2. *Dashboard*:
    - Engine versus earlier outreach, like for like.
    - Response rate by channel, engine against baseline.
-   - Adherent share by measure, now with a second date.
+   - Adherent share by measure (a second date appears once a cycle runs on a later day).
    - Why options were held back.
 3. *Audit log*: filter by event. Every recommendation, gate result, decision, send, response and settings change, with the actor.
 

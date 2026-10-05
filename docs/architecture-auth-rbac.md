@@ -124,7 +124,7 @@ Required for patient sign-up and invitation acceptance. Validated on the server 
 | compliance | `content:read:all`, `content:approve`, `nba:read:gated`, `audit:read`, `analytics:read`, `models:read` |
 | medical_rep | `hcp:read:assigned`, `nba:read:hcp_assigned`, `nba:review:hcp`, `content:read:approved_hcp` |
 | care_manager | `patient:read:assigned`, `nba:read:patient_assigned`, `nba:review:patient`, `content:read:approved_patient`, `patient:care:manage`, `invite:patient` |
-| hcp | `self:profile:read`, `self:inbox`, `self:patients:read`, `invite:medical_rep`, `invite:care_manager` |
+| hcp | `self:profile:read`, `self:inbox`, `self:patients:read`, `self:specialty:request`, `invite:medical_rep`, `invite:care_manager` |
 | patient | `self:profile:read`, `self:inbox`, `self:consent:manage`, `self:health:manage` |
 
 The administrator deliberately lacks `content:approve`: MLR approval stays with Compliance.
@@ -160,6 +160,10 @@ Out-of-scope ids return 404. The audit log masks account emails and patient / HC
 ## 5. What survives a demo reset
 
 `POST /api/admin/reset` rebuilds the synthetic data. Carried across: real patients and everything recorded for them (conditions, medications, refills, outreach consent, care requests, notes, HCP and care-manager links), registered and invited accounts with their assignments, invitations with lineage (references re-linked by email, because account ids can change), and the security audit rows (accounts, sign-ins, invitations). All sessions end; the caller gets a new session cookie.
+
+## 5b. HCP records and specialties
+
+An invited HCP gets a new, blank HCP record (`HCP_R…`, origin `invited`) with exactly the specialties the inviter chose on the invitation (0..n from the controlled list; none = "Specialty not configured"). `PUT /api/admin/users/{id}/specialties` (`user:manage`) changes them; the HCP can only file `POST /api/me/specialty-requests` (`self:specialty:request`), which an administrator approves or rejects at `/api/admin/specialty-requests`. One pending request per HCP; approval re-checks that nothing changed since the request (409 `request_stale`). Real HCPs are excluded from the HCP engine and from representatives' assignments. The administrator holds `privacy:manage` but not `privacy:request`: they work privacy requests and cannot file their own.
 
 ## 5a. Deleting a patient account
 

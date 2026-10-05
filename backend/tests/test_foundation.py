@@ -1,6 +1,5 @@
 from datetime import date
 
-import pytest
 from conftest import auth
 
 from app.auth.service import ensure_system_admin
@@ -14,7 +13,7 @@ EXPECTED_TABLES = {
     "interaction", "feature_snapshot", "audit_log", "model_version", "engine_config",
     "sim_latent", "otp_challenge", "user_session", "invitation", "rate_limit_hit",
     "consent_record", "privacy_request", "patient_number", "patient_condition",
-    "care_request", "care_note",
+    "care_request", "care_note", "hcp_specialty", "hcp_number", "specialty_change_request",
 }  # fmt: skip
 
 
@@ -47,20 +46,21 @@ def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 
 
-def test_meta_reports_counts_and_clock(client, db):
-    clock.set_today(db, date(2026, 6, 30))
+def test_meta_reports_counts_and_the_real_date(client, db):
     assert client.get("/api/meta").status_code == 401  # not public
     ensure_system_admin(db)
     db.commit()
     body = client.get("/api/meta", headers=auth(client, "admin")).json()
-    assert body["as_of_date"] == "2026-06-30"
-    assert body["row_counts"]["engine_config"] == 1
+    assert body["as_of_date"] == date.today().isoformat()
     assert body["row_counts"]["patient"] == 0
 
 
-def test_clock_advance(db):
-    clock.set_today(db, date(2026, 6, 30))
-    assert clock.advance(db, 7) == date(2026, 7, 7)
-    assert clock.get_today(db) == date(2026, 7, 7)
-    with pytest.raises(ValueError):
-        clock.advance(db, 0)
+def test_today_is_the_real_date_and_nothing_stores_a_demo_date(db):
+    assert clock.get_today(db) == date.today()
+    with clock.override(date(2031, 1, 2)):
+        assert clock.get_today(db) == date(2031, 1, 2)
+    assert clock.get_today(db) == date.today()
+    assert not hasattr(clock, "set_today") and not hasattr(clock, "advance")
+    clock.set_simulated_through(db, date(2026, 9, 30))
+    # A processing marker for the simulator, never "today".
+    assert clock.get_today(db) == date.today()

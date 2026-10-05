@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, post } from "../api";
 import { useAuth } from "../auth";
+import { P } from "../permissions";
 import { Checkbox, legalPath } from "../legal";
 import { Alert, Button, ErrorNote, LoadingRows } from "../ui";
 import AuthLayout from "./AuthLayout";
@@ -23,7 +24,7 @@ interface ConsentItem {
  * server enforces this; the page only explains it and records the choice.
  */
 export default function Reaccept() {
-  const { user, refresh, logout } = useAuth();
+  const { user, refresh, logout, can } = useAuth();
   const navigate = useNavigate();
   const status = useQuery({
     queryKey: ["privacy", "status", "pending"],
@@ -111,6 +112,7 @@ export default function Reaccept() {
               <LogOut className="h-4 w-4" aria-hidden /> Sign out
             </Button>
           </div>
+          {can(P.PRIVACY_REQUEST) && (
           <div className="border-t border-line pt-5">
             {erase.isSuccess ? (
               <Alert tone="info" title="Deletion request submitted">
@@ -130,6 +132,7 @@ export default function Reaccept() {
             )}
             <ErrorNote error={erase.error} className="mt-3" />
           </div>
+          )}
         </div>
       )}
     </AuthLayout>

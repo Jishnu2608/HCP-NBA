@@ -26,23 +26,75 @@ def utcnow() -> datetime:
 
 
 class Hcp(Base):
+    """A healthcare professional. Synthetic HCPs are generated with a practice, prescribing
+    volume and history, and are the HCP engine's population. An invited HCP gets a new,
+    blank record: nothing is invented for a real person. Specialties for every HCP live in
+    `hcp_specialty` (an invited HCP's are set by an administrator)."""
+
     __tablename__ = "hcp"
 
     hcp_id: Mapped[str] = mapped_column(String(16), primary_key=True)
-    npi: Mapped[str] = mapped_column(String(10), unique=True)
+    npi: Mapped[str | None] = mapped_column(String(10), unique=True)
     first_name: Mapped[str] = mapped_column(String(64))
     last_name: Mapped[str] = mapped_column(String(64))
-    specialty: Mapped[str] = mapped_column(String(64), index=True)
-    taxonomy_code: Mapped[str] = mapped_column(String(16))
-    organization: Mapped[str] = mapped_column(String(128))
-    city: Mapped[str] = mapped_column(String(64))
-    state: Mapped[str] = mapped_column(String(2))
-    zip: Mapped[str] = mapped_column(String(10))
+    # The generator's single specialty for a synthetic HCP (used by the engine). Matching
+    # and display use `hcp_specialty`.
+    specialty: Mapped[str | None] = mapped_column(String(64), index=True)
+    taxonomy_code: Mapped[str | None] = mapped_column(String(16))
+    organization: Mapped[str | None] = mapped_column(String(128))
+    city: Mapped[str | None] = mapped_column(String(64))
+    state: Mapped[str | None] = mapped_column(String(2))
+    zip: Mapped[str | None] = mapped_column(String(10))
     rx_volume_annual: Mapped[int] = mapped_column(Integer, default=0)
+    origin: Mapped[str] = mapped_column(
+        String(16), default="synthetic", server_default="synthetic", index=True
+    )
     # Derived by the feature layer.
     segment: Mapped[str | None] = mapped_column(String(32), index=True)
     value_score: Mapped[float | None] = mapped_column(Float)
     channel_affinity: Mapped[str | None] = mapped_column(String(16))
+
+
+class HcpSpecialty(Base):
+    """An HCP's specialties, from the controlled list (clinical/vocabulary.SPECIALTIES).
+    The only source used for routing patients to an HCP."""
+
+    __tablename__ = "hcp_specialty"
+
+    hcp_id: Mapped[str] = mapped_column(ForeignKey("hcp.hcp_id"), primary_key=True)
+    specialty: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+
+class HcpNumber(Base):
+    """Issues the number in an invited HCP's id (HCP_R000001). Never reused."""
+
+    __tablename__ = "hcp_number"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class SpecialtyChangeRequest(Base):
+    """An HCP asking an administrator to change their specialties. Nothing changes until an
+    administrator approves; approval applies `requested` only if the list still equals
+    `previous` (otherwise the request is stale)."""
+
+    __tablename__ = "specialty_change_request"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hcp_id: Mapped[str] = mapped_column(ForeignKey("hcp.hcp_id"), index=True)
+    requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    action: Mapped[str] = mapped_column(String(16))  # add / remove / replace
+    requested: Mapped[list[str]] = mapped_column(JSON)
+    previous: Mapped[list[str]] = mapped_column(JSON)
+    notes: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    reviewer_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    decision_notes: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Patient(Base):
@@ -255,6 +307,8 @@ class Invitation(Base):
     claimed_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     # Patient invitations only: the clinic record the care manager prepared for this person.
     patient_id: Mapped[str | None] = mapped_column(ForeignKey("patient.patient_id"))
+    # HCP invitations only: specialties chosen by the inviter, applied at acceptance.
+    specialties: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True))
 
 
 class RepHcp(Base):

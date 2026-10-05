@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock3, Inbox, XCircle } from "lucide-react";
 import { useId, useState } from "react";
-import { api, patch, query } from "../api";
+import { useSearchParams } from "react-router-dom";
+import { api, patch, post, query } from "../api";
 import type { Json } from "../api";
 import { ROLE_LABEL } from "../auth";
 import type { Role } from "../auth";
 import { useToast } from "../toast";
 import {
   Alert,
+  Badge,
   Button,
   Card,
   EmptyState,
@@ -23,6 +25,7 @@ import {
   fmtDateTime,
 } from "../ui";
 import { DeleteAccount } from "./DeleteAccount";
+import { specialtyText } from "./HealthForms";
 import { RequestStatus } from "./Privacy";
 
 function RequestCard({ request }: { request: Json }) {
@@ -99,7 +102,169 @@ function RequestCard({ request }: { request: Json }) {
   );
 }
 
-export default function PrivacyRequests() {
+function SpecialtyRequestCard({ request }: { request: Json }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const id = useId();
+  const [notes, setNotes] = useState("");
+  const decide = useMutation({
+    mutationFn: (decision: "approve" | "reject") =>
+      post(`/admin/specialty-requests/${request.id}/${decision}`, { notes: notes.trim() || null }),
+    onSuccess: (_, decision) => {
+      toast(decision === "approve" ? "Approved: the HCP's specialties are updated" : "Request rejected");
+      setNotes("");
+      void client.invalidateQueries({ queryKey: ["specialty-requests"] });
+      void client.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+  const open = request.status === "pending";
+  return (
+    <li className="rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold text-ink">
+            {ACTION_TEXT[request.action]} · {request.hcp_name}
+          </div>
+          <div className="mt-0.5 text-[13px] text-ink-subtle">
+            Requested by {request.requested_by ?? "a deleted account"} · {fmtDateTime(`${request.created_at}Z`)}
+          </div>
+        </div>
+        <Badge tone={request.status === "approved" ? "ok" : request.status === "rejected" ? "bad" : "warn"}>
+          {request.status === "pending" ? "Pending" : request.status === "approved" ? "Approved" : "Rejected"}
+        </Badge>
+      </div>
+      <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+        <div>
+          <dt className="text-[13px] text-ink-subtle">When requested</dt>
+          <dd className="text-ink">{specialtyText(request.previous)}</dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Requested</dt>
+          <dd className="font-semibold text-ink">{specialtyText(request.requested)}</dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Now</dt>
+          <dd className="text-ink">{specialtyText(request.current)}</dd>
+        </div>
+      </dl>
+      {request.notes && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-muted">“{request.notes}”</p>}
+      {!open && (
+        <p className="mt-3 rounded-lg bg-subtle p-3 text-sm text-ink">
+          <span className="font-semibold">Decided by {request.reviewer ?? "an administrator"}</span>
+          {request.decided_at && ` on ${fmtDate(request.decided_at)}`}
+          {request.decision_notes && `: ${request.decision_notes}`}
+        </p>
+      )}
+      {open && (
+        <div className="mt-4 space-y-3 border-t border-line pt-4">
+          <FormField label="Decision notes (optional)" htmlFor={id} hint="Shown to the HCP.">
+            <textarea
+              id={id}
+              rows={2}
+              maxLength={500}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="block w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/20"
+            />
+          </FormField>
+          <ErrorNote error={decide.error} />
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="primary" busy={decide.isPending && decide.variables === "approve"} onClick={() => decide.mutate("approve")}>
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Approve
+            </Button>
+            <Button size="sm" variant="quiet-danger" busy={decide.isPending && decide.variables === "reject"} onClick={() => decide.mutate("reject")}>
+              <XCircle className="h-3.5 w-3.5" aria-hidden /> Reject
+            </Button>
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+const ACTION_TEXT: Record<string, string> = {
+  add: "Add specialties",
+  remove: "Remove specialties",
+  replace: "Replace specialties",
+};
+
+function SpecialtyRequests() {
+  const [status, setStatus] = useState("pending");
+  const list = useQuery({
+    queryKey: ["specialty-requests", "admin", status],
+    queryFn: () => api(`/admin/specialty-requests${query({ status: status === "all" ? undefined : status })}`),
+    placeholderData: (previous) => previous,
+    refetchInterval: 30_000,
+  });
+  const counts: Record<string, number> = list.data?.counts ?? {};
+  const items: Json[] = list.data?.items ?? [];
+  return (
+    <Card flush title="HCP specialty change requests">
+      <div className="min-w-0 border-b border-line px-4 py-3 sm:px-5">
+        <Segmented
+          label="Filter by status"
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: "pending", label: "Pending", count: counts.pending ?? 0 },
+            { value: "approved", label: "Approved", count: counts.approved ?? 0 },
+            { value: "rejected", label: "Rejected", count: counts.rejected ?? 0 },
+            { value: "all", label: "All" },
+          ]}
+        />
+      </div>
+      <div className="p-4 sm:p-5">
+        {list.isLoading ? (
+          <LoadingRows rows={3} label="Loading requests" />
+        ) : list.error ? (
+          <ErrorState error={list.error} retry={() => void list.refetch()} title="Requests could not be loaded" />
+        ) : items.length ? (
+          <ul className="space-y-4">
+            {items.map((r) => (
+              <SpecialtyRequestCard key={r.id} request={r} />
+            ))}
+          </ul>
+        ) : (
+          <EmptyState title="Nothing here" icon={<Inbox className="h-5 w-5" />}>
+            HCPs ask here when their specialties should change. Approving changes them; nothing changes otherwise.
+          </EmptyState>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** The administrator's request centre: privacy requests and HCP specialty changes. */
+export default function RequestCentre() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") === "specialties" ? "specialties" : "privacy";
+  return (
+    <>
+      <div className="mb-4">
+        <Segmented
+          label="Request type"
+          value={tab}
+          onChange={(v) => setParams(v === "privacy" ? {} : { tab: v }, { replace: true })}
+          options={[
+            { value: "privacy", label: "Privacy" },
+            { value: "specialties", label: "Specialty changes" },
+          ]}
+        />
+      </div>
+      {tab === "privacy" ? <PrivacyRequests /> : (
+        <>
+          <PageHeader
+            title="Specialty change requests"
+            subtitle="HCPs cannot change their own specialties; they ask here. Approve only what you can verify. An approval applies the requested list, and is refused if the specialties changed since the request was made."
+          />
+          <SpecialtyRequests />
+        </>
+      )}
+    </>
+  );
+}
+
+function PrivacyRequests() {
   const [status, setStatus] = useState("open");
   const list = useQuery({
     queryKey: ["privacy-requests", status],

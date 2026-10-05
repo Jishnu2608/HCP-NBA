@@ -38,7 +38,9 @@ import {
   Meter,
   PageHeader,
   PersonName,
+  Segmented,
   Switch,
+  TextArea,
   channelName,
   cx,
   fmtDate,
@@ -55,8 +57,11 @@ import {
   MedicationForm,
   NoteList,
   RequestList,
+  SpecialtyChips,
+  SpecialtyPicker,
   StatusChip,
   measureLabel,
+  specialtyText,
 } from "./HealthForms";
 
 function AdherenceBadge({ therapy }: { therapy: Json }) {
@@ -330,7 +335,6 @@ export function MyMedications() {
           )}
           {panel === "medication" && (
             <MedicationForm
-              today={p.as_of_date}
               busy={addMedication.isPending}
               error={addMedication.error}
               onSubmit={(b) => addMedication.mutate(b)}
@@ -576,64 +580,176 @@ export function MyPatients() {
   );
 }
 
+const ACTION_LABEL: Record<string, string> = { add: "Add", remove: "Remove", replace: "Replace all" };
+
+function SpecialtyRequestForm({ current, onDone }: { current: Json[]; onDone: () => void }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [action, setAction] = useState<"add" | "remove" | "replace">("add");
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
+  const send = useMutation({
+    mutationFn: () => post("/me/specialty-requests", { action, specialties: chosen, notes: notes.trim() || null }),
+    onSuccess: () => {
+      toast("Request sent. An administrator will review it.");
+      void client.invalidateQueries({ queryKey: ["me"] });
+      void client.invalidateQueries({ queryKey: ["specialty-requests"] });
+      onDone();
+    },
+  });
+  return (
+    <form
+      className="space-y-4"
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (chosen.length || action === "replace") send.mutate();
+      }}
+    >
+      <p className="text-sm text-ink-muted">
+        Currently: <span className="font-semibold text-ink">{specialtyText(current)}</span>. Nothing changes until an
+        administrator approves.
+      </p>
+      <Segmented
+        label="Change"
+        value={action}
+        onChange={setAction}
+        options={[
+          { value: "add", label: "Add" },
+          { value: "remove", label: "Remove" },
+          { value: "replace", label: "Replace all" },
+        ]}
+      />
+      <SpecialtyPicker
+        value={chosen}
+        onChange={setChosen}
+        legend={action === "add" ? "Specialties to add" : action === "remove" ? "Specialties to remove" : "Your specialties should be"}
+      />
+      <TextArea
+        label="Notes (optional)"
+        rows={3}
+        maxLength={500}
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        hint="For example a board certification or where you trained."
+      />
+      <ErrorNote error={send.error} />
+      <Button type="submit" variant="primary" busy={send.isPending} disabled={!chosen.length && action !== "replace"}>
+        Send request
+      </Button>
+    </form>
+  );
+}
+
 export function MyProfile() {
-  const { user } = useAuth();
-  const profile = useQuery({ queryKey: ["me"], queryFn: () => api("/me/profile") });
+  const { user, can } = useAuth();
+  const profile = useQuery({ queryKey: ["me"], queryFn: () => api("/me/profile"), refetchInterval: 30_000 });
+  const requests = useQuery({
+    queryKey: ["specialty-requests"],
+    queryFn: () => api("/me/specialty-requests"),
+    enabled: can(P.SELF_SPECIALTY_REQUEST),
+    refetchInterval: 30_000,
+  });
+  const [asking, setAsking] = useState(false);
+  const close = useCallback(() => setAsking(false), []);
   if (profile.isLoading) return <Loading label="Loading your profile" rows={3} />;
   if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="Your profile could not be loaded" />;
   const p: Json = profile.data;
+  const mine: Json[] = requests.data?.requests ?? [];
+  const pending = mine.some((r) => r.status === "pending");
   return (
     <>
-      <PageHeader title="Profile" subtitle="Your professional profile as held by the engagement team." />
-      <Card className="max-w-3xl">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-          <Avatar name={p.name} size="lg" />
-          <div className="min-w-0">
-            <PersonName
-              name={p.name}
-              verified={user?.professionally_verified}
-              source={user?.verification_source}
-              className="max-w-full text-xl font-semibold text-ink"
-            />
-            <div className="mt-0.5 text-sm text-ink-muted">
-              {p.specialty}
-              {user?.professionally_verified && " · Verified"}
-            </div>
-          </div>
-        </div>
-        <dl className="mt-6 grid gap-4 border-t border-line pt-5 sm:grid-cols-2">
-          <div className="flex gap-3">
-            <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
+      <PageHeader title="Profile" subtitle="Your professional profile. Specialties are set by an administrator." />
+      <div className="grid max-w-5xl items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Card>
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+            <Avatar name={p.name} size="lg" />
             <div className="min-w-0">
-              <dt className="text-[13px] text-ink-subtle">Organization</dt>
-              <dd className="break-words text-sm font-semibold text-ink">{p.organization}</dd>
+              <PersonName
+                name={p.name}
+                verified={user?.professionally_verified}
+                source={user?.verification_source}
+                className="max-w-full text-xl font-semibold text-ink"
+              />
+              <div className="mt-0.5 text-sm text-ink-muted">
+                {specialtyText(p.specialties)}
+                {user?.professionally_verified && " · Verified"}
+              </div>
             </div>
           </div>
-          <div className="flex gap-3">
-            <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
-            <div>
-              <dt className="text-[13px] text-ink-subtle">Location</dt>
-              <dd className="text-sm font-semibold text-ink">
-                {p.city}, {p.state}
-              </dd>
+          <dl className="mt-6 grid gap-4 border-t border-line pt-5 sm:grid-cols-2">
+            <div className="flex gap-3 sm:col-span-2">
+              <Stethoscope className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
+              <div className="min-w-0">
+                <dt className="mb-1 text-[13px] text-ink-subtle">Specialties</dt>
+                <dd>
+                  <SpecialtyChips list={p.specialties} />
+                </dd>
+              </div>
             </div>
-          </div>
-          <div className="flex gap-3">
-            <Stethoscope className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
-            <div>
-              <dt className="text-[13px] text-ink-subtle">Specialty</dt>
-              <dd className="text-sm font-semibold text-ink">{p.specialty}</dd>
+            <div className="flex gap-3">
+              <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
+              <div className="min-w-0">
+                <dt className="text-[13px] text-ink-subtle">Organization</dt>
+                <dd className="break-words text-sm font-semibold text-ink">{p.organization ?? "Not recorded"}</dd>
+              </div>
             </div>
-          </div>
-          <div className="flex gap-3">
-            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
-            <div>
-              <dt className="text-[13px] text-ink-subtle">NPI (synthetic)</dt>
-              <dd className="tabular text-sm font-semibold text-ink">{p.npi}</dd>
+            <div className="flex gap-3">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
+              <div>
+                <dt className="text-[13px] text-ink-subtle">Location</dt>
+                <dd className="text-sm font-semibold text-ink">{p.city ? `${p.city}, ${p.state}` : "Not recorded"}</dd>
+              </div>
             </div>
-          </div>
-        </dl>
-      </Card>
+            {p.npi && (
+              <div className="flex gap-3">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
+                <div>
+                  <dt className="text-[13px] text-ink-subtle">NPI (synthetic)</dt>
+                  <dd className="tabular text-sm font-semibold text-ink">{p.npi}</dd>
+                </div>
+              </div>
+            )}
+          </dl>
+        </Card>
+        {can(P.SELF_SPECIALTY_REQUEST) && (
+          <Card
+            title="Specialty changes"
+            action={
+              <Button size="sm" disabled={pending} onClick={() => setAsking(true)}>
+                Request specialty change
+              </Button>
+            }
+          >
+            {pending && <p className="mb-3 text-[13px] text-ink-subtle">You can send a new request once this one is decided.</p>}
+            {mine.length ? (
+              <ul className="divide-y divide-line">
+                {mine.map((r) => (
+                  <li key={r.id} className="py-3 first:pt-0 last:pb-0">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-ink">{ACTION_LABEL[r.action]}</span>
+                      <Badge tone={r.status === "approved" ? "ok" : r.status === "rejected" ? "bad" : "warn"}>
+                        {titleCase(r.status)}
+                      </Badge>
+                    </div>
+                    <div className="mt-0.5 text-[13px] text-ink-subtle">
+                      {specialtyText(r.previous)} → {specialtyText(r.requested)} · {fmtDate(r.created_at)}
+                    </div>
+                    {r.decision_notes && <p className="mt-1 text-[13px] text-ink-muted">{r.decision_notes}</p>}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-ink-subtle">No requests yet.</p>
+            )}
+          </Card>
+        )}
+      </div>
+      {asking && (
+        <Drawer title="Request specialty change" onClose={close}>
+          <SpecialtyRequestForm current={p.specialties ?? []} onDone={close} />
+        </Drawer>
+      )}
     </>
   );
 }

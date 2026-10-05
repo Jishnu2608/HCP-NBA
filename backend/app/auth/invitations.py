@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.auth.errors import AuthError
 from app.auth.repository import SqlUserRepository
-from app.clinical import records
+from app.clinical import hcps, records, vocabulary
 from app.core import age, jurisdiction
 from app.core.config import get_settings
 from app.core.permissions import (
@@ -154,6 +154,7 @@ def _new(
     inviter_id: int,
     inviter_role: str,
     patient_id: str | None = None,
+    specialties: list[str] | None = None,
 ):
     token, now = new_token(), _now()
     inv = Invitation(
@@ -161,6 +162,7 @@ def _new(
         email=email,
         role=role,
         patient_id=patient_id,
+        specialties=specialties,
         invited_by_user_id=inviter_id,
         inviter_role=inviter_role,
         status=InvitationStatus.PENDING,
@@ -193,7 +195,12 @@ def visible(db: Session, actor: User, invitation_id: int) -> Invitation:
 
 
 def create(
-    db: Session, actor: User, email: str, role: str, patient_id: str | None = None
+    db: Session,
+    actor: User,
+    email: str,
+    role: str,
+    patient_id: str | None = None,
+    specialties: list[str] | None = None,
 ) -> tuple[Invitation, str | None]:
     if role not in INVITE_PERMISSION:
         raise AuthError(422, "invalid_role", "Choose a role that can be invited.")
@@ -213,6 +220,9 @@ def create(
             )
     elif patient_id is not None:
         raise AuthError(422, "invalid_role", "Only a patient invitation is bound to a record.")
+    if specialties is not None and role != Role.HCP:
+        raise AuthError(422, "invalid_specialty", "Only an HCP invitation carries specialties.")
+    chosen = hcps.validate_specialties(specialties) if role == Role.HCP else None
     from app.auth.service import validate_email  # local import: service imports this module
 
     email = validate_email(email)
@@ -236,7 +246,7 @@ def create(
 
     inv, token = _new(
         db, email=email, role=role, inviter_id=actor.id, inviter_role=actor.role,
-        patient_id=patient_id,
+        patient_id=patient_id, specialties=chosen,
     )  # fmt: skip
     for old in still_open:
         _revoke(db, actor, old, replaced_by=inv)
@@ -290,6 +300,7 @@ def reissue(db: Session, actor: User, invitation_id: int) -> tuple[Invitation, s
         inviter_id=inv.invited_by_user_id,
         inviter_role=inv.inviter_role,
         patient_id=inv.patient_id,
+        specialties=inv.specialties,
     )
     if inv.status == InvitationStatus.PENDING:
         _revoke(db, actor, inv, replaced_by=new)
@@ -488,6 +499,9 @@ def complete_for(db: Session, user: User) -> Invitation | None:
         )
     now = _now()
     inv.status, inv.accepted_at = InvitationStatus.ACCEPTED, now
+    if inv.role == Role.HCP and user.hcp_id is None:
+        # A new, blank HCP record with exactly the specialties the inviter chose (or none).
+        user.hcp_id = hcps.create_hcp(db, user.display_name, inv.specialties or []).hcp_id
     user.professionally_verified = True
     user.professionally_verified_at = now
     user.verification_source = VerificationSource.INVITATION
@@ -534,6 +548,9 @@ def out(db: Session, inv: Invitation, viewer: User) -> dict:
         "inviter_role_label": ROLE_LABELS.get(inv.inviter_role, inv.inviter_role),
         "accepted_user": person(accepted),
         "patient_id": inv.patient_id,
+        "specialties": [
+            {"code": c, "label": vocabulary.specialty_label(c)} for c in inv.specialties or []
+        ],
         # Display hint only; every action is checked again when it is requested.
         "can_manage": _may_manage(viewer, inv) and status != InvitationStatus.ACCEPTED,
     }

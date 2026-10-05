@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FastForward, History, Play, RotateCcw, Send, Settings2, TriangleAlert } from "lucide-react";
+import { History, MessageSquareReply, Play, RotateCcw, Send, Settings2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { api, post, put } from "../api";
@@ -198,7 +198,7 @@ export default function Admin() {
         </span>
       ),
     },
-    { key: "date", header: "Demo date", cell: (c) => <span className="tabular">{fmtDate(c.as_of_date)}</span> },
+    { key: "date", header: "Cycle date", cell: (c) => <span className="tabular">{fmtDate(c.as_of_date)}</span> },
     { key: "run", header: "Run at", cell: (c) => <span className="tabular text-ink-subtle">{fmtDateTime(`${c.started_ts}Z`)}</span> },
     { key: "pr", header: "Patient ready", align: "right", cell: (c) => <span className="tabular">{num(c.stats?.patient_ready ?? 0)}</span> },
     { key: "pb", header: "Patient blocked", align: "right", cell: (c) => <span className="tabular">{num(c.stats?.patient_blocked ?? 0)}</span> },
@@ -216,7 +216,7 @@ export default function Admin() {
     <>
       <PageHeader
         title="Engine"
-        subtitle="Run a recommendation cycle, move the demo date forward so responses and refills land, or restore the seeded starting point."
+        subtitle="Run a recommendation cycle, let the simulated population respond to what was sent, or restore the seeded starting point. Everything runs on today's date."
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -238,28 +238,28 @@ export default function Admin() {
             </>
           }
         >
-          Recalculates adherence and segments, then regenerates recommendations and drafts for the current demo date.
+          Recalculates adherence and segments, then regenerates recommendations and drafts for today. Refills the simulated population made on its own since the last run are added first.
           <span className="mt-2 block text-[13px] text-ink-subtle">
             Send top 400 is a demo shortcut: each message still passes the safeguard re-check and is audited.
           </span>
         </Operation>
 
         <Operation
-          icon={<FastForward className="h-5 w-5" />}
-          title="Advance the demo clock"
-          actions={[1, 7, 14].map((days) => (
+          icon={<MessageSquareReply className="h-5 w-5" />}
+          title="Play out responses now"
+          actions={
             <Button
-              key={days}
-              busy={running(`Advance ${days}`)}
+              busy={running("Play out")}
               disabled={busy}
-              onClick={() => run.mutate({ fn: () => post("/admin/advance", { days, retrain: true }), label: `Advance ${days}` })}
+              onClick={() => run.mutate({ fn: () => post("/admin/play-out"), label: "Play out" })}
             >
-              <FastForward className="h-4 w-4" aria-hidden /> {days} {days === 1 ? "day" : "days"}
+              <MessageSquareReply className="h-4 w-4" aria-hidden /> Play out now
             </Button>
-          ))}
+          }
         >
-          Time passes: sent messages get their responses, patients refill or do not, models retrain on the new outcomes,
-          and a fresh cycle runs.
+          Simulated patients and HCPs respond now to what was sent to them; a persuaded patient refills on the day it
+          happens. Models retrain and a fresh cycle runs. The date never moves: real people answer in their own inbox,
+          and simulated refills follow real days.
         </Operation>
 
         <Operation
@@ -283,7 +283,7 @@ export default function Admin() {
             )
           }
         >
-          Rebuilds the synthetic dataset at its starting date. Registered accounts and their assignments are kept.
+          Rebuilds the synthetic dataset with history ending today. Registered accounts, real patients and HCPs, and their assignments are kept.
           {confirmReset && (
             <span className="mt-2 flex items-start gap-1.5 text-[13px] font-medium text-bad">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> All recommendations, messages and

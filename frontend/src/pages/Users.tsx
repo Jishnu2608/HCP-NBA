@@ -9,7 +9,10 @@ import type { Role } from "../auth";
 import { P } from "../permissions";
 import { useToast } from "../toast";
 import { DeleteAccount } from "./DeleteAccount";
+import { SpecialtyPicker, specialtyText } from "./HealthForms";
+import { Link } from "react-router-dom";
 import {
+  Alert,
   Avatar,
   Badge,
   Button,
@@ -229,6 +232,49 @@ function AssignmentEditor({ account }: { account: Json }) {
   );
 }
 
+/** An HCP's specialties: set here by an administrator only (0..n from the controlled list). */
+function SpecialtyEditor({ account }: { account: Json }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const current: string[] = (account.hcp.specialties ?? []).map((s: Json) => s.code);
+  const [value, setValue] = useState<string[]>(current);
+  useEffect(() => setValue(current), [account.id, current.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = useMutation({
+    mutationFn: () => put(`/admin/users/${account.id}/specialties`, { specialties: value }),
+    onSuccess: () => {
+      toast("Specialties saved.");
+      void client.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+  const changed = [...value].sort().join("|") !== [...current].sort().join("|");
+  return (
+    <section className="border-t border-line pt-5">
+      <h3 className="mb-1 text-sm font-semibold text-ink">Specialties</h3>
+      <p className="mb-3 text-[13px] text-ink-subtle">
+        Currently: {specialtyText(account.hcp.specialties)}. Used to route patients to this HCP. Only an administrator sets
+        them; the HCP can request a change.
+      </p>
+      {account.hcp.pending_request ? (
+        <Alert tone="warn" title="A change request is waiting">
+          Decide it in{" "}
+          <Link to="/privacy-requests?tab=specialties" className="font-semibold underline underline-offset-2">
+            Requests
+          </Link>{" "}
+          before editing here.
+        </Alert>
+      ) : (
+        <div className="space-y-3">
+          <SpecialtyPicker value={value} onChange={setValue} legend="Specialties" />
+          <ErrorNote error={save.error} />
+          <Button variant="primary" disabled={!changed} busy={save.isPending} onClick={() => save.mutate()}>
+            Save specialties
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AccountPanel({ id, onDeleted }: { id: number; onDeleted: () => void }) {
   const { user: me, can } = useAuth();
   const client = useQueryClient();
@@ -334,6 +380,8 @@ function AccountPanel({ id, onDeleted }: { id: number; onDeleted: () => void }) 
           ))}
         </ul>
       </section>
+
+      {a.hcp && <SpecialtyEditor account={a} />}
 
       <section className="border-t border-line pt-5">
         <h3 className="mb-2 text-sm font-semibold text-ink">Assignments</h3>

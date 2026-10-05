@@ -245,6 +245,7 @@ export default function Privacy() {
             )}
           </Section>
 
+          {can(P.PRIVACY_REQUEST) ? (
           <Section
             title="Privacy requests"
             icon={<Send className="h-4 w-4" aria-hidden />}
@@ -263,6 +264,19 @@ export default function Privacy() {
               )}
             </div>
           </Section>
+          ) : (
+            can(P.PRIVACY_MANAGE) && (
+              <Section title="Privacy requests" icon={<Send className="h-4 w-4" aria-hidden />}>
+                <p className="text-sm text-ink-muted">
+                  You handle privacy requests; you do not submit them here. Review and work them in the{" "}
+                  <Link to="/privacy-requests" className="font-semibold text-primary-ink underline underline-offset-2">
+                    request centre
+                  </Link>
+                  .
+                </p>
+              </Section>
+            )
+          )}
         </div>
 
         <div className="space-y-6 xl:col-span-5">

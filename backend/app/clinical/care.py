@@ -6,14 +6,15 @@ for the engine only once the care team confirms it, and an HCP is linked only wh
 manager chooses one. Synthetic demo records are read-only here; their history is generated.
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.api import serializers as out
 from app.auth.errors import AuthError
+from app.clinical import hcps as hcp_records
 from app.clinical import records, vocabulary
 from app.core import age, clock, jurisdiction
 from app.engagement import simulator
@@ -21,6 +22,7 @@ from app.models import (
     CareNote,
     CareRequest,
     Hcp,
+    HcpSpecialty,
     Invitation,
     Patient,
     PatientCondition,
@@ -139,7 +141,11 @@ def request_out(db: Session, r: CareRequest, *, for_patient: bool = False) -> di
         "condition": condition_out(condition) if condition else None,
         "medication": therapy.drug_name if therapy else None,
         "assigned_hcp": (
-            {"hcp_id": hcp.hcp_id, "name": out.hcp_name(hcp), "specialty": hcp.specialty}
+            {
+                "hcp_id": hcp.hcp_id,
+                "name": out.hcp_name(hcp),
+                "specialties": hcp_records.specialty_out(db, hcp.hcp_id),
+            }
             if hcp
             else None
         ),
@@ -188,7 +194,7 @@ def care_team(db: Session, patient_id: str) -> dict:
             {
                 "hcp_id": h.hcp_id,
                 "name": out.hcp_name(h),
-                "specialty": h.specialty,
+                "specialties": hcp_records.specialty_out(db, h.hcp_id),
                 "is_primary": primary,
             }
             for h, primary in hcps
@@ -270,6 +276,35 @@ def report_condition(
     return condition
 
 
+MAX_PLANNED_START = 366  # days: a care team may record a course that starts later
+MAX_END_AHEAD = 5 * 366  # days: a planned end date at most this far ahead
+
+
+def medication_dates(
+    patient: Patient, start_date: str | None, end_date: str | None, ongoing: bool, origin: str
+) -> tuple[date, date | None]:
+    """Start and end of a medication, checked against the real current date. Ongoing means
+    no end date; otherwise an end date is required and cannot precede the start."""
+    today = clock.today()
+    start = _date(start_date, "start_date", required=True)
+    if start < patient.birth_date:
+        raise AuthError(422, "invalid_start_date", "The start date is before the date of birth.")
+    if origin == PATIENT_REPORTED and start > today:
+        raise AuthError(422, "invalid_start_date", "The start date cannot be in the future.")
+    if start > today + timedelta(days=MAX_PLANNED_START):
+        raise AuthError(422, "invalid_start_date", "The start date is more than a year ahead.")
+    if ongoing:
+        if end_date:
+            raise AuthError(422, "invalid_end_date", "An ongoing medication has no end date.")
+        return start, None
+    end = _date(end_date, "end_date", required=True)
+    if end < start:
+        raise AuthError(422, "end_before_start", "The end date is before the start date.")
+    if end > today + timedelta(days=MAX_END_AHEAD):
+        raise AuthError(422, "invalid_end_date", "The end date is too far ahead.")
+    return start, end
+
+
 def _medication(
     db: Session,
     patient: Patient,
@@ -279,15 +314,11 @@ def _medication(
     schedule: str | None,
     start_date: str | None,
     end_date: str | None,
+    ongoing: bool,
     origin: str,
 ) -> PatientTherapy:
     name = _text(name, "medication_name", 64, required=True)
-    start = _date(start_date, "start_date", required=True)
-    end = _date(end_date, "end_date")
-    if start > clock.get_today(db) and origin == PATIENT_REPORTED:
-        raise AuthError(422, "invalid_start_date", "The start date cannot be in the future.")
-    if end is not None and end < start:
-        raise AuthError(422, "invalid_end_date", "The end date is before the start date.")
+    start, end = medication_dates(patient, start_date, end_date, ongoing, origin)
     measure, rxnorm = vocabulary.drug_info(name)
     therapy = PatientTherapy(
         patient_id=patient.patient_id,
@@ -504,38 +535,46 @@ def add_note(
 
 
 def hcp_options(db: Session, patient: Patient, condition_id: int | None, limit: int = 40):
-    """HCPs whose specialty suits the patient's condition: specialist first, then primary
-    care, then those in the patient's state. Never assigns anyone by itself."""
+    """HCPs with at least one specialty that suits the patient's condition (an HCP may hold
+    several): specialist first, then primary care; invited HCPs before demo ones; then those
+    in the patient's state. An HCP without a configured specialty is never offered for a
+    condition. Never assigns anyone by itself."""
     condition = db.get(PatientCondition, condition_id) if condition_id else None
     if condition is not None and condition.patient_id != patient.patient_id:
         raise AuthError(404, "not_found", "Condition not found.")
     code = condition.condition if condition else vocabulary.OTHER
     specialties = vocabulary.specialties_for(code)
-    rank = case({s: n for n, s in enumerate(specialties)}, value=Hcp.specialty)
-    order = [rank]
+    rank = func.min(case({s: n for n, s in enumerate(specialties)}, value=HcpSpecialty.specialty))
+    order = [rank, case((Hcp.origin == hcp_records.SYNTHETIC, 1), else_=0)]
     if patient.state:
         order.append(case((Hcp.state == patient.state, 0), else_=1))
-    rows = db.scalars(
-        select(Hcp)
-        .where(Hcp.specialty.in_(specialties))
+    rows = db.execute(
+        select(Hcp, rank)
+        .join(HcpSpecialty, HcpSpecialty.hcp_id == Hcp.hcp_id)
+        .where(HcpSpecialty.specialty.in_(specialties))
+        .group_by(Hcp.hcp_id)
         .order_by(*order, Hcp.last_name, Hcp.hcp_id)
         .limit(limit)
     ).all()
     label = vocabulary.condition_label(code, condition.other_text if condition else None)
-    return {
-        "condition": condition_out(condition) if condition else None,
-        "specialties": specialties,
-        "items": [
+    items = []
+    for h, best in rows:
+        matched = vocabulary.specialty_label(specialties[best])
+        items.append(
             {
                 "hcp_id": h.hcp_id,
                 "name": out.hcp_name(h),
-                "specialty": h.specialty,
+                "specialties": hcp_records.specialty_out(db, h.hcp_id),
+                "origin": h.origin,
                 "organization": h.organization,
-                "location": f"{h.city}, {h.state}",
-                "reason": f"{h.specialty} · {label}" if condition else h.specialty,
+                "location": f"{h.city}, {h.state}" if h.city and h.state else None,
+                "reason": f"{matched} · {label}" if condition else matched,
             }
-            for h in rows
-        ],
+        )
+    return {
+        "condition": condition_out(condition) if condition else None,
+        "specialties": [vocabulary.specialty_label(s) for s in specialties],
+        "items": items,
     }
 
 
@@ -557,11 +596,10 @@ def assign_hcp(
     for item in (condition, request):
         if item is not None and item.patient_id != patient.patient_id:
             raise AuthError(404, "not_found", "Not found.")
-    if condition is not None and hcp.specialty not in vocabulary.specialties_for(
-        condition.condition
-    ):
+    held = set(hcp_records.specialties_of(db, hcp.hcp_id))
+    if condition is not None and not held & set(vocabulary.specialties_for(condition.condition)):
         raise AuthError(
-            422, "specialty_mismatch", "This HCP's specialty does not match the condition."
+            422, "specialty_mismatch", "None of this HCP's specialties suits the condition."
         )
     link = db.get(PatientHcp, (patient.patient_id, hcp.hcp_id))
     if link is None:
@@ -587,12 +625,10 @@ def assign_hcp(
         request.assigned_hcp_id = hcp.hcp_id
         request.status = CareRequestStatus.CLOSED
         request.handled_by_user_id = cm.id
-        request.resolution = (
-            request.resolution or f"Routed to {out.hcp_name(hcp)} ({hcp.specialty})."
-        )
+        request.resolution = request.resolution or f"Routed to {out.hcp_name(hcp)}."
     db.flush()
     _audit(
-        db, cm, "hcp_assigned", patient.patient_id, hcp=hcp.hcp_id, specialty=hcp.specialty,
+        db, cm, "hcp_assigned", patient.patient_id, hcp=hcp.hcp_id, specialties=sorted(held),
         condition=condition.condition if condition else None,
     )  # fmt: skip
 

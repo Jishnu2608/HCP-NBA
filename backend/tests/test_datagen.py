@@ -3,7 +3,8 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from app.datagen.generate import DEFAULT_AS_OF, GenConfig, generate
+from app.core import clock
+from app.datagen.generate import GenConfig, generate
 from app.datagen.validate import validate
 from app.models import (
     Consent,
@@ -15,6 +16,9 @@ from app.models import (
     User,
 )
 from app.models.enums import MlrStatus, Role
+
+# Synthetic history ends on the day it is generated.
+DEFAULT_AS_OF = clock.today()
 
 SMALL = GenConfig(seed=7, n_patients=250, n_hcps=40, n_reps=6, n_care_managers=3)
 

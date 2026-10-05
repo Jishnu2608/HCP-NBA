@@ -222,9 +222,9 @@ def test_unhandled_errors_are_generic(env, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("database password is hunter2 at C:\\secret\\path")
 
-    monkeypatch.setattr("app.api.governance.clock.get_today", boom)
+    monkeypatch.setattr("app.api.system.get_today", boom)
     safe = TestClient(app, raise_server_exceptions=False)
-    response = safe.get("/api/clock", headers=auth(client, "admin"))
+    response = safe.get("/api/meta", headers=auth(client, "admin"))
     assert response.status_code == 500
     assert code_of(response) == "server_error"
     assert "hunter2" not in response.text and "Traceback" not in response.text

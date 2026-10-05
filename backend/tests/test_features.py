@@ -121,12 +121,12 @@ def test_hero_risk_segments(seeded):
 
 
 def test_hcp_segments_and_affinity(seeded):
-    db, *_ = seeded
+    db, pop, *_ = seeded
     cardiologist, fatigued = db.get(Hcp, "HCP_0001"), db.get(Hcp, "HCP_0003")
     assert cardiologist.segment.startswith("high_value")
     assert cardiologist.value_score > fatigued.value_score
     assert fatigued.segment.startswith("low_value")
-    snap = db.get(FeatureSnapshot, ("HCP", "HCP_0002", date(2026, 9, 30)))
+    snap = db.get(FeatureSnapshot, ("HCP", "HCP_0002", pop.as_of))
     assert snap.features["topic_rates"]["measure"]["diabetes"] > eng.HCP_ENGAGE_PRIOR
 
 

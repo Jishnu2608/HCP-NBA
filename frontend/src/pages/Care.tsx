@@ -58,6 +58,8 @@ import {
   RequestList,
   StatusChip,
   SupplyFields,
+  specialtyText,
+  todayISO,
 } from "./HealthForms";
 
 const ORIGIN_LABEL: Record<string, string> = {
@@ -247,7 +249,7 @@ type Sheet =
 const emptySupply = { measure: "", days_supply: "30", copay: "0" };
 
 /** Everything a care manager does for one real patient. */
-export function CarePanel({ patientId, today }: { patientId: string; today: string }) {
+export function CarePanel({ patientId }: { patientId: string }) {
   const client = useQueryClient();
   const toast = useToast();
   const key = ["care-record", patientId];
@@ -426,9 +428,9 @@ export function CarePanel({ patientId, today }: { patientId: string; today: stri
               onSubmit={(b) => run("post", `/care/patients/${patientId}/conditions`, b, "Condition recorded.")}
             />
           )}
-          {sheet.kind === "medication" && <RecordMedication patientId={patientId} today={today} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "medication" && <RecordMedication patientId={patientId} run={run} busy={busy} error={call.error} />}
           {sheet.kind === "confirm" && <ConfirmMedication m={sheet.m} run={run} busy={busy} error={call.error} />}
-          {sheet.kind === "fill" && <LogFill m={sheet.m} today={today} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "fill" && <LogFill m={sheet.m} today={todayISO()} run={run} busy={busy} error={call.error} />}
           {sheet.kind === "note" && <NoteForm patientId={patientId} hcps={r.care_team.hcps} run={run} busy={busy} error={call.error} />}
           {sheet.kind === "close" && <CloseRequest r={sheet.r} run={run} busy={busy} error={call.error} />}
           {sheet.kind === "hcp" && (
@@ -454,11 +456,11 @@ function supplyBody(s: typeof emptySupply) {
   return { measure: s.measure || null, days_supply: Number(s.days_supply), copay: Number(s.copay || 0) };
 }
 
-function RecordMedication({ patientId, today, run, busy, error }: { patientId: string; today: string; run: Run; busy: boolean; error: unknown }) {
+function RecordMedication({ patientId, run, busy, error }: { patientId: string; run: Run; busy: boolean; error: unknown }) {
   const [supply, setSupply] = useState(emptySupply);
   return (
     <MedicationForm
-      today={today}
+      audience="staff"
       submitLabel="Record medication"
       busy={busy}
       error={error}
@@ -539,7 +541,7 @@ function NoteForm({ patientId, hcps, run, busy, error }: { patientId: string; hc
             <option value="">Not from a specific HCP</option>
             {hcps.map((h) => (
               <option key={h.hcp_id} value={h.hcp_id}>
-                {h.name} · {h.specialty}
+                {h.name} · {specialtyText(h.specialties)}
               </option>
             ))}
           </select>
@@ -642,8 +644,11 @@ function HcpPicker({
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-ink">{h.name}</div>
                 <div className="text-[13px] text-ink-subtle">
-                  {h.reason} · {h.location}
+                  {h.reason}
+                  {h.location ? ` · ${h.location}` : ""}
+                  {h.origin === "invited" ? " · Invited HCP" : ""}
                 </div>
+                <div className="mt-1 text-[13px] text-ink-muted">All specialties: {specialtyText(h.specialties)}</div>
               </div>
               <Button
                 size="sm"
@@ -698,28 +703,33 @@ function PortalAccess({ patientId, portal, onInvited }: { patientId: string; por
   } else {
     body = (
       <form
-        className="flex flex-col gap-3 sm:flex-row sm:items-end"
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
           if (email.trim()) invite.mutate();
         }}
       >
-        <TextField
-          label="Patient's email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="flex-1"
-          hint={
-            state === "invited"
-              ? `Invitation sent, expires ${fmtDateTime(`${portal.expires_at}Z`)}. Sending again replaces it.`
-              : "The invitation is bound to this record. The patient sees what you recorded once they join."
-          }
-        />
-        <Button type="submit" variant="primary" busy={invite.isPending}>
-          <Mail className="h-4 w-4" aria-hidden /> {state === "invited" ? "Send again" : "Invite to portal"}
-        </Button>
+        {/* Input and button share one row and one height; the hint sits below both, so it
+            never pushes the button out of line. Stacks on phones. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <TextField
+            label="Patient's email"
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="min-w-0 flex-1"
+          />
+          <Button type="submit" variant="primary" busy={invite.isPending} className="h-11 w-full shrink-0 sm:w-auto">
+            <Mail className="h-4 w-4" aria-hidden /> {state === "invited" ? "Send again" : "Invite to portal"}
+          </Button>
+        </div>
+        <p className="mt-1.5 text-[13px] text-ink-subtle">
+          {state === "invited"
+            ? `Invitation sent, expires ${fmtDateTime(`${portal.expires_at}Z`)}. Sending again replaces it.`
+            : "The invitation is bound to this record. The patient sees what you recorded once they join."}
+        </p>
       </form>
     );
   }

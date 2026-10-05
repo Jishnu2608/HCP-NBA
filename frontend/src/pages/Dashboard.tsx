@@ -305,7 +305,7 @@ export default function Dashboard() {
               <p className="text-sm leading-6 text-ink-muted">
                 Baseline from {num(fair.baseline?.sent)} earlier touches to patients already in a gap. The engine bars appear
                 once at least {MIN_SENT} engine recommendations of this kind have an outcome: approve and send
-                recommendations, then advance the demo clock.
+                recommendations, then play out the responses on the Engine page.
               </p>
               {can(P.ENGINE_OPERATE) && (
                 <Link
@@ -402,7 +402,7 @@ export default function Dashboard() {
           icon={<HeartPulse />}
           title="Adherence by measure"
           description={`Adherent share today; target ${pct(d.adherence.pdc_threshold)} of days covered.`}
-          note={trendRows.length > 1 ? undefined : "One measurement date so far. A trend over time appears after the demo clock is advanced."}
+          note={trendRows.length > 1 ? undefined : "One measurement date so far. A trend appears as cycles run on later days."}
         >
           <ul className={cx("gap-x-10 gap-y-4", trendRows.length > 1 ? "space-y-4" : "grid md:grid-cols-3")}>
             {byMeasure.map((c) => (

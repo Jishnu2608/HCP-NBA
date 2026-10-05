@@ -31,6 +31,7 @@ import {
   num,
 } from "../ui";
 import type { Column, Tone } from "../ui";
+import { SpecialtyPicker, specialtyText } from "./HealthForms";
 
 interface RoleOption {
   role: string;
@@ -111,14 +112,17 @@ function InviteForm({ roles, onSent }: { roles: RoleOption[]; onSent: (devLink?:
   const toast = useToast();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState(roles[0]?.role ?? "");
+  const [specialties, setSpecialties] = useState<string[]>([]);
   const [touched, setTouched] = useState(false);
   const emailProblem = /^\S+@\S+\.\S+$/.test(email) ? null : "Enter a valid email address.";
   const send = useMutation({
-    mutationFn: () => post("/invitations", { email, role }),
+    // Specialties only for an HCP invitation; none chosen means "Specialty not configured".
+    mutationFn: () => post("/invitations", role === "hcp" ? { email, role, specialties } : { email, role }),
     onSuccess: (data: Json) => {
       const sent = data.invitation.delivery === "email";
       toast(sent ? `Invitation emailed to ${data.invitation.email}` : "Invitation created");
       setEmail("");
+      setSpecialties([]);
       setTouched(false);
       onSent(data.dev_link);
       void client.invalidateQueries({ queryKey: ["invitations"] });
@@ -159,6 +163,13 @@ function InviteForm({ roles, onSent }: { roles: RoleOption[]; onSent: (devLink?:
         </div>
         {selected && <p className="mt-2 text-[13px] leading-5 text-ink-subtle">{selected.description}</p>}
       </fieldset>
+      {role === "hcp" && (
+        <SpecialtyPicker
+          value={specialties}
+          onChange={setSpecialties}
+          hint="Choose every specialty the HCP is qualified in. Leave empty if unknown: it shows as Specialty not configured. The HCP cannot change these; they can ask you to."
+        />
+      )}
       <TextField
         label="Recipient email"
         type="email"
@@ -227,7 +238,16 @@ export default function Invitations() {
         </div>
       ),
     },
-    { key: "role", header: "Role", cell: (i) => <span className="text-ink">{i.role_label}</span> },
+    {
+      key: "role",
+      header: "Role",
+      cell: (i) => (
+        <div className="min-w-0">
+          <span className="text-ink">{i.role_label}</span>
+          {i.role === "hcp" && <div className="text-[13px] text-ink-subtle">{specialtyText(i.specialties)}</div>}
+        </div>
+      ),
+    },
     ...(seesAll
       ? [
           {

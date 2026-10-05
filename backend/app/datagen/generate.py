@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.auth.provisioning import assignments
 from app.auth.service import ensure_system_admin
 from app.auth.sessions import sessions
+from app.clinical import hcps as hcps_module
 from app.clinical import records
 from app.core import clock
 from app.core.config import get_settings
@@ -30,6 +31,7 @@ from app.models import (
     Consent,
     Content,
     Hcp,
+    HcpSpecialty,
     Interaction,
     MedicationFill,
     Patient,
@@ -53,8 +55,6 @@ from app.models.enums import (
 )
 from app.models.tables import utcnow
 
-DEFAULT_AS_OF = date(2026, 9, 30)
-
 # Mix of the pre-engine "blast" outreach programme. Random on purpose: it gives the
 # propensity models unbiased history to learn from.
 HISTORY_ACTIONS = [
@@ -73,7 +73,9 @@ class GenConfig:
     n_hcps: int = 300
     n_reps: int = 20
     n_care_managers: int = 10
-    as_of: date = DEFAULT_AS_OF
+    # Synthetic history ends on the day it is generated (the real date by default) and
+    # keeps those historical dates afterwards.
+    as_of: date = field(default_factory=clock.today)
     # Demo accounts for the seeded personas. Off = only the fixed administrator is seeded.
     seed_demo_accounts: bool = field(default_factory=lambda: get_settings().seed_demo_accounts)
     # None = read NBA_DEMO_PASSWORD when demo accounts are actually built.
@@ -614,6 +616,16 @@ def _hcps_by_state(hcps: list[Hcp]) -> dict:
     return hcps_by_state
 
 
+def synthetic_hcp_names(hcp_ids: list[str]) -> dict[str, tuple[str, str]]:
+    """The generated (first, last) name of synthetic HCP records, recomputed from the seed."""
+    wanted = {i for i in hcp_ids if i.startswith("HCP_") and i[4:].isdigit()}
+    if not wanted:
+        return {}
+    top = max(int(i[4:]) for i in wanted)
+    cfg = GenConfig(n_hcps=max(top, 12), seed_demo_accounts=False)
+    return {h.hcp_id: (h.first_name, h.last_name) for h in build_hcps(cfg)[0] if h.hcp_id in wanted}
+
+
 def synthetic_patient_names(n_hcps: int, patient_ids: list[str]) -> dict[str, tuple[str, str]]:
     """The generated (first, last) name of synthetic patient records, recomputed from the
     seed. Used to give a record its own name back when an account stops using it."""
@@ -644,6 +656,7 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
     # Real patients (self-registered or clinic) and what they and their care team recorded
     # are not demo data either.
     registered["real_patients"] = records.snapshot(db)
+    registered["real_hcps"] = hcps_module.snapshot(db)
     wipe(db)
     sessions.revoke_everyone(db)
     ensure_system_admin(db)
@@ -652,6 +665,7 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
     hcps, hcp_traits = build_hcps(cfg)
     db.add_all(contents + hcps)
     db.flush()
+    db.add_all(HcpSpecialty(hcp_id=h.hcp_id, specialty=h.specialty) for h in hcps)
 
     hcps_by_state = _hcps_by_state(hcps)
     bundles = [
@@ -771,11 +785,14 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
         db.add_all(assign_reps(reps, hcps))
         db.add_all(assign_care_managers(cms, patients))
         db.flush()
+    hcps_module.restore(db, registered.get("real_hcps", {}))
     records.restore(db, registered.get("real_patients", {}))
     assignments.restore(db, registered)
     records.restore_links(db, registered.get("real_patients", {}))
+    hcps_module.restore_links(db, registered.get("real_hcps", {}))
 
-    clock.set_today(db, cfg.as_of)
+    # The outcome simulator has played the population up to its generation day.
+    clock.set_simulated_through(db, cfg.as_of)
     db.commit()
     return {
         table.name: db.scalar(select(func.count()).select_from(table))

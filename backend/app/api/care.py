@@ -59,6 +59,8 @@ class MedicationBody(ConfirmBody):
     schedule: str | None = Field(default=None, max_length=64)
     start_date: str = Field(max_length=10)
     end_date: str | None = Field(default=None, max_length=10)
+    # Explicit: true = still being taken (no end date); false = an end date is required.
+    ongoing: bool
 
 
 class FillBody(StrictBody):
@@ -125,6 +127,12 @@ def vocabulary_options(user: User = Depends(get_current_user)) -> dict:
         "measures": list(vocabulary.DRUGS),
         "days_supply": list(vocabulary.DAYS_SUPPLY_CHOICES),
     }
+
+
+@router.get("/specialties")
+def specialty_options(_: User = Depends(get_current_user)) -> list[dict]:
+    """The controlled list of HCP specialties (codes and labels)."""
+    return vocabulary.specialty_options()
 
 
 @router.get("/requests")

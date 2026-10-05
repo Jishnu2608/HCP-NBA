@@ -8,6 +8,7 @@ from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.clinical import care
+from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
@@ -15,6 +16,7 @@ from app.models import (
     Consent,
     Content,
     Hcp,
+    HcpSpecialty,
     Interaction,
     MedicationFill,
     Nba,
@@ -167,7 +169,7 @@ def patient_360(
             {
                 "hcp_id": h.hcp_id,
                 "name": out.hcp_name(h),
-                "specialty": h.specialty,
+                "specialties": hcp_records.specialty_out(db, h.hcp_id),
                 "is_primary": primary,
             }
             for h, primary in hcps
@@ -209,7 +211,13 @@ def list_hcps(
     if q:
         like = f"%{q}%"
         where.append(
-            or_(Hcp.hcp_id.ilike(like), Hcp.last_name.ilike(like), Hcp.specialty.ilike(like))
+            or_(
+                Hcp.hcp_id.ilike(like),
+                Hcp.last_name.ilike(like),
+                Hcp.hcp_id.in_(
+                    select(HcpSpecialty.hcp_id).where(HcpSpecialty.specialty.ilike(like))
+                ),
+            )
         )
     total = db.scalar(select(func.count()).select_from(Hcp).where(*where))
     rows = db.scalars(
@@ -225,7 +233,8 @@ def list_hcps(
             {
                 "hcp_id": h.hcp_id,
                 "name": out.hcp_name(h),
-                "specialty": h.specialty,
+                "specialties": hcp_records.specialty_out(db, h.hcp_id),
+                "origin": h.origin,
                 "organization": h.organization,
                 "city": h.city,
                 "state": h.state,
@@ -249,7 +258,8 @@ def hcp_360(hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(
         "hcp_id": h.hcp_id,
         "npi": h.npi,
         "name": out.hcp_name(h),
-        "specialty": h.specialty,
+        "specialties": hcp_records.specialty_out(db, h.hcp_id),
+        "origin": h.origin,
         "taxonomy_code": h.taxonomy_code,
         "organization": h.organization,
         "city": h.city,

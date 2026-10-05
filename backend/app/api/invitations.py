@@ -32,6 +32,8 @@ inviter = require_permission(*INVITE_PERMISSION.values())
 class InviteBody(StrictBody):
     email: str = Field(max_length=254)
     role: str = Field(max_length=32)
+    # HCP invitations only: 0..n specialties from the controlled list (none = not configured).
+    specialties: list[str] | None = Field(default=None, max_length=10)
 
 
 class TokenBody(StrictBody):
@@ -91,7 +93,11 @@ def create(
 ) -> dict:
     ratelimit.consume(db, "invite_create", f"user:{user.id}")
     try:
-        result = _created(db, user, invitations.create(db, user, body.email, body.role))
+        result = _created(
+            db,
+            user,
+            invitations.create(db, user, body.email, body.role, specialties=body.specialties),
+        )
     except AuthError:
         db.commit()  # an expiry noticed on the way is still recorded
         raise

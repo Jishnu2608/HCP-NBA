@@ -151,7 +151,7 @@ def test_patient_adds_condition_medication_and_asks_to_consult(env):
     med = client.post(
         "/api/me/medications",
         json={"name": "Metformin", "dose_instructions": "500 mg with dinner",
-              "schedule": "Once daily", "start_date": "2026-08-01"},
+              "schedule": "Once daily", "start_date": "2026-08-01", "ongoing": True},
         headers=me,
     )  # fmt: skip
     assert med.status_code == 201, med.text
@@ -179,7 +179,12 @@ def test_patient_cannot_forge_fields(env):
         ("/api/me/conditions", {"condition": "hypertension", "patient_id": "PAT_00001"}),
         (
             "/api/me/medications",
-            {"name": "x", "start_date": "2026-01-01", "review_status": "confirmed"},
+            {
+                "name": "x",
+                "start_date": "2026-01-01",
+                "ongoing": True,
+                "review_status": "confirmed",
+            },
         ),
         ("/api/me/care-requests", {"reason": "x", "assigned_hcp_id": "HCP_0001"}),
     ):
@@ -203,7 +208,9 @@ def test_care_manager_confirms_routes_and_patient_sees_the_hcp(env):
     me, pid = as_user(session), session["user"]["patient_id"]
     client.post("/api/me/conditions", json={"condition": "type2_diabetes"}, headers=me)
     client.post(
-        "/api/me/medications", json={"name": "metformin", "start_date": "2026-07-01"}, headers=me
+        "/api/me/medications",
+        json={"name": "metformin", "start_date": "2026-07-01", "ongoing": True},
+        headers=me,
     )
     cm = cm_headers(client, db, pid)
     record = client.get(f"/api/care/patients/{pid}", headers=cm).json()
@@ -222,13 +229,10 @@ def test_care_manager_confirms_routes_and_patient_sees_the_hcp(env):
         params={"condition_id": condition["id"]},
         headers=cm,
     ).json()
-    specialties = [o["specialty"] for o in options["items"]]
-    assert specialties and set(specialties) <= {
-        "Endocrinology",
-        "Family Medicine",
-        "Internal Medicine",
-    }
-    assert specialties[0] == "Endocrinology"  # the specialist comes first
+    suited = {"Endocrinology", "Family Medicine", "Internal Medicine"}
+    held = [{s["code"] for s in o["specialties"]} for o in options["items"]]
+    assert held and all(h & suited for h in held)
+    assert "Endocrinology" in held[0]  # the specialist comes first
     # No HCP was linked by looking.
     assert count(db, PatientHcp, patient_id=pid) == 0
 
@@ -304,7 +308,7 @@ def test_clinic_patient_is_invited_and_sees_their_existing_record(env):
     )
     client.post(
         f"/api/care/patients/{pid}/medications",
-        json={"name": "lisinopril", "start_date": "2026-06-01", "days_supply": 90},
+        json={"name": "lisinopril", "start_date": "2026-06-01", "days_supply": 90, "ongoing": True},
         headers=cm,
     )
     client.post(
@@ -378,7 +382,7 @@ def test_real_patients_are_never_simulated(env):
         )
     )  # fmt: skip
     db.commit()
-    simulator.advance(db, 1, retrain=False)
+    simulator.play_out(db, retrain=False)
     db.commit()
     still = db.scalar(select(Interaction).where(Interaction.target_id == pid))
     assert still.outcome == "pending"  # only the person can answer it

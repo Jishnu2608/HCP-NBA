@@ -33,6 +33,7 @@ export const P = {
   SELF_CONSENT_MANAGE: "self:consent:manage",
   SELF_PATIENTS_READ: "self:patients:read",
   SELF_HEALTH_MANAGE: "self:health:manage",
+  SELF_SPECIALTY_REQUEST: "self:specialty:request",
   INVITE_HCP: "invite:hcp",
   INVITE_MEDICAL_REP: "invite:medical_rep",
   INVITE_CARE_MANAGER: "invite:care_manager",
@@ -40,6 +41,7 @@ export const P = {
   INVITE_PATIENT: "invite:patient",
   INVITATION_READ_ALL: "invitation:read:all",
   PRIVACY_SELF: "privacy:self",
+  PRIVACY_REQUEST: "privacy:request",
   PRIVACY_MANAGE: "privacy:manage",
 } as const;
 

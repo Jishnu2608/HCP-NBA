@@ -16,7 +16,8 @@ from app.api import serializers as out
 from app.api.deps import require_permission
 from app.api.people import consent_out
 from app.api.schemas import StrictBody
-from app.clinical import care
+from app.clinical import care, vocabulary
+from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
@@ -30,6 +31,7 @@ from app.models import (
     Patient,
     PatientHcp,
     PatientTherapy,
+    SpecialtyChangeRequest,
     User,
 )
 from app.models.enums import Channel, ConsentPurpose, FillSource, Outcome, ReviewStatus, TargetType
@@ -41,6 +43,7 @@ consent_managers = require_permission(Permission.SELF_CONSENT_MANAGE)
 panel_readers = require_permission(Permission.SELF_PATIENTS_READ)
 portal_users = require_permission(Permission.SELF_INBOX)
 health_managers = require_permission(Permission.SELF_HEALTH_MANAGE)
+specialty_requesters = require_permission(Permission.SELF_SPECIALTY_REQUEST)
 
 
 def no_assignment() -> HTTPException:
@@ -85,7 +88,9 @@ def my_profile(user: User = Depends(profile_readers), db: Session = Depends(get_
             "hcp_id": h.hcp_id,
             "name": out.hcp_name(h),
             "npi": h.npi,
-            "specialty": h.specialty,
+            # Set by an administrator; empty means "Specialty not configured".
+            "specialties": hcp_records.specialty_out(db, h.hcp_id),
+            "origin": h.origin,
             "organization": h.organization,
             "city": h.city,
             "state": h.state,
@@ -113,7 +118,11 @@ def my_profile(user: User = Depends(profile_readers), db: Session = Depends(get_
         # Internal risk scores and model outputs are not shown to the patient.
         "therapies": [out.therapy_out(db, t, today, with_risk=False) for t in therapies],
         "care_team": [
-            {"name": out.hcp_name(h), "specialty": h.specialty, "is_primary": primary}
+            {
+                "name": out.hcp_name(h),
+                "specialties": hcp_records.specialty_out(db, h.hcp_id),
+                "is_primary": primary,
+            }
             for h, primary in care_team
         ],
     }
@@ -324,6 +333,8 @@ class MedicationReport(StrictBody):
     schedule: str | None = Field(default=None, max_length=64)
     start_date: str = Field(max_length=10)
     end_date: str | None = Field(default=None, max_length=10)
+    # Explicit: true = still being taken (no end date); false = an end date is required.
+    ongoing: bool
 
 
 class RefillReport(StrictBody):
@@ -391,3 +402,42 @@ def request_consultation(
     care.request_consultation(db, user, _own_patient(db, user), body.reason)
     db.commit()
     return _health(db, user)
+
+
+# --- An HCP's specialty change requests --------------------------------------------------
+
+
+class SpecialtyRequest(StrictBody):
+    action: Literal["add", "remove", "replace"]
+    specialties: list[str] = Field(max_length=10)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/specialty-requests")
+def my_specialty_requests(
+    user: User = Depends(specialty_requesters), db: Session = Depends(get_db)
+) -> dict:
+    """Current specialties (set by an administrator) and this HCP's requests."""
+    rows = db.scalars(
+        select(SpecialtyChangeRequest)
+        .where(SpecialtyChangeRequest.requested_by_user_id == user.id)
+        .order_by(SpecialtyChangeRequest.id.desc())
+    )
+    return {
+        "specialties": hcp_records.specialty_out(db, own_hcp_id(user)),
+        "options": vocabulary.specialty_options(),
+        "requests": [hcp_records.request_out(db, r) for r in rows],
+    }
+
+
+@router.post("/specialty-requests", status_code=201)
+def request_specialty_change(
+    body: SpecialtyRequest,
+    user: User = Depends(specialty_requesters),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Asks an administrator to change this HCP's specialties. Changes nothing by itself."""
+    own_hcp_id(user)
+    row = hcp_records.submit_request(db, user, body.action, body.specialties, body.notes)
+    db.commit()
+    return hcp_records.request_out(db, row)

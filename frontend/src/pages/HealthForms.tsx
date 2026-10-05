@@ -17,6 +17,15 @@ export interface Vocabulary {
   days_supply: number[];
 }
 
+/** Today's real date as YYYY-MM-DD in the viewer's time zone (the server checks again). */
+export const todayISO = () => new Date().toLocaleDateString("en-CA");
+
+const addDays = (iso: string, days: number) => {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString("en-CA");
+};
+
 export const useVocabulary = () =>
   useQuery({ queryKey: ["care-vocabulary"], queryFn: () => api<Vocabulary>("/care/vocabulary"), staleTime: Infinity });
 
@@ -142,16 +151,19 @@ export interface MedicationValues {
   schedule: string | null;
   start_date: string;
   end_date: string | null;
+  /** Explicit: still being taken (no end date) or ending on `end_date`. */
+  ongoing: boolean;
 }
 
-/** A medication as the patient knows it. The care team adds supply details when confirming. */
+/** A medication. The patient reports what they take; the care team records a course,
+ *  which may start later and end on a planned date. Dates are relative to the real date. */
 export function MedicationForm({
   onSubmit,
   busy,
   error,
   extra,
   submitLabel = "Add medication",
-  today,
+  audience = "patient",
 }: {
   onSubmit: (body: MedicationValues) => void;
   busy: boolean;
@@ -159,8 +171,10 @@ export function MedicationForm({
   /** Care-team fields (supply, copay), rendered after the patient fields. */
   extra?: ReactNode;
   submitLabel?: string;
-  today: string;
+  audience?: "patient" | "staff";
 }) {
+  const today = todayISO();
+  const staff = audience === "staff";
   const vocab = useVocabulary();
   const listId = useId();
   const [v, setV] = useState({ name: "", dose_instructions: "", schedule: "", start_date: "", end_date: "" });
@@ -168,8 +182,20 @@ export function MedicationForm({
   const [tried, setTried] = useState(false);
   const errors = {
     name: !v.name.trim() ? "Enter the medication's name." : null,
-    start_date: !v.start_date ? "Enter when you started." : null,
-    end_date: !ongoing && v.end_date && v.end_date < v.start_date ? "The end date is before the start date." : null,
+    start_date: !v.start_date
+      ? staff
+        ? "Enter the start date."
+        : "Enter when you started."
+      : !staff && v.start_date > today
+        ? "The start date cannot be in the future."
+        : null,
+    end_date: ongoing
+      ? null
+      : !v.end_date
+        ? "Enter the end date, or mark it as ongoing."
+        : v.start_date && v.end_date < v.start_date
+          ? "The end date is before the start date."
+          : null,
   };
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -181,6 +207,7 @@ export function MedicationForm({
       schedule: v.schedule.trim() || null,
       start_date: v.start_date,
       end_date: ongoing ? null : v.end_date || null,
+      ongoing,
     });
   }
   const set = (key: keyof typeof v) => (e: { target: { value: string } }) => setV({ ...v, [key]: e.target.value });
@@ -220,25 +247,43 @@ export function MedicationForm({
         <TextField
           label="Start date"
           type="date"
-          max={today}
+          max={staff ? addDays(today, 366) : today}
           value={v.start_date}
           onChange={set("start_date")}
           required
+          hint={staff ? "Can be in the future for a course that starts later." : undefined}
           error={tried ? errors.start_date : null}
         />
         <TextField
           label="End date"
           type="date"
-          value={v.end_date}
+          min={v.start_date || undefined}
+          max={addDays(today, 5 * 366)}
+          value={ongoing ? "" : v.end_date}
           onChange={set("end_date")}
           disabled={ongoing}
+          required={!ongoing}
           error={tried ? errors.end_date : null}
         />
       </div>
-      <label className="flex items-center gap-2 text-sm text-ink">
-        <input type="checkbox" checked={ongoing} onChange={(e) => setOngoing(e.target.checked)} className="h-4 w-4 accent-[var(--color-primary)]" />
-        I am still taking it
-      </label>
+      {staff ? (
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-ink">Duration</legend>
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input type="radio" name="duration" checked={ongoing} onChange={() => setOngoing(true)} className="h-4 w-4" />
+            Ongoing (no end date)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input type="radio" name="duration" checked={!ongoing} onChange={() => setOngoing(false)} className="h-4 w-4" />
+            Ends on the end date
+          </label>
+        </fieldset>
+      ) : (
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" checked={ongoing} onChange={(e) => setOngoing(e.target.checked)} className="h-4 w-4 accent-[var(--color-primary)]" />
+          I am still taking it
+        </label>
+      )}
       {extra}
       <ErrorNote error={error} />
       <Button type="submit" variant="primary" busy={busy}>
@@ -332,6 +377,68 @@ export function ConsultForm({
   );
 }
 
+/* ------------------------------------------------------------------ HCP specialties */
+
+/** "Cardiology, Internal Medicine (general medicine)" or the explicit "not configured". */
+export function specialtyText(list: Json[] | null | undefined) {
+  return list?.length ? list.map((s) => s.label).join(", ") : "Specialty not configured";
+}
+
+export function SpecialtyChips({ list }: { list: Json[] | null | undefined }) {
+  if (!list?.length) return <span className="text-sm italic text-ink-subtle">Specialty not configured</span>;
+  return (
+    <ul className="flex flex-wrap gap-1.5">
+      {list.map((s) => (
+        <li key={s.code}>
+          <Badge tone="info">{s.label}</Badge>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export interface SpecialtyOption {
+  code: string;
+  label: string;
+}
+
+export const useSpecialtyOptions = () =>
+  useQuery({ queryKey: ["specialty-options"], queryFn: () => api<SpecialtyOption[]>("/care/specialties"), staleTime: Infinity });
+
+/** Checkbox group over the controlled list. Nothing is preselected. */
+export function SpecialtyPicker({
+  value,
+  onChange,
+  legend = "Specialties",
+  hint,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  legend?: string;
+  hint?: ReactNode;
+}) {
+  const options = useSpecialtyOptions();
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-sm font-medium text-ink">{legend}</legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {(options.data ?? []).map((o) => (
+          <label key={o.code} className="flex min-h-10 items-center gap-2 rounded-lg border border-line px-3 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={value.includes(o.code)}
+              onChange={(e) => onChange(e.target.checked ? [...value, o.code] : value.filter((v) => v !== o.code))}
+            />
+            {o.label}
+          </label>
+        ))}
+      </div>
+      {hint && <p className="text-[13px] text-ink-subtle">{hint}</p>}
+    </fieldset>
+  );
+}
+
 /* ------------------------------------------------------------------ read-only lists */
 
 export function ConditionList({ items, staff, actions }: { items: Json[]; staff?: boolean; actions?: (c: Json) => ReactNode }) {
@@ -410,7 +517,7 @@ export function CareTeam({ team }: { team: Json }) {
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-ink">{h.name}</div>
             <div className="flex items-center gap-1 truncate text-[13px] text-ink-subtle">
-              <Stethoscope className="h-3.5 w-3.5 shrink-0" aria-hidden /> {h.specialty}
+              <Stethoscope className="h-3.5 w-3.5 shrink-0" aria-hidden /> {specialtyText(h.specialties)}
             </div>
           </div>
           {h.is_primary && <Badge tone="sage">Primary</Badge>}
@@ -440,7 +547,7 @@ export function RequestList({ items, staff, actions }: { items: Json[]; staff?: 
           )}
           {r.assigned_hcp && (
             <p className="mt-1 text-[13px] text-ink-muted">
-              Routed to <span className="font-semibold text-ink">{r.assigned_hcp.name}</span> ({r.assigned_hcp.specialty})
+              Routed to <span className="font-semibold text-ink">{r.assigned_hcp.name}</span> ({specialtyText(r.assigned_hcp.specialties)})
             </p>
           )}
           {r.resolution && !(r.assigned_hcp && r.resolution.startsWith("Routed to")) && (

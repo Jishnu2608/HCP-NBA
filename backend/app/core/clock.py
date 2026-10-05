@@ -1,33 +1,55 @@
-"""Demo clock: the single "today" the whole system reads instead of wall-clock time.
+"""Today. The application always works on the real date of the server.
 
-Lets the demo advance time to show responses, refills and the next recommendation cycle.
+There is no adjustable "demo date": recommendations, adherence, medication dates, consent and
+analytics all use the actual current date. Synthetic history keeps its own historical dates
+(anchored to the day it was generated); `simulated_through` only records how far the outcome
+simulator has played the synthetic population forward, it is not "today".
+
+Tests may pin the date with `override`; application code never does.
 """
 
-from datetime import date, timedelta
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date
 
 from sqlalchemy.orm import Session
 
 from app.models import EngineConfig
 
-CLOCK_KEY = "demo_as_of_date"
+SIMULATED_KEY = "simulated_through"
+
+_override: date | None = None
 
 
-def get_today(db: Session) -> date:
-    row = db.get(EngineConfig, CLOCK_KEY)
-    return date.fromisoformat(row.value) if row else date.today()
+def today() -> date:
+    return _override or date.today()
 
 
-def set_today(db: Session, value: date) -> date:
-    row = db.get(EngineConfig, CLOCK_KEY)
+def get_today(_db: Session | None = None) -> date:
+    """The real current date. (Takes the session for call-site compatibility.)"""
+    return today()
+
+
+@contextmanager
+def override(value: date) -> Iterator[date]:
+    """Tests only: pretend the current date is `value` inside the block."""
+    global _override
+    previous, _override = _override, value
+    try:
+        yield value
+    finally:
+        _override = previous
+
+
+def simulated_through(db: Session) -> date | None:
+    row = db.get(EngineConfig, SIMULATED_KEY)
+    return date.fromisoformat(row.value) if row else None
+
+
+def set_simulated_through(db: Session, value: date) -> None:
+    row = db.get(EngineConfig, SIMULATED_KEY)
     if row:
         row.value = value.isoformat()
     else:
-        db.add(EngineConfig(key=CLOCK_KEY, value=value.isoformat()))
+        db.add(EngineConfig(key=SIMULATED_KEY, value=value.isoformat()))
     db.flush()
-    return value
-
-
-def advance(db: Session, days: int) -> date:
-    if days < 1:
-        raise ValueError("days must be >= 1")
-    return set_today(db, get_today(db) + timedelta(days=days))

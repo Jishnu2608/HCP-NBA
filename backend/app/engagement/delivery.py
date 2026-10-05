@@ -66,7 +66,7 @@ class SendBlocked(Exception):
 
 
 def now_on(db: Session) -> datetime:
-    """Current time of day on the demo date."""
+    """Now: today's date with the current time of day."""
     return datetime.combine(clock.get_today(db), utcnow().time().replace(microsecond=0))
 
 

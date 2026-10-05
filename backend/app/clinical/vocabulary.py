@@ -10,6 +10,24 @@ from app.models.enums import Measure
 
 PRIMARY_CARE = ("Family Medicine", "Internal Medicine")
 
+# The controlled list of HCP specialties (code -> display label). Codes are the NUCC
+# specialty names the synthetic data uses; an HCP may hold several. No default exists.
+SPECIALTIES: dict[str, str] = {
+    "Cardiovascular Disease": "Cardiology",
+    "Endocrinology": "Endocrinology",
+    "Family Medicine": "Family Medicine",
+    "Internal Medicine": "Internal Medicine (general medicine)",
+}
+
+
+def specialty_label(code: str) -> str:
+    return SPECIALTIES.get(code, code)
+
+
+def specialty_options() -> list[dict]:
+    return [{"code": code, "label": label} for code, label in SPECIALTIES.items()]
+
+
 # Specialist per adherence measure (also used by the synthetic data generator).
 SPECIALIST_FOR: dict[str, str] = {
     Measure.DIABETES: "Endocrinology",

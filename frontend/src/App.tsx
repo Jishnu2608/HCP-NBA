@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
 import {
-  CalendarDays,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
@@ -12,7 +10,6 @@ import {
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { NavLink, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router-dom";
-import { api } from "./api";
 import { ROLE_LABEL, useAuth } from "./auth";
 import AccessDenied from "./pages/AccessDenied";
 import { BrandMark } from "./pages/AuthLayout";
@@ -31,7 +28,7 @@ import { NAV_GROUPS, ROUTES, groupOf } from "./routes";
 import { LegalLinks } from "./legal";
 import { preferences } from "./session";
 import { ThemeToggle } from "./theme";
-import { Avatar, IconButton, Loading, PersonName, Skeleton, cx, fmtDate } from "./ui";
+import { Avatar, IconButton, Loading, PersonName, cx } from "./ui";
 
 const PUBLIC_PATHS = ["/", "/login", "/signup", "/signup/verify"];
 
@@ -214,9 +211,6 @@ function AccountMenu() {
               <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> {ROLE_LABEL[user.role]}
               {user.professionally_verified && " · Verified"}
             </div>
-            <div className="mt-3 sm:hidden">
-              <DemoDate />
-            </div>
           </div>
           <button
             type="button"
@@ -232,23 +226,6 @@ function AccountMenu() {
   );
 }
 
-function DemoDate() {
-  const clock = useQuery({ queryKey: ["clock"], queryFn: () => api("/clock") });
-  return (
-    <div
-      className="flex min-h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-xs font-medium text-ink-muted"
-      title="The demonstration runs on its own calendar"
-    >
-      <CalendarDays className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <span className="hidden sm:inline">Demo date</span>
-      {clock.data ? (
-        <span className="tabular whitespace-nowrap text-ink">{fmtDate(clock.data.as_of_date)}</span>
-      ) : (
-        <Skeleton className="h-3 w-20" />
-      )}
-    </div>
-  );
-}
 
 function Shell({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -360,9 +337,6 @@ function Shell({ children }: { children: ReactNode }) {
             Access follows your role and assignments. All records are synthetic.
           </p>
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-            <div className="hidden sm:block">
-              <DemoDate />
-            </div>
             <ThemeToggle />
             <AccountMenu />
           </div>

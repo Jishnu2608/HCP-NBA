@@ -47,7 +47,7 @@ Unify → Segment → Predict NBA → Personalize → Orchestrate → Engage →
 | Rationale | Who, why this action, why this channel, why now, compliance status, and any better option a gate held back |
 | Drafting | Message wording from the approved content module, through a model-agnostic interface with an offline default. Output is validated before it is stored |
 | Review | Approve, edit, reject, send. Human-in-the-loop always |
-| Closed loop | Simulated delivery, response capture, a demo clock that advances time, retraining, next cycle |
+| Closed loop | Simulated delivery, response capture, "play out responses now" for the simulated population, retraining, next cycle. Everything runs on today's real date; simulated refills follow real days |
 | Analytics | Recommendation mix, why options were held back, response by channel, adherence by measure over time, engine versus earlier outreach on equal terms |
 | Audit | Append-only record of every recommendation, gate result, decision, send, response and settings change, with the actor |
 | Interface | One design system in clinical blue and cool slate, light and dark themes (saved per browser, otherwise following the system setting), responsive from phones to wide screens and at high browser zoom, a bento-grid layout for dashboards and 360 pages, consistent error pages (404, 400, 401, 403, 500, data failures) |
@@ -96,6 +96,7 @@ Everyone:       Log in with email and password → the account's own dashboard
 - **Verified mark:** an invited professional who completes the code gets a blue check next to their name. Seeded demo staff carry it as platform-provisioned. Patients and the administrator do not. Email verification and professional verification are separate.
 - **Date of birth** is required at sign-up and acceptance, checked on the server, and never shown to other users. Professionals must be at least 18 (configurable); patients under that age may register and are marked as minors for administrators.
 - **A patient's data is their own.** A patient who signs up gets a new, empty record and a care manager; nothing from the synthetic demo population is attached. They can add conditions and medications and ask to consult a healthcare professional; each entry goes to their care manager, who confirms it, adds supply details and routes the patient to an HCP whose specialty suits the condition. Only confirmed medications count for adherence and recommendations. Location is the country (and US state) the person chose.
+- **HCP specialties:** an invited HCP starts with a blank record and only the specialties the inviting administrator chose (several allowed; none shows "Specialty not configured"). The HCP can ask for a change from their profile; an administrator approves or rejects it in **Requests**. Care managers route patients using every specialty an HCP holds.
 - **Clinic patients:** a care manager can set up a record for someone seen at the clinic, record conditions, medications and the doctor's instructions, and invite the patient by email; the invitation is bound to that record and the care manager stays responsible.
 - On confirmation a professional account receives starting data from the synthetic pool: one own record for an HCP, a panel of demo patients for a care manager, a set of HCPs for a medical representative.
 - **Deleting a patient account:** an administrator can delete a patient account permanently (typing its email to confirm), also straight from the patient's deletion request. The account and the patient's own data go; the audit log keeps what happened without naming them; the same email can sign up again as a new, empty patient. Professional accounts are disabled, not deleted.
@@ -297,7 +298,7 @@ One process and one deployable unit: the API also serves the built web applicati
 | Frontend | React, TypeScript, Vite, Tailwind, TanStack Query, Recharts; one design system with light and dark themes ([docs/design-system.md](docs/design-system.md)) |
 
 ```
-backend/app/core        configuration, database, permissions, data scope, demo clock
+backend/app/core        configuration, database, permissions, data scope, today's date
 backend/app/auth        accounts, one-time codes, sessions, invitations, assignments, patient deletion
 backend/app/clinical    real patient records, care management, condition and medication vocabulary
 backend/app/legal       legal documents, consent records, privacy requests, data export

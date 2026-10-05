@@ -28,6 +28,7 @@ import {
 import type { Column } from "../ui";
 import { BentoCard, BentoCell, BentoGrid } from "../layout";
 import { ChannelTable, HistoryList, OpenNba } from "./Patients";
+import { specialtyText } from "./HealthForms";
 
 export function HcpList() {
   const navigate = useNavigate();
@@ -62,7 +63,7 @@ export function HcpList() {
         </div>
       ),
     },
-    { key: "specialty", header: "Specialty", cell: (h) => <span className="text-ink-muted">{h.specialty}</span> },
+    { key: "specialty", header: "Specialties", cell: (h) => <span className="text-ink-muted">{specialtyText(h.specialties)}</span> },
     {
       key: "org",
       header: "Organization",
@@ -184,14 +185,18 @@ export function HcpProfile() {
         subtitle={
           <span className="flex flex-wrap gap-x-4 gap-y-1">
             <span className="inline-flex items-center gap-1.5">
-              <Stethoscope className="h-4 w-4 text-ink-subtle" aria-hidden /> {h.specialty}
+              <Stethoscope className="h-4 w-4 text-ink-subtle" aria-hidden /> {specialtyText(h.specialties)}
             </span>
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-              <Building2 className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden /> <span className="break-words">{h.organization}</span>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <MapPin className="h-4 w-4 text-ink-subtle" aria-hidden /> {h.city}, {h.state}
-            </span>
+            {h.organization && (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Building2 className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden /> <span className="break-words">{h.organization}</span>
+              </span>
+            )}
+            {h.city && (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="h-4 w-4 text-ink-subtle" aria-hidden /> {h.city}, {h.state}
+              </span>
+            )}
           </span>
         }
       />
@@ -239,7 +244,7 @@ export function HcpProfile() {
             <div className="col-span-2 min-w-0">
               <dt className="text-[13px] text-ink-subtle">Organization</dt>
               <dd className="break-words font-medium text-ink">
-                {h.organization}, {h.city}, {h.state}
+                {[h.organization, h.city, h.state].filter(Boolean).join(", ") || "Not recorded"}
               </dd>
             </div>
           </dl>

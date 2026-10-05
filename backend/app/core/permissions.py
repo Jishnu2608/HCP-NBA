@@ -56,6 +56,8 @@ class Permission(StrEnum):
     # A patient's own health profile: report conditions and medications, log refills of
     # confirmed medications, ask to consult an HCP.
     SELF_HEALTH_MANAGE = "self:health:manage"
+    # An HCP asking for their specialties to change (an administrator decides).
+    SELF_SPECIALTY_REQUEST = "self:specialty:request"
     # Onboarding authority: who may invite whom. One permission per target role, so the
     # whole authority matrix is the set of these permissions in ROLE_PERMISSIONS below.
     # It grants no data access; it is not an organisational hierarchy.
@@ -70,6 +72,8 @@ class Permission(StrEnum):
     # Privacy: every account manages its own documents, consents, requests and export;
     # handling other people's privacy requests is separate.
     PRIVACY_SELF = "privacy:self"
+    # Submitting one's own privacy request. Not held by the administrator, who handles them.
+    PRIVACY_REQUEST = "privacy:request"
     PRIVACY_MANAGE = "privacy:manage"
 
 
@@ -113,6 +117,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.ANALYTICS_READ,
             P.MODELS_READ,
             P.PRIVACY_SELF,
+            P.PRIVACY_REQUEST,
         }
     ),
     Role.MEDICAL_REP: frozenset(
@@ -122,6 +127,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.NBA_REVIEW_HCP,
             P.CONTENT_READ_APPROVED_HCP,
             P.PRIVACY_SELF,
+            P.PRIVACY_REQUEST,
         }
     ),
     Role.CARE_MANAGER: frozenset(
@@ -134,6 +140,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             # Clinic patients only, for a record this care manager is responsible for.
             P.INVITE_PATIENT,
             P.PRIVACY_SELF,
+            P.PRIVACY_REQUEST,
         }
     ),
     # An HCP may bring in the representative and care manager they work with. Never an MLR
@@ -145,7 +152,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.SELF_PATIENTS_READ,
             P.INVITE_MEDICAL_REP,
             P.INVITE_CARE_MANAGER,
+            P.SELF_SPECIALTY_REQUEST,
             P.PRIVACY_SELF,
+            P.PRIVACY_REQUEST,
         }
     ),
     Role.PATIENT: frozenset(
@@ -155,6 +164,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.SELF_CONSENT_MANAGE,
             P.SELF_HEALTH_MANAGE,
             P.PRIVACY_SELF,
+            P.PRIVACY_REQUEST,
         }
     ),
 }

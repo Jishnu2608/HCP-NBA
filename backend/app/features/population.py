@@ -60,7 +60,9 @@ def load_population(db: Session) -> Population:
     return Population(
         as_of=as_of,
         patients={p.patient_id: p for p in db.scalars(select(Patient))},
-        hcps={h.hcp_id: h for h in db.scalars(select(Hcp))},
+        # The engine's HCP population is synthetic: an invited HCP has no prescribing or
+        # engagement data, and is reached through care routing and their inbox instead.
+        hcps={h.hcp_id: h for h in db.scalars(select(Hcp).where(Hcp.origin == "synthetic"))},
         contents={c.content_id: c for c in db.scalars(select(Content))},
         therapies=therapies,
         fills=fills,

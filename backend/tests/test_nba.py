@@ -7,13 +7,17 @@ from conftest import seeded_session
 from sqlalchemy import delete, select
 
 from app import pipeline
+from app.core import clock
 from app.core.engine_config import DEFAULTS
-from app.datagen.generate import DEFAULT_AS_OF, GenConfig, generate
+from app.datagen.generate import GenConfig, generate
 from app.features.engagement import EngagementState
 from app.models import AuditLog, Consent, Content, ModelVersion, Nba, NbaCandidate
 from app.models.enums import MlrStatus, NbaStatus
 from app.nba import gates
 from app.nba.engine import Candidate, decide, run_cycle
+
+# Synthetic history ends on the day it is generated.
+DEFAULT_AS_OF = clock.today()
 
 TODAY = date(2026, 9, 30)
 CAPS = DEFAULTS["frequency_caps"]

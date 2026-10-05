@@ -77,7 +77,9 @@ def populated(client, email) -> dict:
     me = as_user(session)
     client.post("/api/me/conditions", json={"condition": "hypertension"}, headers=me)
     client.post(
-        "/api/me/medications", json={"name": "losartan", "start_date": "2026-05-01"}, headers=me
+        "/api/me/medications",
+        json={"name": "losartan", "start_date": "2026-05-01", "ongoing": True},
+        headers=me,
     )
     client.post("/api/me/care-requests", json={"reason": "Question about doses"}, headers=me)
     return session

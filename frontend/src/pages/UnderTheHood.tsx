@@ -135,7 +135,7 @@ export default function UnderTheHood() {
                 <div className="mb-4 flex flex-wrap gap-1.5">
                   <Badge tone="sage">Database: {meta.data.database}</Badge>
                   <Badge tone="sage">Drafting provider: {meta.data.llm_provider}</Badge>
-                  <Badge tone="sage">Demo date: {fmtDate(meta.data.as_of_date)}</Badge>
+                  <Badge tone="sage">Today: {fmtDate(meta.data.as_of_date)}</Badge>
                 </div>
                 <dl className="grid gap-x-6 sm:grid-cols-2">
                   {Object.entries(meta.data.row_counts as Record<string, number>)

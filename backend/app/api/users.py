@@ -20,10 +20,11 @@ from app.auth import erasure, invitations
 from app.auth.errors import AuthError
 from app.auth.provisioning import HCPS, OWN_HCP, OWN_PATIENT, PATIENTS, assignments
 from app.auth.sessions import sessions
+from app.clinical import hcps as hcp_records
 from app.core import age, jurisdiction
 from app.core.db import get_db
-from app.core.permissions import Permission, permissions_for
-from app.models import Hcp, Patient, User
+from app.core.permissions import Permission, can, permissions_for
+from app.models import Hcp, Patient, SpecialtyChangeRequest, User
 from app.models.enums import AccountSource, AccountStatus
 
 router = APIRouter(prefix="/api/admin/users", tags=["users"])
@@ -42,6 +43,14 @@ class DeleteBody(StrictBody):
 
     confirm_email: str = Field(max_length=254)
     privacy_request_id: int | None = None
+
+
+class SpecialtiesBody(StrictBody):
+    specialties: list[Annotated[str, Field(max_length=64)]] = Field(max_length=10)
+
+
+class DecisionBody(StrictBody):
+    notes: str | None = Field(default=None, max_length=500)
 
 
 class AssignmentBody(StrictBody):
@@ -107,14 +116,25 @@ def _detail(db: Session, user: User) -> dict:
         ids = assignments.hcp_ids(db, user)
         rows = db.scalars(select(Hcp).where(Hcp.hcp_id.in_(ids))) if ids else []
         result["hcps"] = [
-            {"hcp_id": h.hcp_id, "name": out.hcp_name(h), "specialty": h.specialty} for h in rows
+            {
+                "hcp_id": h.hcp_id,
+                "name": out.hcp_name(h),
+                "specialties": hcp_records.specialty_out(db, h.hcp_id),
+            }
+            for h in rows
         ]
     elif kind == OWN_PATIENT and user.patient_id:
         p = db.get(Patient, user.patient_id)
         result["patient"] = {"patient_id": p.patient_id, "name": out.patient_name(p)}
     elif kind == OWN_HCP and user.hcp_id:
         h = db.get(Hcp, user.hcp_id)
-        result["hcp"] = {"hcp_id": h.hcp_id, "name": out.hcp_name(h), "specialty": h.specialty}
+        result["hcp"] = {
+            "hcp_id": h.hcp_id,
+            "name": out.hcp_name(h),
+            "origin": h.origin,
+            "specialties": hcp_records.specialty_out(db, h.hcp_id),
+            "pending_request": hcp_records.pending_for(db, h.hcp_id),
+        }
     return result
 
 
@@ -240,3 +260,64 @@ def delete_account(
     result = erasure.erase_patient(db, admin, user, body.confirm_email, body.privacy_request_id)
     db.commit()
     return result
+
+
+@router.put("/{user_id}/specialties")
+def set_specialties(
+    user_id: int,
+    body: SpecialtiesBody,
+    admin: User = Depends(manager),
+    db: Session = Depends(get_db),
+) -> dict:
+    """An administrator sets an HCP's specialties (0..n, controlled list). The HCP cannot."""
+    user = _get(db, user_id)
+    hcp = db.get(Hcp, user.hcp_id) if user.hcp_id else None
+    if hcp is None or not can(user, Permission.SELF_SPECIALTY_REQUEST):
+        raise AuthError(409, "not_an_hcp", "Specialties apply to HCP accounts only.")
+    if hcp_records.pending_for(db, hcp.hcp_id):
+        raise AuthError(409, "request_pending", "Decide the HCP's pending change request first.")
+    hcp_records.set_specialties(db, admin, hcp, body.specialties, why="administrator")
+    db.commit()
+    return _detail(db, user)
+
+
+# --- HCP specialty change requests (part of the administrator's request centre) ---------
+
+requests_router = APIRouter(prefix="/api/admin/specialty-requests", tags=["users"])
+
+
+@requests_router.get("")
+def list_specialty_requests(
+    status: Literal["pending", "approved", "rejected"] | None = None,
+    _: User = Depends(manager),
+    db: Session = Depends(get_db),
+) -> dict:
+    query = select(SpecialtyChangeRequest).order_by(SpecialtyChangeRequest.id.desc())
+    if status:
+        query = query.where(SpecialtyChangeRequest.status == status)
+    counts = dict(
+        db.execute(
+            select(SpecialtyChangeRequest.status, func.count()).group_by(
+                SpecialtyChangeRequest.status
+            )
+        ).all()
+    )
+    return {
+        "counts": counts,
+        "items": [hcp_records.request_out(db, r, staff=True) for r in db.scalars(query)],
+    }
+
+
+@requests_router.post("/{request_id}/{decision}")
+def decide_specialty_request(
+    request_id: int,
+    decision: Literal["approve", "reject"],
+    body: DecisionBody,
+    admin: User = Depends(manager),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Only an approval changes the HCP's specialties, and only if they are unchanged since
+    the request was made."""
+    row = hcp_records.decide(db, admin, request_id, decision == "approve", body.notes)
+    db.commit()
+    return hcp_records.request_out(db, row, staff=True)

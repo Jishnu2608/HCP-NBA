@@ -193,7 +193,7 @@ No looping animations, no scaling beyond 2px, no glow. Everything collapses to n
 ## Layout
 
 - Shell (`App.tsx`): dark sidebar from 1024px, collapsible to an icon rail (remembered per browser). Below 1024px the sidebar becomes a drawer opened from the top bar. The sidebar is grouped into Workspace, My account, Governance and Administration, and shows only routes the account's permissions allow (from `routes.tsx`).
-- Top bar: demo date, theme switch and an account menu showing the signed-in name, email, role and Sign out (the demo date moves into the account menu on phones). A "Skip to content" link is the first focusable element.
+- Top bar: theme switch and an account menu showing the signed-in name, email, role and Sign out. No date is shown; the application always uses the real date. A "Skip to content" link is the first focusable element.
 - Detail pages (Patient 360, HCP 360, recommendation): main column plus a 360px side column from 1280px. Below that, the recommendation comes first, then the main content, then details.
 - The recommendation page keeps the Decision panel in view while the rationale is read. On high zoom it scrolls within itself instead of being cut off.
 

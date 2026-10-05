@@ -52,6 +52,7 @@ import type { Column } from "../ui";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
 import { CarePanel, HealthSummary, OriginBadge } from "./Care";
+import { specialtyText } from "./HealthForms";
 
 const DAY = 86_400_000;
 const WINDOW_DAYS = 365;
@@ -557,7 +558,7 @@ export function PatientProfile() {
       {/* A real patient's care: managed by their care manager, read-only for other staff. */}
       {p.origin !== "synthetic" &&
         (can(P.PATIENT_CARE_MANAGE) ? (
-          <CarePanel patientId={p.patient_id} today={p.as_of_date} />
+          <CarePanel patientId={p.patient_id} />
         ) : (
           p.health && <HealthSummary health={p.health} />
         ))}
@@ -628,7 +629,7 @@ export function PatientProfile() {
                     <div className="truncate text-sm font-semibold text-ink" title={h.name}>
                       {h.name}
                     </div>
-                    <div className="truncate text-[13px] text-ink-subtle">{h.specialty}</div>
+                    <div className="truncate text-[13px] text-ink-subtle">{specialtyText(h.specialties)}</div>
                   </div>
                   {h.is_primary && (
                     <Badge tone="sage" icon={<HeartPulse className="h-3.5 w-3.5" aria-hidden />}>

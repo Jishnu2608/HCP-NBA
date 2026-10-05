@@ -21,6 +21,7 @@ from app.api import (
     users,
 )
 from app.auth.service import ensure_system_admin
+from app.clinical.hcps import separate_real_hcps
 from app.clinical.records import separate_real_patients
 from app.core import http_security
 from app.core.config import REPO_ROOT, get_settings
@@ -41,6 +42,7 @@ async def lifespan(_: FastAPI):
             # Accounts that registered before patient records were separated from the demo
             # population get their own empty record (idempotent).
             separate_real_patients(db)
+            separate_real_hcps(db)
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")
@@ -67,6 +69,7 @@ for module in ROUTERS:
 app.include_router(privacy.legal)
 app.include_router(privacy.router)
 app.include_router(privacy.admin)
+app.include_router(users.requests_router)
 
 # One deployable unit: when the frontend has been built, this process serves it too.
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"

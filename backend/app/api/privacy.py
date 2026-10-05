@@ -29,6 +29,8 @@ admin = APIRouter(prefix="/api/admin/privacy-requests", tags=["privacy"])
 
 self_service = require_permission(Permission.PRIVACY_SELF)
 handler = require_permission(Permission.PRIVACY_MANAGE)
+# Submitting one's own request: every role except the administrator, who handles them.
+requester = require_permission(Permission.PRIVACY_REQUEST)
 
 
 # --- Public ----------------------------------------------------------------------------------
@@ -112,7 +114,7 @@ def my_requests(user: User = Depends(self_service), db: Session = Depends(get_db
 
 @router.post("/requests", status_code=201)
 def submit_request(
-    body: RequestBody, user: User = Depends(self_service), db: Session = Depends(get_db)
+    body: RequestBody, user: User = Depends(requester), db: Session = Depends(get_db)
 ) -> dict:
     row = requests.create_request(db, user, body.type, body.details)
     db.commit()

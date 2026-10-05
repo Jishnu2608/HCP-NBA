@@ -248,7 +248,7 @@ export const ROUTES: AppRoute[] = [
     path: "/privacy-requests",
     anyOf: [P.PRIVACY_MANAGE],
     element: <PrivacyRequestsPage />,
-    label: () => "Privacy requests",
+    label: (can) => (can(P.USER_MANAGE) ? "Requests" : "Privacy requests"),
     icon: icon(FileLock2),
     group: "admin",
   },

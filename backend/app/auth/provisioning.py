@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.errors import AuthError
-from app.clinical import records
+from app.clinical import hcps, records
 from app.core.config import get_settings
 from app.core.permissions import Permission as P
 from app.core.permissions import can
@@ -129,16 +129,9 @@ class AssignmentService:
             # patient's record is linked from the invitation before this runs.)
             records.provision_self_registered(db, user)
         elif kind == OWN_HCP and user.hcp_id is None:
-            linked = select(User.hcp_id).where(User.hcp_id.is_not(None))
-            ready = _ready_targets(TargetType.HCP)
-            record = db.scalar(
-                select(Hcp)
-                .where(Hcp.hcp_id.not_in(linked))
-                .order_by(Hcp.hcp_id.in_(ready).desc(), Hcp.hcp_id)
-            )
-            if record:
-                user.hcp_id = record.hcp_id
-                _adopt_name(record, user)
+            # A real HCP gets a blank record, never a synthetic one, and no specialty unless
+            # one was set (an invitation's specialties are applied before this runs).
+            user.hcp_id = hcps.create_hcp(db, user.display_name, []).hcp_id
         elif kind == PATIENTS and not self.patient_ids(db, user):
             offset = _peers(db, user)
             ready = _ready_targets(TargetType.PATIENT)
@@ -168,7 +161,9 @@ class AssignmentService:
         elif kind == HCPS and not self.hcp_ids(db, user):
             ids = list(
                 db.scalars(
-                    select(Hcp.hcp_id).order_by(Hcp.value_score.desc().nulls_last(), Hcp.hcp_id)
+                    select(Hcp.hcp_id)
+                    .where(Hcp.origin == hcps.SYNTHETIC)
+                    .order_by(Hcp.value_score.desc().nulls_last(), Hcp.hcp_id)
                 )
             )
             chosen = _spread(ids, settings.signup_panel_hcps, _peers(db, user))
@@ -216,6 +211,11 @@ class AssignmentService:
         elif kind == HCPS:
             wanted = sorted(set(hcp_ids or []))
             self._require_existing(db, Hcp.hcp_id, wanted, "HCP")
+            if any(hcps.is_real(db.get(Hcp, h)) for h in wanted):
+                # Representatives work the engine's synthetic HCP population only.
+                raise AuthError(
+                    409, "record_origin_mismatch", "Representatives are assigned demo HCPs only."
+                )
             db.execute(delete(RepHcp).where(RepHcp.rep_user_id == user.id))
             db.add_all(RepHcp(rep_user_id=user.id, hcp_id=h) for h in wanted)
         elif kind == OWN_PATIENT:
@@ -238,7 +238,14 @@ class AssignmentService:
             if hcp_id is not None:
                 self._require_existing(db, Hcp.hcp_id, [hcp_id], "HCP")
                 self._require_unlinked(db, User.hcp_id, hcp_id, user)
-                if hcp_id != user.hcp_id:
+                seeded = user.source == AccountSource.SEED
+                if hcps.is_real(db.get(Hcp, hcp_id)) == seeded:
+                    raise AuthError(
+                        409,
+                        "record_origin_mismatch",
+                        "Demo accounts use demo records and real accounts their own record.",
+                    )
+                if hcp_id != user.hcp_id and seeded:
                     _adopt_name(db.get(Hcp, hcp_id), user)
             user.hcp_id = hcp_id
         db.flush()
