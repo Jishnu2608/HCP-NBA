@@ -120,12 +120,12 @@ Required for patient sign-up and invitation acceptance. Validated on the server 
 
 | Role | Permissions |
 |---|---|
-| admin | `patient:read:all`, `hcp:read:all`, `nba:read:all`, `nba:review:patient`, `nba:review:hcp`, `content:read:all`, `audit:read`, `audit:read:identified`, `analytics:read`, `models:read`, `engine:operate`, `config:manage`, `user:manage`, `invite:hcp`, `invite:medical_rep`, `invite:care_manager`, `invite:compliance`, `invitation:read:all` |
+| admin | `patient:read:all`, `hcp:read:all`, `nba:read:all`, `nba:review:patient`, `nba:review:hcp`, `content:read:all`, `audit:read`, `audit:read:identified`, `analytics:read`, `models:read`, `engine:operate`, `config:manage`, `user:manage`, `user:delete`, `invite:hcp`, `invite:medical_rep`, `invite:care_manager`, `invite:compliance`, `invitation:read:all` |
 | compliance | `content:read:all`, `content:approve`, `nba:read:gated`, `audit:read`, `analytics:read`, `models:read` |
 | medical_rep | `hcp:read:assigned`, `nba:read:hcp_assigned`, `nba:review:hcp`, `content:read:approved_hcp` |
-| care_manager | `patient:read:assigned`, `nba:read:patient_assigned`, `nba:review:patient`, `content:read:approved_patient` |
+| care_manager | `patient:read:assigned`, `nba:read:patient_assigned`, `nba:review:patient`, `content:read:approved_patient`, `patient:care:manage`, `invite:patient` |
 | hcp | `self:profile:read`, `self:inbox`, `self:patients:read`, `invite:medical_rep`, `invite:care_manager` |
-| patient | `self:profile:read`, `self:inbox`, `self:consent:manage` |
+| patient | `self:profile:read`, `self:inbox`, `self:consent:manage`, `self:health:manage` |
 
 The administrator deliberately lacks `content:approve`: MLR approval stays with Compliance.
 
@@ -151,13 +151,19 @@ Out-of-scope ids return 404. The audit log masks account emails and patient / HC
 
 ### Assignments are not permissions
 
-- New accounts get starting assignments on verification (unchanged by invitations: the inviting HCP is not assigned to the people they invite).
+- New professional accounts get starting assignments on verification (unchanged by invitations: the inviting HCP is not assigned to the people they invite).
+- A patient account never gets a synthetic record. A self-registered patient gets a new, empty record (`PAT_R…`, origin `self_registered`) and the active care manager with the fewest real patients; a clinic patient's record is created by a care manager (origin `clinic`) and linked through the invitation bound to it. Demo accounts keep demo records; `PUT /assignments` refuses to mix the two (409 `record_origin_mismatch`).
+- Care management (`/api/care`, `patient:care:manage`, the care manager's panel only): confirm or record conditions and medications, log refills, record instructions, route to an HCP from those whose specialty suits the condition, work care requests, invite clinic patients. Patients report through `/api/me` (`self:health:manage`); a reported medication is ignored by the engine until confirmed.
 - The administrator can replace assignments: `PUT /api/admin/users/{id}/assignments`.
 - Neither path writes `user.role`. No endpoint changes a role.
 
 ## 5. What survives a demo reset
 
-`POST /api/admin/reset` rebuilds the synthetic data. Carried across: registered and invited accounts with their assignments, invitations with lineage (references re-linked by email, because account ids can change), and the security audit rows (accounts, sign-ins, invitations). All sessions end; the caller gets a new session cookie.
+`POST /api/admin/reset` rebuilds the synthetic data. Carried across: real patients and everything recorded for them (conditions, medications, refills, outreach consent, care requests, notes, HCP and care-manager links), registered and invited accounts with their assignments, invitations with lineage (references re-linked by email, because account ids can change), and the security audit rows (accounts, sign-ins, invitations). All sessions end; the caller gets a new session cookie.
+
+## 5a. Deleting a patient account
+
+`DELETE /api/admin/users/{id}` (`user:delete`, administrator) with the account's email typed as confirmation and optionally the erasure request it carries out. Only patient accounts. The account goes, and for a real patient their record and everything recorded for it; a demo account's record is only unlinked. Audit rows stay, with the person's email, name, handle and patient id replaced by `deleted patient #<id>`; the deletion is audited without identifying values; the erasure request is kept, completed and anonymised. Account and patient ids are never reused, so the same email signing up again is a new, empty patient.
 
 ## 6. UI
 

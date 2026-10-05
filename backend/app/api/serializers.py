@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import jurisdiction
 from app.models import (
     AdherenceSnapshot,
     AuditLog,
@@ -27,6 +28,27 @@ from app.nba.rationale import ACTION_LABEL, CHANNEL_LABEL
 
 def patient_name(p: Patient) -> str:
     return f"{p.first_name} {p.last_name}".strip()
+
+
+def location_label(p: Patient) -> str | None:
+    """Where the patient lives. A synthetic record carries a generated city and state; a
+    real person's record only what they (or their care manager) gave: country and US state.
+    Nothing is filled in from anywhere else."""
+    if p.city and p.state:
+        return f"{p.city}, {p.state}"
+    return jurisdiction.label(p.country, p.region)
+
+
+def patient_brief(p: Patient) -> dict:
+    """Location fields shared by every patient view."""
+    return {
+        "origin": p.origin,
+        "city": p.city,
+        "state": p.state,
+        "country": p.country,
+        "region": p.region,
+        "location": location_label(p),
+    }
 
 
 def hcp_name(h: Hcp) -> str:
@@ -107,7 +129,7 @@ def draft_out(d: MessageDraft) -> dict:
 
 
 _EMAIL = re.compile(r"[^@\s\"']+@[^@\s\"']+\.[^@\s\"']+")
-_RECORD_ID = re.compile(r"\b(PAT_\d+|HCP_\d+)\b")
+_RECORD_ID = re.compile(r"\b(PAT_R?\d+|HCP_\d+)\b")
 
 
 def redact(value: Any) -> Any:

@@ -11,6 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.serializers import location_label
+from app.clinical import care
 from app.legal import consents, requests
 from app.models import (
     Consent,
@@ -45,10 +47,15 @@ def _patient(db: Session, patient_id: str) -> dict:
     return {
         "record": {
             "name": f"{p.first_name} {p.last_name}".strip(),
-            "city": p.city,
-            "state": p.state,
+            "location": location_label(p),
             "plan_type": p.plan_type,
             "preferred_channel": p.preferred_channel,
+        },
+        # Conditions, medications (reported and confirmed), care requests, instructions.
+        "health_profile": {
+            k: v
+            for k, v in care.health_record(db, p, for_patient=True).items()
+            if k in ("conditions", "medications", "requests", "notes", "care_team")
         },
         "therapies": [
             {
@@ -57,6 +64,7 @@ def _patient(db: Session, patient_id: str) -> dict:
                 "start_date": t.start_date,
                 "days_supply": t.days_supply,
                 "status": t.status,
+                "review_status": t.review_status,
             }
             for t in therapies
         ],  # fmt: skip

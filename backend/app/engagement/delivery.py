@@ -134,7 +134,9 @@ def send(db: Session, nba: Nba, user: User) -> Interaction:
     return interaction
 
 
-def record_fill(db: Session, therapy: PatientTherapy, when: datetime) -> MedicationFill:
+def record_fill(
+    db: Session, therapy: PatientTherapy, when: datetime, source: str = "claims"
+) -> MedicationFill:
     fill = MedicationFill(
         patient_id=therapy.patient_id,
         therapy_id=therapy.id,
@@ -143,6 +145,7 @@ def record_fill(db: Session, therapy: PatientTherapy, when: datetime) -> Medicat
         days_supply=therapy.days_supply,
         quantity=therapy.days_supply,
         copay=therapy.copay,
+        source=source,
     )
     db.add(fill)
     return fill

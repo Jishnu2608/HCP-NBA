@@ -81,6 +81,14 @@ def is_eu_eea(country: str | None) -> bool:
     return country in EU_EEA
 
 
+def label(country: str | None, region: str | None) -> str | None:
+    """Readable place of residence, exactly as given: "Ireland", "California, United States"."""
+    if not country:
+        return None
+    name = COUNTRIES.get(country, country)
+    return f"{US_STATES.get(region, region)}, {name}" if region else name
+
+
 def options() -> dict:
     """For the sign-up and invitation forms."""
     return {

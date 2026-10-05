@@ -117,7 +117,8 @@ def patient_features(
         "late_trend_if_check_in": adherence.late_trend if action == ActionType.CHECK_IN else 0.0,
         "channel": str(channel),
         "action": str(action),
-        "plan_type": patient.plan_type,
+        # Not known for a real person unless their care team records it.
+        "plan_type": patient.plan_type or "Unknown",
         "measure": str(therapy.measure),
     }
 

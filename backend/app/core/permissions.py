@@ -42,11 +42,20 @@ class Permission(StrEnum):
     ENGINE_OPERATE = "engine:operate"
     CONFIG_MANAGE = "config:manage"
     USER_MANAGE = "user:manage"
+    # Permanently delete a patient account and the patient's own data (patients only).
+    USER_DELETE = "user:delete"
+    # Care management of assigned patients: record and confirm conditions and medications,
+    # log refills, record instructions, route to an HCP, work care requests, create clinic
+    # patients. Scope is the care manager's panel (core/rbac.patient_filter).
+    PATIENT_CARE_MANAGE = "patient:care:manage"
     # A person's own record
     SELF_PROFILE_READ = "self:profile:read"
     SELF_INBOX = "self:inbox"
     SELF_CONSENT_MANAGE = "self:consent:manage"
     SELF_PATIENTS_READ = "self:patients:read"
+    # A patient's own health profile: report conditions and medications, log refills of
+    # confirmed medications, ask to consult an HCP.
+    SELF_HEALTH_MANAGE = "self:health:manage"
     # Onboarding authority: who may invite whom. One permission per target role, so the
     # whole authority matrix is the set of these permissions in ROLE_PERMISSIONS below.
     # It grants no data access; it is not an organisational hierarchy.
@@ -54,6 +63,8 @@ class Permission(StrEnum):
     INVITE_MEDICAL_REP = "invite:medical_rep"
     INVITE_CARE_MANAGER = "invite:care_manager"
     INVITE_COMPLIANCE = "invite:compliance"
+    # A care manager inviting a clinic patient to the portal (bound to the patient record).
+    INVITE_PATIENT = "invite:patient"
     # See every invitation, not only the ones you sent.
     INVITATION_READ_ALL = "invitation:read:all"
     # Privacy: every account manages its own documents, consents, requests and export;
@@ -81,6 +92,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.ENGINE_OPERATE,
             P.CONFIG_MANAGE,
             P.USER_MANAGE,
+            P.USER_DELETE,
             P.AUDIT_READ_IDENTIFIED,
             # Admin may onboard every professional role, MLR reviewers included.
             P.INVITE_HCP,
@@ -118,6 +130,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.NBA_READ_PATIENT_ASSIGNED,
             P.NBA_REVIEW_PATIENT,
             P.CONTENT_READ_APPROVED_PATIENT,
+            P.PATIENT_CARE_MANAGE,
+            # Clinic patients only, for a record this care manager is responsible for.
+            P.INVITE_PATIENT,
             P.PRIVACY_SELF,
         }
     ),
@@ -134,22 +149,34 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
         }
     ),
     Role.PATIENT: frozenset(
-        {P.SELF_PROFILE_READ, P.SELF_INBOX, P.SELF_CONSENT_MANAGE, P.PRIVACY_SELF}
+        {
+            P.SELF_PROFILE_READ,
+            P.SELF_INBOX,
+            P.SELF_CONSENT_MANAGE,
+            P.SELF_HEALTH_MANAGE,
+            P.PRIVACY_SELF,
+        }
     ),
 }
 
 # The only role anyone may register as without an invitation.
 PUBLIC_SIGNUP_ROLE = Role.PATIENT
 
-# Roles that can only be granted by an invitation, and the permission that allows inviting
-# each one. The administrator is never invited or self-created.
-INVITE_PERMISSION: dict[str, Permission] = {
+# Professional roles can only be granted by an invitation; the permission that allows
+# inviting each one. The administrator is never invited or self-created.
+PROFESSIONAL_INVITE_PERMISSION: dict[str, Permission] = {
     Role.HCP: P.INVITE_HCP,
     Role.MEDICAL_REP: P.INVITE_MEDICAL_REP,
     Role.CARE_MANAGER: P.INVITE_CARE_MANAGER,
     Role.COMPLIANCE: P.INVITE_COMPLIANCE,
 }
-PROFESSIONAL_ROLES = frozenset(INVITE_PERMISSION)
+PROFESSIONAL_ROLES = frozenset(PROFESSIONAL_INVITE_PERMISSION)
+# Every invitable role. A patient may also self-register; a patient invitation is the
+# clinic path, always bound to a patient record the inviting care manager prepared.
+INVITE_PERMISSION: dict[str, Permission] = {
+    **PROFESSIONAL_INVITE_PERMISSION,
+    Role.PATIENT: P.INVITE_PATIENT,
+}
 
 ROLE_LABELS: dict[str, str] = {
     Role.ADMIN: "Administrator",
@@ -165,6 +192,7 @@ ROLE_DESCRIPTIONS: dict[str, str] = {
     Role.MEDICAL_REP: "Works with assigned HCP engagement and next-best-action recommendations.",
     Role.CARE_MANAGER: "Works with assigned patient adherence cases.",
     Role.COMPLIANCE: "Reviews content approval, compliance decisions and audit history.",
+    Role.PATIENT: "Sees the care information their care team recorded, and manages consent.",
 }
 
 # Where each role lands after signing in.
@@ -197,4 +225,6 @@ def can_invite(user: User, role: str) -> bool:
 
 
 def invitable_roles(user: User) -> list[str]:
-    return [role for role in INVITE_PERMISSION if can_invite(user, role)]
+    """Roles offered on the general invitation form. Patients are invited from their own
+    record by their care manager, never from that form."""
+    return [role for role in PROFESSIONAL_INVITE_PERMISSION if can_invite(user, role)]

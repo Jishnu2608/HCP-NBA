@@ -44,13 +44,16 @@ def test_every_role_has_a_permission_set_and_a_home():
 def test_only_patients_self_register_and_professionals_need_an_invitation():
     assert PUBLIC_SIGNUP_ROLE == Role.PATIENT
     assert PROFESSIONAL_ROLES == {Role.HCP, Role.MEDICAL_REP, Role.CARE_MANAGER, Role.COMPLIANCE}
-    assert Role.ADMIN not in INVITE_PERMISSION and Role.PATIENT not in INVITE_PERMISSION
+    assert Role.ADMIN not in INVITE_PERMISSION
+    # Patients may also be invited, but only by a care manager (the clinic path).
+    assert Role.PATIENT not in PROFESSIONAL_ROLES
 
 
 # The onboarding authority matrix, spelled out once. Everything not listed is forbidden.
 AUTHORITY = {
     Role.ADMIN: {Role.HCP, Role.MEDICAL_REP, Role.CARE_MANAGER, Role.COMPLIANCE},
     Role.HCP: {Role.MEDICAL_REP, Role.CARE_MANAGER},
+    Role.CARE_MANAGER: {Role.PATIENT},
 }
 
 
@@ -78,7 +81,9 @@ def test_admin_has_every_staff_permission_except_content_approval():
         P.NBA_READ_HCP_ASSIGNED, P.NBA_READ_GATED, P.CONTENT_READ_APPROVED_HCP,
         P.CONTENT_READ_APPROVED_PATIENT,
     }  # fmt: skip
-    assert set(P) - admin == self_scoped | narrower | {P.CONTENT_APPROVE}
+    # Care management and inviting clinic patients stay with the care manager responsible.
+    care = {P.PATIENT_CARE_MANAGE, P.INVITE_PATIENT}
+    assert set(P) - admin == self_scoped | narrower | care | {P.CONTENT_APPROVE}
     assert [r for r, perms in ROLE_PERMISSIONS.items() if P.CONTENT_APPROVE in perms] == [
         Role.COMPLIANCE
     ]

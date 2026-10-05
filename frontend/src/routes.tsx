@@ -7,6 +7,7 @@ import {
   Cpu,
   FileCheck2,
   FileLock2,
+  HandHeart,
   Inbox,
   Lock,
   MailPlus,
@@ -56,6 +57,7 @@ const UsersPage = page(() => import("./pages/Users"));
 const InvitationsPage = page(() => import("./pages/Invitations"));
 const PrivacyPage = page(() => import("./pages/Privacy"));
 const PrivacyRequestsPage = page(() => import("./pages/PrivacyRequests"));
+const CareRequestsPage = page(() => import("./pages/Care"));
 import { CONTENT_READ, HCP_READ, INVITE_ANY, NBA_READ, P, PATIENT_READ } from "./permissions";
 import type { Permission } from "./permissions";
 
@@ -127,6 +129,14 @@ export const ROUTES: AppRoute[] = [
     group: "work",
   },
   {
+    path: "/care",
+    anyOf: [P.PATIENT_CARE_MANAGE],
+    element: <CareRequestsPage />,
+    label: () => "Care requests",
+    icon: icon(HandHeart),
+    group: "work",
+  },
+  {
     path: "/hcps",
     anyOf: HCP_READ,
     element: <HcpList />,
@@ -179,7 +189,7 @@ export const ROUTES: AppRoute[] = [
     path: "/medications",
     anyOf: [P.SELF_CONSENT_MANAGE],
     element: <MyMedications />,
-    label: () => "My medications",
+    label: () => "My health",
     icon: icon(Pill),
     group: "self",
   },
@@ -217,10 +227,12 @@ export const ROUTES: AppRoute[] = [
   },
   {
     // Admin: every invitation, under Administration. HCP: the ones they sent, as "Team".
+    // Care manager: the patient portal invitations they sent from patients' records.
     path: "/invitations",
     anyOf: INVITE_ANY,
     element: <InvitationsPage />,
-    label: (can) => (can(P.INVITATION_READ_ALL) ? "Invitations" : "Team"),
+    label: (can) =>
+      can(P.INVITATION_READ_ALL) ? "Invitations" : can(P.INVITE_PATIENT) ? "Portal invitations" : "Team",
     icon: icon(MailPlus),
     group: (can) => (can(P.INVITATION_READ_ALL) ? "admin" : "self"),
   },

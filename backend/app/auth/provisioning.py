@@ -1,4 +1,4 @@
-"""Assignments: which synthetic records an account is linked to.
+"""Assignments: which records an account is linked to.
 
 Assignments decide data scope only. Nothing here reads or writes `user.role`, so changing
 what a user is assigned to can never change what they are permitted to do.
@@ -11,10 +11,11 @@ The shape of an assignment follows from the account's permissions:
   SELF_PATIENTS_READ      one own HCP record      (user.hcp_id)
 """
 
-from sqlalchemy import case, delete, extract, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.errors import AuthError
+from app.clinical import records
 from app.core.config import get_settings
 from app.core.permissions import Permission as P
 from app.core.permissions import can
@@ -30,7 +31,9 @@ from app.models import (
     RepHcp,
     User,
 )
-from app.models.enums import AccountSource, NbaStatus, RiskSegment, TargetType
+from app.models.enums import AccountSource, NbaStatus, PatientOrigin, RiskSegment, TargetType
+
+SYNTHETIC = PatientOrigin.SYNTHETIC
 
 PATIENTS, HCPS, OWN_PATIENT, OWN_HCP = "patients", "hcps", "patient", "hcp"
 
@@ -122,22 +125,9 @@ class AssignmentService:
         settings = get_settings()
         kind = assignment_kind(user)
         if kind == OWN_PATIENT and user.patient_id is None:
-            linked = select(User.patient_id).where(User.patient_id.is_not(None))
-            ready = _ready_targets(TargetType.PATIENT)
-            order = [Patient.patient_id.in_(ready).desc()]
-            if user.date_of_birth is not None:
-                # The synthetic record keeps its own birth date (a model feature); prefer one
-                # close in age to the account holder so the profile reads plausibly.
-                years = func.abs(extract("year", Patient.birth_date) - user.date_of_birth.year)
-                order.append(case((years > 5, 5), else_=years))
-            record = db.scalar(
-                select(Patient)
-                .where(Patient.patient_id.not_in(linked))
-                .order_by(*order, Patient.patient_id)
-            )
-            if record:
-                user.patient_id = record.patient_id
-                _adopt_name(record, user)
+            # A real person gets their own empty record, never a synthetic one. (A clinic
+            # patient's record is linked from the invitation before this runs.)
+            records.provision_self_registered(db, user)
         elif kind == OWN_HCP and user.hcp_id is None:
             linked = select(User.hcp_id).where(User.hcp_id.is_not(None))
             ready = _ready_targets(TargetType.HCP)
@@ -158,13 +148,19 @@ class AssignmentService:
                 ids = list(
                     db.scalars(
                         select(Patient.patient_id)
-                        .where(Patient.risk_segment == segment)
+                        .where(Patient.risk_segment == segment, Patient.origin == SYNTHETIC)
                         .order_by(Patient.patient_id.in_(ready).desc(), Patient.patient_id)
                     )
                 )
                 chosen += _spread(ids, per_segment + (extra if n == 0 else 0), offset)
             if not chosen:  # features not calculated yet: no risk segments to spread across
-                ids = list(db.scalars(select(Patient.patient_id).order_by(Patient.patient_id)))
+                ids = list(
+                    db.scalars(
+                        select(Patient.patient_id)
+                        .where(Patient.origin == SYNTHETIC)
+                        .order_by(Patient.patient_id)
+                    )
+                )
                 chosen = _spread(ids, settings.signup_panel_patients, offset)
             db.add_all(
                 CareManagerPatient(care_manager_user_id=user.id, patient_id=pid) for pid in chosen
@@ -226,7 +222,16 @@ class AssignmentService:
             if patient_id is not None:
                 self._require_existing(db, Patient.patient_id, [patient_id], "patient")
                 self._require_unlinked(db, User.patient_id, patient_id, user)
-                if patient_id != user.patient_id:
+                # A demo account may only use demo records; a real person only a real
+                # record. A real person's data must never come from the synthetic population.
+                seeded = user.source == AccountSource.SEED
+                if records.is_real(db.get(Patient, patient_id)) == seeded:
+                    raise AuthError(
+                        409,
+                        "record_origin_mismatch",
+                        "Demo accounts use demo records and real accounts their own record.",
+                    )
+                if patient_id != user.patient_id and seeded:
                     _adopt_name(db.get(Patient, patient_id), user)
             user.patient_id = patient_id
         else:
@@ -332,8 +337,6 @@ class AssignmentService:
             user = User(**account)
             db.add(user)
             db.flush()
-            if user.patient_id:
-                _adopt_name(db.get(Patient, user.patient_id), user)
             if user.hcp_id:
                 _adopt_name(db.get(Hcp, user.hcp_id), user)
             db.add_all(

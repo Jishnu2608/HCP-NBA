@@ -94,8 +94,10 @@ def refresh_patient_features(db: Session, pop: Population, settings: dict) -> di
             pdcs.append(adherence.pdc)
             if _RISK_ORDER[risk.segment] > _RISK_ORDER[worst]:
                 worst = risk.segment
-        patient.risk_segment = worst
-        segments[worst] += 1
+        # A patient with no confirmed medication has no adherence risk to speak of.
+        patient.risk_segment = worst if pop.therapies.get(pid) else None
+        if patient.risk_segment:
+            segments[worst] += 1
 
         channels = _channel_summary(state, PATIENT_CHANNELS, eng.PATIENT_ENGAGE_PRIOR)
         db.add(

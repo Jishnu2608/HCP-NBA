@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api import (
     analytics,
     auth,
+    care,
     content,
     governance,
     invitations,
@@ -20,6 +21,7 @@ from app.api import (
     users,
 )
 from app.auth.service import ensure_system_admin
+from app.clinical.records import separate_real_patients
 from app.core import http_security
 from app.core.config import REPO_ROOT, get_settings
 from app.core.db import SessionLocal
@@ -36,6 +38,9 @@ async def lifespan(_: FastAPI):
         with SessionLocal() as db:
             ensure_system_admin(db)
             purge_expired(db)
+            # Accounts that registered before patient records were separated from the demo
+            # population get their own empty record (idempotent).
+            separate_real_patients(db)
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")
@@ -54,7 +59,9 @@ app = FastAPI(
     openapi_url="/api/openapi.json" if settings.is_local else None,
 )
 
-ROUTERS = (system, auth, invitations, users, nba, people, content, governance, me, analytics)
+ROUTERS = (
+    system, auth, invitations, users, nba, people, care, content, governance, me, analytics,
+)  # fmt: skip
 for module in ROUTERS:
     app.include_router(module.router)
 app.include_router(privacy.legal)

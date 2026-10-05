@@ -20,7 +20,9 @@ class AccountSource(StrEnum):
     SYSTEM = "system"
     SEED = "seed"
     SIGNUP = "signup"  # patient self-registration
-    INVITATION = "invitation"  # professional onboarded through an invitation
+    # Onboarded through an invitation: a professional, or a clinic patient invited by
+    # their care manager.
+    INVITATION = "invitation"
 
 
 class InvitationStatus(StrEnum):
@@ -35,6 +37,57 @@ class VerificationSource(StrEnum):
 
     INVITATION = "invitation"  # completed an authorised invitation and its one-time code
     SYSTEM = "system"  # provisioned by the platform (seeded demo staff)
+
+
+class PatientOrigin(StrEnum):
+    """Where a patient record came from. Only synthetic records carry generated history."""
+
+    SYNTHETIC = "synthetic"  # generated demo record (seeded, simulated)
+    SELF_REGISTERED = "self_registered"  # created empty when a person signed up
+    CLINIC = "clinic"  # created by a care manager for a clinic patient
+
+
+class TherapyOrigin(StrEnum):
+    CLAIMS = "claims"  # pharmacy-claims style history (synthetic data)
+    PATIENT_REPORTED = "patient_reported"
+    CARE_MANAGER = "care_manager"
+
+
+class ReviewStatus(StrEnum):
+    """A medication's standing. The engine only ever works from confirmed ones."""
+
+    REPORTED = "reported"  # entered by the patient, not yet reviewed by the care team
+    CONFIRMED = "confirmed"
+    STOPPED = "stopped"
+
+
+class ConditionStatus(StrEnum):
+    REPORTED = "reported"
+    CONFIRMED = "confirmed"
+    RESOLVED = "resolved"
+
+
+class FillSource(StrEnum):
+    CLAIMS = "claims"
+    PATIENT = "patient"
+    CARE_MANAGER = "care_manager"
+
+
+class CareRequestType(StrEnum):
+    CONDITION_REVIEW = "condition_review"
+    MEDICATION_REVIEW = "medication_review"
+    CONSULTATION = "consultation"
+
+
+class CareRequestStatus(StrEnum):
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    CLOSED = "closed"
+
+
+class CareNoteKind(StrEnum):
+    HCP_INSTRUCTION = "hcp_instruction"
+    FOLLOW_UP = "follow_up"
 
 
 class TargetType(StrEnum):

@@ -21,6 +21,7 @@ from app.models import (
     Patient,
     PatientTherapy,
 )
+from app.models.enums import ReviewStatus
 
 
 @dataclass
@@ -38,7 +39,17 @@ class Population:
 def load_population(db: Session) -> Population:
     as_of = clock.get_today(db)
     therapies, fills, interactions, consents = (defaultdict(list) for _ in range(4))
-    for t in db.scalars(select(PatientTherapy).order_by(PatientTherapy.id)):
+    # Only confirmed medications with a known measure and supply count. A medication a
+    # patient reported stays out of every score until their care team confirms it.
+    for t in db.scalars(
+        select(PatientTherapy)
+        .where(
+            PatientTherapy.review_status == ReviewStatus.CONFIRMED,
+            PatientTherapy.measure.is_not(None),
+            PatientTherapy.days_supply.is_not(None),
+        )
+        .order_by(PatientTherapy.id)
+    ):
         therapies[t.patient_id].append(t)
     for f in db.scalars(select(MedicationFill).order_by(MedicationFill.fill_date)):
         fills[f.therapy_id].append((f.fill_date, f.days_supply))

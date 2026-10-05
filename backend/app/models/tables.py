@@ -46,20 +46,45 @@ class Hcp(Base):
 
 
 class Patient(Base):
+    """A patient record. Synthetic records are generated demo people with history; a real
+    person's record (self-registered or clinic) is created for them and starts empty:
+    clinical data enters only through the patient's own entries or their care team."""
+
     __tablename__ = "patient"
 
     patient_id: Mapped[str] = mapped_column(String(16), primary_key=True)
     first_name: Mapped[str] = mapped_column(String(64))
     last_name: Mapped[str] = mapped_column(String(64))
     birth_date: Mapped[date] = mapped_column(Date)
-    sex: Mapped[str] = mapped_column(String(1))
-    city: Mapped[str] = mapped_column(String(64))
-    state: Mapped[str] = mapped_column(String(2))
-    zip: Mapped[str] = mapped_column(String(10))
-    plan_type: Mapped[str] = mapped_column(String(32))
+    # Known for synthetic records only; never invented for a real person.
+    sex: Mapped[str | None] = mapped_column(String(1))
+    city: Mapped[str | None] = mapped_column(String(64))
+    state: Mapped[str | None] = mapped_column(String(2))
+    zip: Mapped[str | None] = mapped_column(String(10))
+    plan_type: Mapped[str | None] = mapped_column(String(32))
     preferred_channel: Mapped[str | None] = mapped_column(String(16))
     # Derived by the feature layer: worst risk across the patient's therapies.
     risk_segment: Mapped[str | None] = mapped_column(String(16), index=True)
+    origin: Mapped[str] = mapped_column(
+        String(16), default="synthetic", server_default="synthetic", index=True
+    )
+    # Country of residence (ISO 3166-1 alpha-2) and US state, as the person gave them.
+    country: Mapped[str | None] = mapped_column(String(2))
+    region: Mapped[str | None] = mapped_column(String(3))
+    # The care manager who created a clinic patient. A plain id, not a foreign key: `user`
+    # already points at `patient`, and a cycle would break table ordering.
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class PatientNumber(Base):
+    """Issues the number in a real patient's id (PAT_R000001). Never reused, also after an
+    account is deleted or the demo data is rebuilt, so a new person never inherits an id."""
+
+    __tablename__ = "patient_number"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class PatientHcp(Base):
@@ -175,7 +200,9 @@ class PrivacyRequest(Base):
     __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    # Empty once the requester's account was deleted; `subject_label` then names it.
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), index=True)
+    subject_label: Mapped[str | None] = mapped_column(String(64))
     type: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(16), default="submitted", index=True)
     details: Mapped[str | None] = mapped_column(Text)
@@ -226,6 +253,8 @@ class Invitation(Base):
     replaced_by_id: Mapped[int | None] = mapped_column(ForeignKey("invitation.id"))
     # The pending account created when the recipient filled in the form (before the code).
     claimed_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    # Patient invitations only: the clinic record the care manager prepared for this person.
+    patient_id: Mapped[str | None] = mapped_column(ForeignKey("patient.patient_id"))
 
 
 class RepHcp(Base):
@@ -248,18 +277,32 @@ class CareManagerPatient(Base):
 
 
 class PatientTherapy(Base):
+    """A medication. Synthetic history arrives confirmed (claims); a patient's own entry
+    starts as reported and counts for the engine only once a care manager confirms it."""
+
     __tablename__ = "patient_therapy"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), index=True)
-    measure: Mapped[str] = mapped_column(String(32), index=True)
+    # Adherence measure; unknown for a reported medication outside the three measures.
+    measure: Mapped[str | None] = mapped_column(String(32), index=True)
     drug_name: Mapped[str] = mapped_column(String(64))
     rxnorm: Mapped[str | None] = mapped_column(String(16))
     prescriber_hcp_id: Mapped[str | None] = mapped_column(ForeignKey("hcp.hcp_id"))
     start_date: Mapped[date] = mapped_column(Date)
-    days_supply: Mapped[int] = mapped_column(Integer)
+    # Set by the care team when confirming; a patient's report may not know it.
+    days_supply: Mapped[int | None] = mapped_column(Integer)
     copay: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    origin: Mapped[str] = mapped_column(String(16), default="claims", server_default="claims")
+    review_status: Mapped[str] = mapped_column(
+        String(16), default="confirmed", server_default="confirmed", index=True
+    )
+    dose_instructions: Mapped[str | None] = mapped_column(String(300))
+    schedule: Mapped[str | None] = mapped_column(String(64))
+    end_date: Mapped[date | None] = mapped_column(Date)
+    confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class MedicationFill(Base):
@@ -273,6 +316,59 @@ class MedicationFill(Base):
     days_supply: Mapped[int] = mapped_column(Integer)
     quantity: Mapped[int] = mapped_column(Integer)
     copay: Mapped[float] = mapped_column(Float, default=0.0)
+    source: Mapped[str] = mapped_column(String(16), default="claims", server_default="claims")
+
+
+class PatientCondition(Base):
+    """A condition the patient or their care team recorded. Never inferred."""
+
+    __tablename__ = "patient_condition"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), index=True)
+    condition: Mapped[str] = mapped_column(String(32))
+    other_text: Mapped[str | None] = mapped_column(String(120))
+    origin: Mapped[str] = mapped_column(String(16))  # patient_reported / care_manager
+    status: Mapped[str] = mapped_column(String(16), default="reported")
+    reported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class CareRequest(Base):
+    """Something the care manager must act on: a condition or medication to review, or a
+    patient asking to consult an HCP. The care manager routes it; the patient sees its status."""
+
+    __tablename__ = "care_request"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), index=True)
+    type: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    reason: Mapped[str | None] = mapped_column(String(500))
+    condition_id: Mapped[int | None] = mapped_column(ForeignKey("patient_condition.id"))
+    therapy_id: Mapped[int | None] = mapped_column(ForeignKey("patient_therapy.id"))
+    assigned_hcp_id: Mapped[str | None] = mapped_column(ForeignKey("hcp.hcp_id"))
+    handled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    resolution: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class CareNote(Base):
+    """An HCP's instruction or a follow-up, recorded by the care team."""
+
+    __tablename__ = "care_note"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), index=True)
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    hcp_id: Mapped[str | None] = mapped_column(ForeignKey("hcp.hcp_id"))
+    kind: Mapped[str] = mapped_column(String(24))
+    text: Mapped[str] = mapped_column(String(1000))
+    visible_to_patient: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class AdherenceSnapshot(Base):

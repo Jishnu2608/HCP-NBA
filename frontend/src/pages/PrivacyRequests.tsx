@@ -22,6 +22,7 @@ import {
   fmtDate,
   fmtDateTime,
 } from "../ui";
+import { DeleteAccount } from "./DeleteAccount";
 import { RequestStatus } from "./Privacy";
 
 function RequestCard({ request }: { request: Json }) {
@@ -44,7 +45,9 @@ function RequestCard({ request }: { request: Json }) {
         <div className="min-w-0">
           <div className="font-semibold text-ink">{request.type_label}</div>
           <div className="mt-0.5 break-words text-[13px] text-ink-subtle">
-            {request.requester.name} · {request.requester.email} · {ROLE_LABEL[request.requester.role as Role]}
+            {request.requester
+              ? `${request.requester.name} · ${request.requester.email} · ${ROLE_LABEL[request.requester.role as Role]}`
+              : (request.subject_label ?? "Deleted account")}
             {request.jurisdiction && ` · ${request.jurisdiction}`}
           </div>
         </div>
@@ -74,6 +77,9 @@ function RequestCard({ request }: { request: Json }) {
             />
           </FormField>
           <ErrorNote error={update.error} />
+          {request.type === "erasure" && request.requester?.deletable && (
+            <DeleteAccount account={request.requester} privacyRequestId={request.id} />
+          )}
           <div className="flex flex-wrap gap-2">
             {request.status === "submitted" && (
               <Button size="sm" busy={update.isPending && update.variables === "in_review"} onClick={() => update.mutate("in_review")}>

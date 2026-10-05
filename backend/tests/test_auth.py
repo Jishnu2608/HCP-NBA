@@ -387,16 +387,16 @@ def test_sign_out_ends_only_this_browser(env):
 # --- Automatic assignment per role --------------------------------------------------
 
 
-def test_new_patient_gets_one_unused_record_under_their_name(env):
+def test_new_patient_gets_their_own_empty_record(env):
     client, db = env
     session = join(client, "new.patient@example.org", "Riya Sharma")
     pid = session["user"]["patient_id"]
-    assert pid and pid not in {f"PAT_{n:05d}" for n in range(1, 7)}  # not a seeded hero
+    assert pid and pid.startswith("PAT_R")  # a new record, never a synthetic one
     assert len(db.scalars(select(User).where(User.patient_id == pid)).all()) == 1
 
     profile = client.get("/api/me/profile", headers=as_user(session)).json()
     assert (profile["patient_id"], profile["name"]) == (pid, "Riya Sharma")
-    assert profile["therapies"] and "risk_score" not in profile["therapies"][0]
+    assert profile["therapies"] == [] and profile["origin"] == "self_registered"
     for path in ("/api/patients", f"/api/patients/{pid}", "/api/patients/PAT_00002", "/api/hcps"):
         assert client.get(path, headers=as_user(session)).status_code == 403
     assert client.get("/api/me/consents", headers=as_user(session)).status_code == 200
@@ -630,7 +630,11 @@ def test_registered_accounts_survive_a_demo_reset(env):
     back = login(client, "new.cm@example.org")
     assert back.status_code == 200
     listed = client.get("/api/patients", headers=as_user(signed_in(back))).json()
-    assert [p["patient_id"] for p in listed["items"]] == ["PAT_00001", "PAT_00002", "PAT_00003"]
+    ids = [p["patient_id"] for p in listed["items"]]
+    assert [i for i in ids if not i.startswith("PAT_R")] == ["PAT_00001", "PAT_00002", "PAT_00003"]
+    # Real patients the care manager looks after are not demo data: they survive the reset.
+    real = [p for p in listed["items"] if p["origin"] != "synthetic"]
+    assert all(p["patient_id"].startswith("PAT_R") for p in real)
     hcp = signed_in(login(client, "new.hcp@example.org"))
     assert client.get("/api/me/profile", headers=as_user(hcp)).json()["name"] == "Dr. Anita Rao"
     assert hcp["user"]["professionally_verified"]

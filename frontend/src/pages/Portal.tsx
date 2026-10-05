@@ -9,14 +9,18 @@ import {
   Inbox as InboxIcon,
   MapPin,
   Pill,
+  Plus,
+  RefreshCcw,
   ShieldCheck,
   Stethoscope,
   Users,
 } from "lucide-react";
+import { useCallback, useState } from "react";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
+import { preferences } from "../session";
 import { useToast } from "../toast";
 import {
   Alert,
@@ -26,6 +30,7 @@ import {
   Card,
   ChannelIcon,
   DataTable,
+  Drawer,
   EmptyState,
   ErrorNote,
   ErrorState,
@@ -42,6 +47,17 @@ import {
   titleCase,
 } from "../ui";
 import type { Column } from "../ui";
+import {
+  CareTeam,
+  ConditionForm,
+  ConditionList,
+  ConsultForm,
+  MedicationForm,
+  NoteList,
+  RequestList,
+  StatusChip,
+  measureLabel,
+} from "./HealthForms";
 
 function AdherenceBadge({ therapy }: { therapy: Json }) {
   if (therapy.pdc === null) return <span className="text-sm text-ink-subtle">Not yet calculated</span>;
@@ -56,104 +72,275 @@ function AdherenceBadge({ therapy }: { therapy: Json }) {
   );
 }
 
+function MedicationCard({ m, onRefill, refilling }: { m: Json; onRefill?: () => void; refilling?: boolean }) {
+  const confirmed = m.review_status === "confirmed";
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-2">
+          <Pill className="h-4 w-4 text-ink-subtle" aria-hidden /> {titleCase(m.drug_name)}
+        </span>
+      }
+      description={m.measure ? `For ${measureLabel(m.measure).toLowerCase()}` : undefined}
+      action={confirmed ? <AdherenceBadge therapy={m} /> : <StatusChip status={m.review_status} />}
+    >
+      {(m.dose_instructions || m.schedule) && (
+        <p className="mb-4 text-sm text-ink-muted">{[m.dose_instructions, m.schedule].filter(Boolean).join(" · ")}</p>
+      )}
+      {confirmed && m.pdc != null && (
+        <div className="mb-5">
+          <div className="flex items-baseline justify-between text-[13px] text-ink-subtle">
+            <span>Days with medication on hand</span>
+            <span className="tabular font-semibold text-ink">{pct(m.pdc)}</span>
+          </div>
+          <div className="relative mt-1.5">
+            <Meter value={m.pdc} tone={m.adherent ? "ok" : "warn"} label="Days with medication on hand" />
+            <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-ink" style={{ left: "80%" }} aria-hidden />
+          </div>
+          <div className="mt-1 text-xs text-ink-subtle">The marker shows the 80% goal.</div>
+        </div>
+      )}
+      {confirmed ? (
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div>
+            <dt className="text-[13px] text-ink-subtle">Last filled</dt>
+            <dd className="tabular mt-0.5 text-sm font-semibold text-ink">{fmtDate(m.last_fill_date)}</dd>
+          </div>
+          <div>
+            <dt className="text-[13px] text-ink-subtle">Days without supply</dt>
+            <dd className={cx("tabular mt-0.5 text-sm font-semibold", m.gap_days > 0 ? "text-bad" : "text-ink")}>
+              {m.gap_days ?? "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[13px] text-ink-subtle">Supply per fill</dt>
+            <dd className="tabular mt-0.5 text-sm font-semibold text-ink">{m.days_supply} days</dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="text-sm text-ink-subtle">
+          {m.review_status === "reported"
+            ? "Your care team will review this medication and add the supply details."
+            : `Stopped${m.end_date ? ` on ${fmtDate(m.end_date)}` : ""}.`}
+        </p>
+      )}
+      {onRefill && confirmed && (
+        <div className="mt-4 border-t border-line pt-4">
+          <Button size="sm" busy={refilling} onClick={onRefill}>
+            <RefreshCcw className="h-3.5 w-3.5" aria-hidden /> I refilled today
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+type Panel = "condition" | "medication" | "consult" | null;
+
+/** The patient's own health profile: what they reported, what their care team confirmed,
+ *  who looks after them, and a way to ask for a consultation. */
 export function MyMedications() {
+  const { user, can } = useAuth();
+  const client = useQueryClient();
+  const toast = useToast();
   const profile = useQuery({ queryKey: ["me"], queryFn: () => api("/me/profile") });
-  if (profile.isLoading) return <Loading label="Loading your medications" />;
-  if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="Your medications could not be loaded" />;
+  const health = useQuery({
+    queryKey: ["me", "health"],
+    queryFn: () => api("/me/health"),
+    enabled: can(P.SELF_HEALTH_MANAGE),
+  });
+  const [panel, setPanel] = useState<Panel>(null);
+  const close = useCallback(() => setPanel(null), []);
+  const [skipped, setSkipped] = useState(() => (user ? preferences.profileSkipped(user.id) : false));
+  const saved = (message: string) => (data: Json) => {
+    client.setQueryData(["me", "health"], data);
+    void client.invalidateQueries({ queryKey: ["me"] });
+    setPanel(null);
+    toast(message);
+  };
+  const addCondition = useMutation({
+    mutationFn: (body: Json) => post("/me/conditions", body),
+    onSuccess: saved("Condition added. Your care team will review it."),
+  });
+  const addMedication = useMutation({
+    mutationFn: (body: Json) => post("/me/medications", body),
+    onSuccess: saved("Medication added. Your care team will review it."),
+  });
+  const consult = useMutation({
+    mutationFn: (reason: string) => post("/me/care-requests", { reason }),
+    onSuccess: saved("Request sent to your care manager."),
+  });
+  const refill = useMutation({
+    mutationFn: (id: number) => post(`/me/medications/${id}/refill`, {}),
+    onSuccess: saved("Refill recorded."),
+  });
+
+  if (profile.isLoading || health.isLoading) return <Loading label="Loading your health profile" />;
+  const failed = profile.error ?? health.error;
+  if (failed)
+    return (
+      <ErrorState
+        error={failed}
+        retry={() => void Promise.all([profile.refetch(), health.refetch()])}
+        variant="page"
+        title="Your health profile could not be loaded"
+      />
+    );
   const p: Json = profile.data;
-  const outOfSupply = p.therapies.filter((t: Json) => t.gap_days > 0);
+  const h: Json = health.data ?? { conditions: [], medications: [], requests: [], notes: [], care_team: { hcps: [], care_managers: [] }, editable: false };
+  const editable: boolean = h.editable;
+  const empty = !h.conditions.length && !h.medications.length;
+  const outOfSupply = h.medications.filter((m: Json) => m.review_status === "confirmed" && m.gap_days > 0);
+  const openRequests = h.requests.filter((r: Json) => r.status !== "closed").length;
+
   return (
     <>
       <PageHeader
         title={`Hello, ${p.name.split(" ")[0]}`}
-        subtitle="Your medications, and how consistently you have had them on hand recently."
+        subtitle="Your conditions and medications, and the people looking after you."
+        meta={
+          p.location && (
+            <Badge tone="neutral" icon={<MapPin className="h-3.5 w-3.5" aria-hidden />}>
+              {p.location}
+            </Badge>
+          )
+        }
+        action={
+          editable && (
+            <Button variant="primary" onClick={() => setPanel("consult")}>
+              <Stethoscope className="h-4 w-4" aria-hidden /> Consult a HCP
+            </Button>
+          )
+        }
       />
+
+      {editable && empty && !skipped && (
+        <section
+          aria-labelledby="builder-title"
+          className="mb-6 rounded-xl border border-primary-line bg-primary-soft/50 p-5 sm:p-6"
+        >
+          <h2 id="builder-title" className="text-[17px] font-semibold text-ink">
+            Let's build your health profile
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm text-ink-muted">
+            Your profile starts empty. Add what you know; your care manager reviews it and connects you with the right
+            healthcare professional. Nothing is added for you.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="primary" onClick={() => setPanel("condition")}>
+              <HeartPulse className="h-4 w-4" aria-hidden /> Add an illness or condition
+            </Button>
+            <Button onClick={() => setPanel("medication")}>
+              <Pill className="h-4 w-4" aria-hidden /> Add a medication
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (user) preferences.setProfileSkipped(user.id);
+                setSkipped(true);
+              }}
+            >
+              Skip for now
+            </Button>
+          </div>
+        </section>
+      )}
 
       {outOfSupply.length > 0 ? (
         <Alert tone="warn" title="One of your medications may have run out" className="mb-6">
           Check your messages, or contact your care team for help with a refill.
         </Alert>
       ) : (
-        p.therapies.length > 0 && (
+        h.medications.some((m: Json) => m.review_status === "confirmed" && m.pdc != null) && (
           <Alert tone="ok" title="You have every medication on hand" className="mb-6">
             Keep going. Your care team will only contact you if something changes.
           </Alert>
         )
       )}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-w-0 space-y-4">
-          {!p.therapies.length && (
-            <Card>
-              <EmptyState title="No medications on record" icon={<Pill className="h-5 w-5" />} />
-            </Card>
-          )}
-          {p.therapies.map((t: Json) => (
-            <Card
-              key={t.therapy_id}
-              title={
-                <span className="flex items-center gap-2">
-                  <Pill className="h-4 w-4 text-ink-subtle" aria-hidden /> {titleCase(t.drug_name)}
-                </span>
-              }
-              description={`For ${t.measure}`}
-              action={<AdherenceBadge therapy={t} />}
-            >
-              {t.pdc !== null && (
-                <div className="mb-5">
-                  <div className="flex items-baseline justify-between text-[13px] text-ink-subtle">
-                    <span>Days with medication on hand</span>
-                    <span className="tabular font-semibold text-ink">{pct(t.pdc)}</span>
-                  </div>
-                  <div className="relative mt-1.5">
-                    <Meter value={t.pdc} tone={t.adherent ? "ok" : "warn"} label="Days with medication on hand" />
-                    <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-ink" style={{ left: "80%" }} aria-hidden />
-                  </div>
-                  <div className="mt-1 text-xs text-ink-subtle">The marker shows the 80% goal.</div>
-                </div>
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0 space-y-6">
+          <Card
+            title="Conditions"
+            action={
+              editable && (
+                <Button size="sm" onClick={() => setPanel("condition")}>
+                  <Plus className="h-3.5 w-3.5" aria-hidden /> Add
+                </Button>
+              )
+            }
+          >
+            <ConditionList items={h.conditions} />
+          </Card>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-[15px] font-semibold text-ink">Medications</h2>
+              {editable && (
+                <Button size="sm" onClick={() => setPanel("medication")}>
+                  <Plus className="h-3.5 w-3.5" aria-hidden /> Add medication
+                </Button>
               )}
-              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                <div>
-                  <dt className="text-[13px] text-ink-subtle">Last filled</dt>
-                  <dd className="tabular mt-0.5 text-sm font-semibold text-ink">{fmtDate(t.last_fill_date)}</dd>
-                </div>
-                <div>
-                  <dt className="text-[13px] text-ink-subtle">Days without supply</dt>
-                  <dd className={cx("tabular mt-0.5 text-sm font-semibold", t.gap_days > 0 ? "text-bad" : "text-ink")}>
-                    {t.gap_days ?? "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[13px] text-ink-subtle">Supply per fill</dt>
-                  <dd className="tabular mt-0.5 text-sm font-semibold text-ink">{t.days_supply} days</dd>
-                </div>
-              </dl>
-            </Card>
-          ))}
+            </div>
+            <ErrorNote error={refill.error} />
+            {!h.medications.length && (
+              <Card>
+                <EmptyState title="No medications on record" icon={<Pill className="h-5 w-5" />} compact>
+                  {editable ? "Add a medication you take; your care team confirms it." : undefined}
+                </EmptyState>
+              </Card>
+            )}
+            {h.medications.map((m: Json) => (
+              <MedicationCard
+                key={m.therapy_id}
+                m={m}
+                onRefill={editable ? () => refill.mutate(m.therapy_id) : undefined}
+                refilling={refill.isPending && refill.variables === m.therapy_id}
+              />
+            ))}
+          </div>
         </div>
-        <Card title="Your care team">
-          {p.care_team.length ? (
-            <ul className="space-y-3">
-              {p.care_team.map((h: Json) => (
-                <li key={h.name} className="flex items-center gap-3">
-                  <Avatar name={h.name} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-ink">{h.name}</div>
-                    <div className="truncate text-[13px] text-ink-subtle">{h.specialty}</div>
-                  </div>
-                  {h.is_primary && (
-                    <Badge tone="sage" icon={<HeartPulse className="h-3.5 w-3.5" aria-hidden />}>
-                      Primary
-                    </Badge>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-ink-subtle">No care team on record.</p>
-          )}
-        </Card>
+        <div className="min-w-0 space-y-6">
+          <Card title="Your care team">
+            <CareTeam team={h.care_team} />
+          </Card>
+          <Card
+            title="Instructions from your care team"
+            description="What your healthcare professional asked you to do, as recorded by your care team."
+          >
+            <NoteList items={h.notes} />
+          </Card>
+          <Card
+            title="Your requests"
+            action={openRequests > 0 && <Badge tone="warn">{openRequests} open</Badge>}
+          >
+            <RequestList items={h.requests} />
+          </Card>
+        </div>
       </div>
+
+      {panel && (
+        <Drawer
+          title={
+            panel === "condition" ? "Add a condition" : panel === "medication" ? "Add a medication" : "Consult a HCP"
+          }
+          onClose={close}
+        >
+          {panel === "condition" && (
+            <ConditionForm busy={addCondition.isPending} error={addCondition.error} onSubmit={(b) => addCondition.mutate(b)} />
+          )}
+          {panel === "medication" && (
+            <MedicationForm
+              today={p.as_of_date}
+              busy={addMedication.isPending}
+              error={addMedication.error}
+              onSubmit={(b) => addMedication.mutate(b)}
+            />
+          )}
+          {panel === "consult" && (
+            <ConsultForm busy={consult.isPending} error={consult.error} onSubmit={(r) => consult.mutate(r)} />
+          )}
+        </Drawer>
+      )}
     </>
   );
 }

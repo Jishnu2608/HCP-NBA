@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
+from app.clinical import care
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
@@ -22,7 +23,7 @@ from app.models import (
     PatientTherapy,
     User,
 )
-from app.models.enums import NbaStatus, TargetType
+from app.models.enums import NbaStatus, ReviewStatus, TargetType
 
 router = APIRouter(prefix="/api", tags=["profiles"])
 
@@ -97,9 +98,8 @@ def list_patients(
                 "name": out.patient_name(p),
                 "risk_segment": p.risk_segment,
                 "plan_type": p.plan_type,
-                "city": p.city,
-                "state": p.state,
                 "preferred_channel": p.preferred_channel,
+                **out.patient_brief(p),
             }
             for p in rows
         ],
@@ -128,8 +128,12 @@ def patient_360(
         raise not_found("Patient not found")
     _viewed(db, user, TargetType.PATIENT, patient_id)
     today = clock.get_today(db)
+    # Adherence is measured on confirmed medications; reported ones appear under "health".
     therapies = db.scalars(
-        select(PatientTherapy).where(PatientTherapy.patient_id == patient_id)
+        select(PatientTherapy).where(
+            PatientTherapy.patient_id == patient_id,
+            PatientTherapy.review_status != ReviewStatus.REPORTED,
+        )
     ).all()
     fills = db.scalars(
         select(MedicationFill)
@@ -149,9 +153,8 @@ def patient_360(
         "name": out.patient_name(p),
         "age": int((today - p.birth_date).days / 365.25),
         "sex": p.sex,
-        "city": p.city,
-        "state": p.state,
         "plan_type": p.plan_type,
+        **out.patient_brief(p),
         "preferred_channel": p.preferred_channel,
         "risk_segment": p.risk_segment,
         "as_of_date": today,
@@ -173,6 +176,8 @@ def patient_360(
         "features": out.features_out(db, TargetType.PATIENT, patient_id, today),
         "interactions": _history(db, TargetType.PATIENT, patient_id),
         "open_nba": _open_nba(db, TargetType.PATIENT, patient_id),
+        # Conditions, reported and confirmed medications, care requests and notes.
+        "health": care.health_record(db, p, for_patient=False),
     }
 
 

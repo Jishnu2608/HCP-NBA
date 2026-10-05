@@ -1,0 +1,475 @@
+// Forms and lists shared by the patient's "My health" page and the care manager's views:
+// conditions, medications, care requests, instructions and the care team. What the server
+// accepts is checked there; these only collect and display.
+import { useQuery } from "@tanstack/react-query";
+import { CheckCircle2, Clock3, HeartPulse, MessageSquareText, Pill, Stethoscope, UserRound } from "lucide-react";
+import { useId, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { api } from "../api";
+import type { Json } from "../api";
+import { Avatar, Badge, Button, ErrorNote, FormField, TextArea, TextField, cx, fmtDate, fmtDateTime, titleCase } from "../ui";
+import type { Tone } from "../ui";
+
+export interface Vocabulary {
+  conditions: Array<{ code: string; label: string; specialties: string[] }>;
+  medications: Array<{ name: string; measure: string }>;
+  measures: string[];
+  days_supply: number[];
+}
+
+export const useVocabulary = () =>
+  useQuery({ queryKey: ["care-vocabulary"], queryFn: () => api<Vocabulary>("/care/vocabulary"), staleTime: Infinity });
+
+const MEASURE_LABEL: Record<string, string> = {
+  diabetes: "Diabetes",
+  hypertension: "Blood pressure",
+  cholesterol: "Cholesterol",
+};
+export const measureLabel = (m: string | null | undefined) => (m ? (MEASURE_LABEL[m] ?? titleCase(m)) : "Not set");
+
+const selectClass =
+  "block h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-[15px] text-ink shadow-card " +
+  "focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/20";
+
+function Choice({
+  label,
+  value,
+  onChange,
+  children,
+  hint,
+  required,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  children: ReactNode;
+  hint?: ReactNode;
+  required?: boolean;
+}) {
+  const id = useId();
+  return (
+    <FormField label={label} htmlFor={id} hint={hint} required={required}>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={selectClass}>
+        {children}
+      </select>
+    </FormField>
+  );
+}
+
+/* ------------------------------------------------------------------ status chips */
+
+const STATUS: Record<string, { tone: Tone; label: string; icon: ReactNode }> = {
+  reported: { tone: "warn", label: "Waiting for your care team", icon: <Clock3 className="h-3.5 w-3.5" aria-hidden /> },
+  confirmed: { tone: "ok", label: "Confirmed", icon: <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> },
+  stopped: { tone: "neutral", label: "Stopped", icon: null },
+  resolved: { tone: "neutral", label: "Resolved", icon: null },
+  open: { tone: "warn", label: "Open", icon: <Clock3 className="h-3.5 w-3.5" aria-hidden /> },
+  in_progress: { tone: "info", label: "In progress", icon: <Clock3 className="h-3.5 w-3.5" aria-hidden /> },
+  closed: { tone: "ok", label: "Closed", icon: <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> },
+};
+
+export function StatusChip({ status, staff = false }: { status: string; staff?: boolean }) {
+  const s = STATUS[status] ?? { tone: "neutral" as Tone, label: titleCase(status), icon: null };
+  const label = staff && status === "reported" ? "Reported by patient" : s.label;
+  return (
+    <Badge tone={s.tone} icon={s.icon}>
+      {label}
+    </Badge>
+  );
+}
+
+export const REQUEST_LABEL: Record<string, string> = {
+  condition_review: "Condition to review",
+  medication_review: "Medication to review",
+  consultation: "Consultation request",
+};
+
+/* ------------------------------------------------------------------ forms */
+
+export function ConditionForm({
+  onSubmit,
+  busy,
+  error,
+  submitLabel = "Add condition",
+}: {
+  onSubmit: (body: { condition: string; other_text: string | null }) => void;
+  busy: boolean;
+  error: unknown;
+  submitLabel?: string;
+}) {
+  const vocab = useVocabulary();
+  const [condition, setCondition] = useState("");
+  const [other, setOther] = useState("");
+  const [tried, setTried] = useState(false);
+  const missing = !condition || (condition === "other" && !other.trim());
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setTried(true);
+    if (!missing) onSubmit({ condition, other_text: condition === "other" ? other.trim() : null });
+  }
+  return (
+    <form onSubmit={submit} className="space-y-4" noValidate>
+      <Choice label="Condition" value={condition} onChange={setCondition} required>
+        <option value="">Choose a condition</option>
+        {(vocab.data?.conditions ?? []).map((c) => (
+          <option key={c.code} value={c.code}>
+            {c.label}
+          </option>
+        ))}
+      </Choice>
+      {condition === "other" && (
+        <TextField
+          label="Name of the condition"
+          value={other}
+          maxLength={120}
+          required
+          onChange={(e) => setOther(e.target.value)}
+          error={tried && !other.trim() ? "Enter the condition's name." : null}
+        />
+      )}
+      {tried && !condition && <p className="text-[13px] text-bad">Choose a condition.</p>}
+      <ErrorNote error={error} />
+      <Button type="submit" variant="primary" busy={busy}>
+        {submitLabel}
+      </Button>
+    </form>
+  );
+}
+
+export interface MedicationValues {
+  name: string;
+  dose_instructions: string | null;
+  schedule: string | null;
+  start_date: string;
+  end_date: string | null;
+}
+
+/** A medication as the patient knows it. The care team adds supply details when confirming. */
+export function MedicationForm({
+  onSubmit,
+  busy,
+  error,
+  extra,
+  submitLabel = "Add medication",
+  today,
+}: {
+  onSubmit: (body: MedicationValues) => void;
+  busy: boolean;
+  error: unknown;
+  /** Care-team fields (supply, copay), rendered after the patient fields. */
+  extra?: ReactNode;
+  submitLabel?: string;
+  today: string;
+}) {
+  const vocab = useVocabulary();
+  const listId = useId();
+  const [v, setV] = useState({ name: "", dose_instructions: "", schedule: "", start_date: "", end_date: "" });
+  const [ongoing, setOngoing] = useState(true);
+  const [tried, setTried] = useState(false);
+  const errors = {
+    name: !v.name.trim() ? "Enter the medication's name." : null,
+    start_date: !v.start_date ? "Enter when you started." : null,
+    end_date: !ongoing && v.end_date && v.end_date < v.start_date ? "The end date is before the start date." : null,
+  };
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setTried(true);
+    if (Object.values(errors).some(Boolean)) return;
+    onSubmit({
+      name: v.name.trim(),
+      dose_instructions: v.dose_instructions.trim() || null,
+      schedule: v.schedule.trim() || null,
+      start_date: v.start_date,
+      end_date: ongoing ? null : v.end_date || null,
+    });
+  }
+  const set = (key: keyof typeof v) => (e: { target: { value: string } }) => setV({ ...v, [key]: e.target.value });
+  return (
+    <form onSubmit={submit} className="space-y-4" noValidate>
+      <TextField
+        label="Medication name"
+        value={v.name}
+        onChange={set("name")}
+        list={listId}
+        maxLength={64}
+        required
+        autoComplete="off"
+        hint="Start typing to pick from the list, or enter any name."
+        error={tried ? errors.name : null}
+      />
+      <datalist id={listId}>
+        {(vocab.data?.medications ?? []).map((m) => (
+          <option key={m.name} value={m.name} />
+        ))}
+      </datalist>
+      <TextField
+        label="Dose and instructions"
+        value={v.dose_instructions}
+        onChange={set("dose_instructions")}
+        maxLength={300}
+        placeholder="For example: 500 mg with dinner"
+      />
+      <TextField
+        label="How often"
+        value={v.schedule}
+        onChange={set("schedule")}
+        maxLength={64}
+        placeholder="For example: once daily"
+      />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TextField
+          label="Start date"
+          type="date"
+          max={today}
+          value={v.start_date}
+          onChange={set("start_date")}
+          required
+          error={tried ? errors.start_date : null}
+        />
+        <TextField
+          label="End date"
+          type="date"
+          value={v.end_date}
+          onChange={set("end_date")}
+          disabled={ongoing}
+          error={tried ? errors.end_date : null}
+        />
+      </div>
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input type="checkbox" checked={ongoing} onChange={(e) => setOngoing(e.target.checked)} className="h-4 w-4 accent-[var(--color-primary)]" />
+        I am still taking it
+      </label>
+      {extra}
+      <ErrorNote error={error} />
+      <Button type="submit" variant="primary" busy={busy}>
+        {submitLabel}
+      </Button>
+    </form>
+  );
+}
+
+/** Supply details only the care team sets (when recording or confirming a medication). */
+export function SupplyFields({
+  value,
+  onChange,
+  knownMeasure,
+}: {
+  value: { measure: string; days_supply: string; copay: string };
+  onChange: (v: { measure: string; days_supply: string; copay: string }) => void;
+  knownMeasure?: string | null;
+}) {
+  const vocab = useVocabulary();
+  return (
+    <div className="grid gap-4 rounded-xl border border-line bg-subtle/50 p-4 sm:grid-cols-3">
+      <Choice
+        label="Adherence measure"
+        value={value.measure}
+        onChange={(measure) => onChange({ ...value, measure })}
+        hint={knownMeasure ? `Recognised as ${measureLabel(knownMeasure).toLowerCase()}.` : "Needed for adherence tracking."}
+      >
+        <option value="">{knownMeasure ? `Keep (${measureLabel(knownMeasure)})` : "Not tracked"}</option>
+        {(vocab.data?.measures ?? []).map((m) => (
+          <option key={m} value={m}>
+            {measureLabel(m)}
+          </option>
+        ))}
+      </Choice>
+      <Choice label="Supply per fill" value={value.days_supply} onChange={(days_supply) => onChange({ ...value, days_supply })} required>
+        {(vocab.data?.days_supply ?? [30, 60, 90]).map((d) => (
+          <option key={d} value={String(d)}>
+            {d} days
+          </option>
+        ))}
+      </Choice>
+      <TextField
+        label="Copay ($)"
+        type="number"
+        min={0}
+        step="0.01"
+        value={value.copay}
+        onChange={(e) => onChange({ ...value, copay: e.target.value })}
+      />
+    </div>
+  );
+}
+
+export function ConsultForm({
+  onSubmit,
+  busy,
+  error,
+}: {
+  onSubmit: (reason: string) => void;
+  busy: boolean;
+  error: unknown;
+}) {
+  const [reason, setReason] = useState("");
+  const [tried, setTried] = useState(false);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        setTried(true);
+        if (reason.trim()) onSubmit(reason.trim());
+      }}
+      className="space-y-4"
+      noValidate
+    >
+      <TextArea
+        label="What would you like to discuss?"
+        rows={4}
+        maxLength={500}
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        required
+        hint="Your care manager reads this and arranges the right healthcare professional."
+        error={tried && !reason.trim() ? "Tell your care team what it is about." : null}
+      />
+      <ErrorNote error={error} />
+      <Button type="submit" variant="primary" busy={busy}>
+        Send request
+      </Button>
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ read-only lists */
+
+export function ConditionList({ items, staff, actions }: { items: Json[]; staff?: boolean; actions?: (c: Json) => ReactNode }) {
+  if (!items.length) return <p className="text-sm text-ink-subtle">No conditions recorded.</p>;
+  return (
+    <ul className="divide-y divide-line">
+      {items.map((c) => (
+        <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-subtle text-ink-muted" aria-hidden>
+              <HeartPulse className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-ink">{c.label}</div>
+              <div className="text-[13px] text-ink-subtle">
+                {c.origin === "patient_reported" ? "Added by the patient" : "Recorded by the care team"} ·{" "}
+                {fmtDate(c.reported_at)}
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusChip status={c.status} staff={staff} />
+            {actions?.(c)}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function MedicationSummary({ m, staff }: { m: Json; staff?: boolean }) {
+  return (
+    <div className="flex min-w-0 items-start gap-3">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-subtle text-ink-muted" aria-hidden>
+        <Pill className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-ink">{titleCase(m.drug_name)}</span>
+          <StatusChip status={m.review_status} staff={staff} />
+        </div>
+        <div className="mt-0.5 text-[13px] leading-5 text-ink-subtle">
+          {[m.dose_instructions, m.schedule].filter(Boolean).join(" · ") || "No dose recorded"}
+        </div>
+        <div className="text-[13px] leading-5 text-ink-subtle">
+          Since {fmtDate(m.start_date)}
+          {m.end_date ? ` until ${fmtDate(m.end_date)}` : ""}
+          {m.days_supply ? ` · ${m.days_supply}-day supply` : ""}
+          {m.prescriber ? ` · ${m.prescriber}` : ""}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function CareTeam({ team }: { team: Json }) {
+  const hcps: Json[] = team?.hcps ?? [];
+  const managers: Json[] = team?.care_managers ?? [];
+  if (!hcps.length && !managers.length) return <p className="text-sm text-ink-subtle">No care team yet.</p>;
+  return (
+    <ul className="space-y-3">
+      {managers.map((m) => (
+        <li key={`cm-${m.id}`} className="flex items-center gap-3">
+          <Avatar name={m.name} size="sm" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-ink">{m.name}</div>
+            <div className="flex items-center gap-1 text-[13px] text-ink-subtle">
+              <UserRound className="h-3.5 w-3.5" aria-hidden /> Care manager
+            </div>
+          </div>
+        </li>
+      ))}
+      {hcps.map((h) => (
+        <li key={h.hcp_id} className="flex items-center gap-3">
+          <Avatar name={h.name} size="sm" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-ink">{h.name}</div>
+            <div className="flex items-center gap-1 truncate text-[13px] text-ink-subtle">
+              <Stethoscope className="h-3.5 w-3.5 shrink-0" aria-hidden /> {h.specialty}
+            </div>
+          </div>
+          {h.is_primary && <Badge tone="sage">Primary</Badge>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function RequestList({ items, staff, actions }: { items: Json[]; staff?: boolean; actions?: (r: Json) => ReactNode }) {
+  if (!items.length) return <p className="text-sm text-ink-subtle">No requests.</p>;
+  return (
+    <ul className="divide-y divide-line">
+      {items.map((r) => (
+        <li key={r.id} className="py-3 first:pt-0 last:pb-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-ink">{REQUEST_LABEL[r.type] ?? titleCase(r.type)}</span>
+            <StatusChip status={r.status} staff={staff} />
+          </div>
+          <div className="mt-0.5 text-[13px] leading-5 text-ink-subtle">
+            {r.condition?.label ?? r.medication ?? ""}
+            {r.condition || r.medication ? " · " : ""}
+            {fmtDate(r.created_at)}
+          </div>
+          {r.reason && r.type === "consultation" && (
+            <p className="mt-1 whitespace-pre-line text-sm text-ink-muted">“{r.reason}”</p>
+          )}
+          {r.assigned_hcp && (
+            <p className="mt-1 text-[13px] text-ink-muted">
+              Routed to <span className="font-semibold text-ink">{r.assigned_hcp.name}</span> ({r.assigned_hcp.specialty})
+            </p>
+          )}
+          {r.resolution && !(r.assigned_hcp && r.resolution.startsWith("Routed to")) && (
+            <p className="mt-1 text-[13px] text-ink-muted">{r.resolution}</p>
+          )}
+          {actions && <div className="mt-2 flex flex-wrap gap-2">{actions(r)}</div>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function NoteList({ items, staff }: { items: Json[]; staff?: boolean }) {
+  if (!items.length) return <p className="text-sm text-ink-subtle">No instructions yet.</p>;
+  return (
+    <ul className="space-y-3">
+      {items.map((n) => (
+        <li key={n.id} className={cx("rounded-lg border border-line p-3", n.kind === "hcp_instruction" && "bg-primary-soft/40")}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-subtle">
+            <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
+            <span className="font-semibold text-ink">{n.kind === "hcp_instruction" ? "Instruction" : "Follow-up"}</span>
+            {n.hcp && <span>from {n.hcp}</span>}
+            <span aria-hidden>·</span>
+            <span className="tabular">{fmtDateTime(`${n.created_at}Z`)}</span>
+            {staff && !n.visible_to_patient && <Badge tone="neutral">Care team only</Badge>}
+          </div>
+          <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-ink">{n.text}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}

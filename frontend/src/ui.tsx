@@ -38,6 +38,7 @@ import {
   ShieldCheck,
   Smartphone,
   UserRound,
+  X,
   XCircle,
 } from "lucide-react";
 import type {
@@ -48,6 +49,7 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import { Children, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "./api";
 import { useAuth } from "./auth";
@@ -1631,4 +1633,45 @@ export function fmtDateTime(value: string | null | undefined) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/** Slide-over panel from the right. Escape or the backdrop closes it; focus moves into it.
+ *  Rendered into <body>, so no page container (transforms, stacking) can place it under
+ *  the sticky top bar. */
+export function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    panel.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+      previous?.focus?.();
+    };
+  }, [onClose]);
+  return createPortal(
+    <div style={{ zIndex: "var(--z-drawer)", position: "relative" }}>
+      <div className="animate-fade fixed inset-0 bg-black/40" aria-hidden onClick={onClose} />
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+        className="animate-drawer-right fixed inset-y-0 right-0 flex w-full max-w-[34rem] flex-col bg-surface shadow-overlay outline-none"
+      >
+        <div className="flex h-16 shrink-0 items-center justify-between border-b border-line px-5 sm:px-6">
+          <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+          <IconButton label="Close" onClick={onClose}>
+            <X className="h-5 w-5" aria-hidden />
+          </IconButton>
+        </div>
+        <div className="scroll-quiet flex-1 overflow-y-auto px-5 py-6 sm:px-6">{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
 }

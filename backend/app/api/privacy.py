@@ -147,7 +147,9 @@ def queue(
     if status:
         query = query.where(PrivacyRequest.status == status)
     rows = db.scalars(query).all()
-    items = [requests.out(r, with_requester=db.get(User, r.user_id)) for r in rows]
+    items = [
+        requests.out(r, with_requester=db.get(User, r.user_id) if r.user_id else None) for r in rows
+    ]
     counts: dict[str, int] = {}
     for r in db.scalars(select(PrivacyRequest.status)):
         counts[r] = counts.get(r, 0) + 1
@@ -163,4 +165,4 @@ def update_request(
 ) -> dict:
     row = requests.update(db, user, request_id, body.status, body.resolution)
     db.commit()
-    return requests.out(row, with_requester=db.get(User, row.user_id))
+    return requests.out(row, with_requester=db.get(User, row.user_id) if row.user_id else None)

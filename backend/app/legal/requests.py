@@ -15,6 +15,7 @@ from app import audit
 from app.auth.errors import AuthError
 from app.core import jurisdiction
 from app.core.config import get_settings
+from app.core.permissions import Permission, can
 from app.models import PrivacyRequest, User
 from app.models.tables import utcnow
 
@@ -69,6 +70,8 @@ def out(row: PrivacyRequest, *, with_requester: User | None = None) -> dict:
         "created_at": row.created_at,
         "updated_at": row.updated_at,
         "respond_by": row.respond_by,
+        # Set once the requester's account was deleted (the request is kept as the record).
+        "subject_label": row.subject_label,
     }
     if with_requester is not None:
         data["requester"] = {
@@ -76,6 +79,8 @@ def out(row: PrivacyRequest, *, with_requester: User | None = None) -> dict:
             "name": with_requester.display_name,
             "email": with_requester.email,
             "role": with_requester.role,
+            # Display hint: a patient account can be deleted from this request.
+            "deletable": can(with_requester, Permission.SELF_HEALTH_MANAGE),
         }
     return data
 

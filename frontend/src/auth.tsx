@@ -57,6 +57,8 @@ export interface AcceptForm {
   country: string;
   region: string | null;
   accept_terms: boolean;
+  /** Patient (clinic) invitations only. */
+  consent_health_data?: boolean;
 }
 
 interface AuthState {

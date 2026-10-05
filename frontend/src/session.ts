@@ -9,6 +9,8 @@
 const CHALLENGE_KEY = "nba.signup.challenge";
 const THEME_KEY = "nba.theme";
 const NAV_KEY = "nba.nav.collapsed";
+// "Skip for now" on the health-profile prompt, per account (a display preference only).
+const PROFILE_SKIP_KEY = "nba.profile.skipped";
 // Sessions from before the move to cookies; removed on load.
 const LEGACY_SESSION_KEY = "nba.session.token";
 
@@ -91,4 +93,6 @@ export const preferences = {
   setTheme: (theme: ThemeChoice) => writeLocal(THEME_KEY, theme),
   navCollapsed: () => readLocal(NAV_KEY) === "1",
   setNavCollapsed: (collapsed: boolean) => writeLocal(NAV_KEY, collapsed ? "1" : "0"),
+  profileSkipped: (accountId: number) => readLocal(`${PROFILE_SKIP_KEY}.${accountId}`) === "1",
+  setProfileSkipped: (accountId: number) => writeLocal(`${PROFILE_SKIP_KEY}.${accountId}`, "1"),
 };

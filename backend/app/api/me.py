@@ -7,6 +7,7 @@ signed-in user, so there is no id to tamper with.
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from app.api import serializers as out
 from app.api.deps import require_permission
 from app.api.people import consent_out
 from app.api.schemas import StrictBody
+from app.clinical import care
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
@@ -30,7 +32,7 @@ from app.models import (
     PatientTherapy,
     User,
 )
-from app.models.enums import Channel, ConsentPurpose, Outcome, TargetType
+from app.models.enums import Channel, ConsentPurpose, FillSource, Outcome, ReviewStatus, TargetType
 
 router = APIRouter(prefix="/api/me", tags=["portal"])
 
@@ -38,6 +40,7 @@ profile_readers = require_permission(Permission.SELF_PROFILE_READ)
 consent_managers = require_permission(Permission.SELF_CONSENT_MANAGE)
 panel_readers = require_permission(Permission.SELF_PATIENTS_READ)
 portal_users = require_permission(Permission.SELF_INBOX)
+health_managers = require_permission(Permission.SELF_HEALTH_MANAGE)
 
 
 def no_assignment() -> HTTPException:
@@ -89,7 +92,10 @@ def my_profile(user: User = Depends(profile_readers), db: Session = Depends(get_
         }
     p = db.get(Patient, user.patient_id)
     therapies = db.scalars(
-        select(PatientTherapy).where(PatientTherapy.patient_id == p.patient_id)
+        select(PatientTherapy).where(
+            PatientTherapy.patient_id == p.patient_id,
+            PatientTherapy.review_status == ReviewStatus.CONFIRMED,
+        )
     ).all()
     care_team = db.execute(
         select(Hcp, PatientHcp.is_primary)
@@ -101,9 +107,8 @@ def my_profile(user: User = Depends(profile_readers), db: Session = Depends(get_
         "patient_id": p.patient_id,
         "name": out.patient_name(p),
         "plan_type": p.plan_type,
-        "city": p.city,
-        "state": p.state,
         "preferred_channel": p.preferred_channel,
+        **out.patient_brief(p),
         "as_of_date": today,
         # Internal risk scores and model outputs are not shown to the patient.
         "therapies": [out.therapy_out(db, t, today, with_risk=False) for t in therapies],
@@ -292,7 +297,7 @@ def respond(
             raise HTTPException(status.HTTP_409_CONFLICT, "This message has no refill action")
         if i.outcome == Outcome.FILLED:
             raise HTTPException(status.HTTP_409_CONFLICT, "Refill already recorded")
-        simulator.apply_fill(db, db.get(PatientTherapy, i.therapy_id), when)
+        simulator.apply_fill(db, db.get(PatientTherapy, i.therapy_id), when, FillSource.PATIENT)
         outcome = Outcome.FILLED
     else:
         # A weaker signal never overwrites a stronger one already captured.
@@ -303,3 +308,86 @@ def respond(
     delivery.capture_response(db, i, outcome, when, actor=user.username, actor_role=user.role)
     db.commit()
     return _inbox_item(db, i)
+
+
+# --- The patient's own health profile ----------------------------------------------------
+
+
+class ConditionReport(StrictBody):
+    condition: str = Field(max_length=32)
+    other_text: str | None = Field(default=None, max_length=120)
+
+
+class MedicationReport(StrictBody):
+    name: str = Field(max_length=64)
+    dose_instructions: str | None = Field(default=None, max_length=300)
+    schedule: str | None = Field(default=None, max_length=64)
+    start_date: str = Field(max_length=10)
+    end_date: str | None = Field(default=None, max_length=10)
+
+
+class RefillReport(StrictBody):
+    fill_date: str | None = Field(default=None, max_length=10)
+
+
+class ConsultationRequest(StrictBody):
+    reason: str = Field(max_length=500)
+
+
+def _own_patient(db: Session, user: User) -> Patient:
+    return db.get(Patient, own_patient_id(user))
+
+
+def _health(db: Session, user: User) -> dict:
+    return care.health_record(db, _own_patient(db, user), for_patient=True)
+
+
+@router.get("/health")
+def my_health(user: User = Depends(health_managers), db: Session = Depends(get_db)) -> dict:
+    """Conditions, medications, care requests, instructions and care team. Nothing here is
+    inferred: every entry was made by the patient or their care team."""
+    return _health(db, user)
+
+
+@router.post("/conditions", status_code=201)
+def report_condition(
+    body: ConditionReport, user: User = Depends(health_managers), db: Session = Depends(get_db)
+) -> dict:
+    care.report_condition(db, user, _own_patient(db, user), body.condition, body.other_text)
+    db.commit()
+    return _health(db, user)
+
+
+@router.post("/medications", status_code=201)
+def report_medication(
+    body: MedicationReport, user: User = Depends(health_managers), db: Session = Depends(get_db)
+) -> dict:
+    care.report_medication(db, user, _own_patient(db, user), **body.model_dump())
+    db.commit()
+    return _health(db, user)
+
+
+@router.post("/medications/{therapy_id}/refill", status_code=201)
+def log_refill(
+    therapy_id: int,
+    body: RefillReport,
+    user: User = Depends(health_managers),
+    db: Session = Depends(get_db),
+) -> dict:
+    therapy = db.get(PatientTherapy, therapy_id)
+    if therapy is None or therapy.patient_id != own_patient_id(user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Medication not found")
+    care.require_real(_own_patient(db, user))
+    care.log_refill(db, user, therapy, body.fill_date, FillSource.PATIENT)
+    db.commit()
+    return _health(db, user)
+
+
+@router.post("/care-requests", status_code=201)
+def request_consultation(
+    body: ConsultationRequest, user: User = Depends(health_managers), db: Session = Depends(get_db)
+) -> dict:
+    """Consult an HCP: the request goes to the patient's care manager, who routes it."""
+    care.request_consultation(db, user, _own_patient(db, user), body.reason)
+    db.commit()
+    return _health(db, user)

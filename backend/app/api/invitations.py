@@ -1,4 +1,4 @@
-"""Invitations for professional roles.
+"""Invitations for professional roles (and, bound to a record, clinic patients).
 
 Inviter endpoints need a session and the onboarding authority for the role in question
 (`can_invite`, checked in auth/invitations.py on every call, not only here). The two
@@ -49,6 +49,8 @@ class AcceptBody(StrictBody):
     country: str = Field(max_length=2)
     region: str | None = Field(default=None, max_length=3)
     accept_terms: bool
+    # Patient invitations only: the separate consent to process health information.
+    consent_health_data: bool = False
 
 
 def _created(db: Session, actor: User, result) -> dict:
@@ -144,6 +146,7 @@ def accept(body: AcceptBody, request: Request, db: Session = Depends(get_db)) ->
             country=body.country,
             region=body.region,
             accept_terms=body.accept_terms,
+            consent_health_data=body.consent_health_data,
         )
         return service.issue_or_report(db, user)
 

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.auth.provisioning import assignments
 from app.auth.service import ensure_system_admin
 from app.auth.sessions import sessions
+from app.clinical import records
 from app.core import clock
 from app.core.config import get_settings
 from app.core.db import Base
@@ -600,23 +601,7 @@ def assign_care_managers(cms: list[User], patients: list[Patient]) -> list[CareM
 # --- Orchestration -----------------------------------------------------------
 
 
-def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
-    """Replaces all data with a freshly generated synthetic population."""
-    cfg = cfg or GenConfig()
-    if cfg.n_hcps < 12 or cfg.n_patients < len(PATIENT_HEROES):
-        raise ValueError("scale too small: need at least 12 HCPs and 6 patients")
-    # Registered and invited accounts, invitations and the security audit trail are not
-    # demo data: carry them across the rebuild. No session survives it.
-    registered = assignments.snapshot(db)
-    wipe(db)
-    sessions.revoke_everyone(db)
-    ensure_system_admin(db)
-
-    contents = build_content(cfg.as_of)
-    hcps, hcp_traits = build_hcps(cfg)
-    db.add_all(contents + hcps)
-    db.flush()
-
+def _hcps_by_state(hcps: list[Hcp]) -> dict:
     hcps_by_state: dict = defaultdict(lambda: defaultdict(list))
     for h in hcps:
         key = "primary" if h.specialty in ref.PRIMARY_CARE else h.specialty
@@ -626,7 +611,49 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
         state_map["primary"] = state_map["primary"] or all_primary
     for state, _, _ in ref.GEOGRAPHY:
         hcps_by_state[state]["primary"] = hcps_by_state[state]["primary"] or all_primary
+    return hcps_by_state
 
+
+def synthetic_patient_names(n_hcps: int, patient_ids: list[str]) -> dict[str, tuple[str, str]]:
+    """The generated (first, last) name of synthetic patient records, recomputed from the
+    seed. Used to give a record its own name back when an account stops using it."""
+    cfg = GenConfig(n_hcps=n_hcps, seed_demo_accounts=False)
+    hcps_by_state = _hcps_by_state(build_hcps(cfg)[0])
+    names = {}
+    for pid in patient_ids:
+        if not pid.startswith("PAT_") or not pid[4:].isdigit():
+            continue
+        i = int(pid[4:])
+        bundle = (
+            _hero_patient(cfg, i, PATIENT_HEROES[i])
+            if i in PATIENT_HEROES
+            else _random_patient(cfg, i, hcps_by_state)
+        )
+        names[pid] = (bundle.patient.first_name, bundle.patient.last_name)
+    return names
+
+
+def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
+    """Replaces all data with a freshly generated synthetic population."""
+    cfg = cfg or GenConfig()
+    if cfg.n_hcps < 12 or cfg.n_patients < len(PATIENT_HEROES):
+        raise ValueError("scale too small: need at least 12 HCPs and 6 patients")
+    # Registered and invited accounts, invitations and the security audit trail are not
+    # demo data: carry them across the rebuild. No session survives it.
+    registered = assignments.snapshot(db)
+    # Real patients (self-registered or clinic) and what they and their care team recorded
+    # are not demo data either.
+    registered["real_patients"] = records.snapshot(db)
+    wipe(db)
+    sessions.revoke_everyone(db)
+    ensure_system_admin(db)
+
+    contents = build_content(cfg.as_of)
+    hcps, hcp_traits = build_hcps(cfg)
+    db.add_all(contents + hcps)
+    db.flush()
+
+    hcps_by_state = _hcps_by_state(hcps)
     bundles = [
         _hero_patient(cfg, i, PATIENT_HEROES[i])
         if i in PATIENT_HEROES
@@ -744,7 +771,9 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
         db.add_all(assign_reps(reps, hcps))
         db.add_all(assign_care_managers(cms, patients))
         db.flush()
+    records.restore(db, registered.get("real_patients", {}))
     assignments.restore(db, registered)
+    records.restore_links(db, registered.get("real_patients", {}))
 
     clock.set_today(db, cfg.as_of)
     db.commit()

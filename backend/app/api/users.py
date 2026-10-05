@@ -1,4 +1,5 @@
-"""Account administration: view accounts, change status, change assignments.
+"""Account administration: view accounts, change status, change assignments, and
+permanently delete patient accounts.
 
 There is deliberately no endpoint that changes a role. Assignments (data scope) and status
 are editable; permissions follow only from the role the account was created with.
@@ -15,11 +16,11 @@ from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.api.schemas import StrictBody
-from app.auth import invitations
+from app.auth import erasure, invitations
 from app.auth.errors import AuthError
 from app.auth.provisioning import HCPS, OWN_HCP, OWN_PATIENT, PATIENTS, assignments
 from app.auth.sessions import sessions
-from app.core import age
+from app.core import age, jurisdiction
 from app.core.db import get_db
 from app.core.permissions import Permission, permissions_for
 from app.models import Hcp, Patient, User
@@ -28,10 +29,19 @@ from app.models.enums import AccountSource, AccountStatus
 router = APIRouter(prefix="/api/admin/users", tags=["users"])
 
 manager = require_permission(Permission.USER_MANAGE)
+deleter = require_permission(Permission.USER_DELETE)
 
 
 class StatusBody(StrictBody):
     status: Literal["active", "disabled"]
+
+
+class DeleteBody(StrictBody):
+    """The account's email, typed by the administrator to confirm, and optionally the
+    erasure request this deletion carries out."""
+
+    confirm_email: str = Field(max_length=254)
+    privacy_request_id: int | None = None
 
 
 class AssignmentBody(StrictBody):
@@ -55,6 +65,9 @@ def _summary(db: Session, user: User) -> dict:
         "verification_source": user.verification_source,
         # Never the date of birth itself: only whether the holder is a minor.
         "age_band": age.age_band(user),
+        # Country of residence as the person gave it (never a demo record's city).
+        "location": jurisdiction.label(user.country, user.region),
+        "country": user.country,
         "invited_by": invitations.person(inviter),
         "source": user.source,
         "created_at": user.created_at,
@@ -215,3 +228,15 @@ def set_assignments(
     )
     db.commit()
     return _detail(db, user)
+
+
+@router.delete("/{user_id}")
+def delete_account(
+    user_id: int, body: DeleteBody, admin: User = Depends(deleter), db: Session = Depends(get_db)
+) -> dict:
+    """Permanently deletes a patient account and the patient's own data (auth/erasure.py).
+    Professional accounts are disabled instead, never deleted."""
+    user = _get(db, user_id)
+    result = erasure.erase_patient(db, admin, user, body.confirm_email, body.privacy_request_id)
+    db.commit()
+    return result

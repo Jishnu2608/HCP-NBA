@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Lock, Plus, ShieldCheck, UserCheck, UserCog, UserX, Users as UsersIcon, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, patch, put, query } from "../api";
 import type { Json } from "../api";
 import { ROLE_LABEL, useAuth } from "../auth";
 import type { Role } from "../auth";
+import { P } from "../permissions";
 import { useToast } from "../toast";
+import { DeleteAccount } from "./DeleteAccount";
 import {
   Avatar,
   Badge,
@@ -16,7 +18,6 @@ import {
   EmptyState,
   ErrorNote,
   ErrorState,
-  IconButton,
   LoadingRows,
   PageHeader,
   SearchInput,
@@ -25,6 +26,7 @@ import {
   PersonName,
   Stat,
   Toolbar,
+  Drawer,
   fmtDate,
   fmtDateTime,
   num,
@@ -227,8 +229,8 @@ function AssignmentEditor({ account }: { account: Json }) {
   );
 }
 
-function AccountPanel({ id }: { id: number }) {
-  const { user: me } = useAuth();
+function AccountPanel({ id, onDeleted }: { id: number; onDeleted: () => void }) {
+  const { user: me, can } = useAuth();
   const client = useQueryClient();
   const toast = useToast();
   const detail = useQuery({ queryKey: ["users", id], queryFn: () => api(`/admin/users/${id}`) });
@@ -290,6 +292,10 @@ function AccountPanel({ id }: { id: number }) {
                 : "Verified · invitation"
               : "Not applicable"}
           </dd>
+        </div>
+        <div>
+          <dt className="text-[13px] text-ink-subtle">Country of residence</dt>
+          <dd className="mt-0.5 text-sm font-semibold text-ink">{a.location ?? "Not recorded"}</dd>
         </div>
         <div>
           <dt className="text-[13px] text-ink-subtle">Age</dt>
@@ -355,44 +361,17 @@ function AccountPanel({ id }: { id: number }) {
         )}
         <p className="mt-2 text-[13px] text-ink-subtle">Disabling signs the account out everywhere at once and blocks sign-in.</p>
       </section>
-    </div>
-  );
-}
 
-/** Slide-over panel from the right. Escape or the backdrop closes it; focus moves into it. */
-function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  const panel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    panel.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-      previous?.focus?.();
-    };
-  }, [onClose]);
-  return (
-    <div style={{ zIndex: "var(--z-drawer)", position: "relative" }}>
-      <div className="animate-fade fixed inset-0 bg-black/40" aria-hidden onClick={onClose} />
-      <div
-        ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        tabIndex={-1}
-        className="animate-drawer-right fixed inset-y-0 right-0 flex w-full max-w-[34rem] flex-col bg-surface shadow-overlay outline-none"
-      >
-        <div className="flex h-16 shrink-0 items-center justify-between border-b border-line px-5 sm:px-6">
-          <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
-          <IconButton label="Close" onClick={onClose}>
-            <X className="h-5 w-5" aria-hidden />
-          </IconButton>
-        </div>
-        <div className="scroll-quiet flex-1 overflow-y-auto px-5 py-6 sm:px-6">{children}</div>
-      </div>
+      {/* Patients only (the server refuses any other account). */}
+      {can(P.USER_DELETE) && !locked && a.permissions.includes(P.SELF_HEALTH_MANAGE) && (
+        <section className="border-t border-line pt-5">
+          <h3 className="mb-1 text-sm font-semibold text-ink">Delete account</h3>
+          <p className="mb-3 text-[13px] text-ink-subtle">
+            For a patient who asked to be deleted. Removes the account and the patient's own data; not reversible.
+          </p>
+          <DeleteAccount account={a} onDeleted={onDeleted} />
+        </section>
+      )}
     </div>
   );
 }
@@ -467,6 +446,12 @@ export default function UsersPage() {
           <span className="text-ink-subtle">{u.source === "seed" || u.source === "system" ? "Platform" : "—"}</span>
         ),
     },
+    {
+      key: "location",
+      header: "Country",
+      hideOnMobile: true,
+      cell: (u) => <span className="text-ink-muted">{u.location ?? "—"}</span>,
+    },
     { key: "status", header: "Status", hideOnMobile: true, cell: (u) => <AccountStatus status={u.status} /> },
     { key: "assigned", header: "Assigned", cell: (u) => <span className="text-ink-muted">{assignmentText(u.assignment)}</span> },
     { key: "type", header: "Type", cell: (u) => <span className="text-ink-subtle">{SOURCE_LABEL[u.source]}</span> },
@@ -538,7 +523,7 @@ export default function UsersPage() {
 
       {open !== null && (
         <Drawer title="Account details" onClose={close}>
-          <AccountPanel id={open} />
+          <AccountPanel id={open} onDeleted={close} />
         </Drawer>
       )}
     </>

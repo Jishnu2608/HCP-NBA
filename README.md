@@ -62,15 +62,15 @@ Authenticated account → Role → Permissions → Data scope → UI
 
 | Role | Sees | Can do |
 |---|---|---|
-| Administrator | Every module and all data, including users, invitations and assignments | Run the engine, change settings, manage accounts, review recommendations, invite any professional role. **Cannot approve content.** |
+| Administrator | Every module and all data, including users, invitations and assignments | Run the engine, change settings, manage accounts, permanently delete patient accounts, review recommendations, invite any professional role. **Cannot approve content.** |
 | Compliance / MLR Reviewer | Content library, blocked and held-back recommendations (identities hidden), audit log with identities masked, metrics | Approve or reject content. The only role that can. |
 | Medical Representative | Assigned HCPs and their recommendations, approved HCP content | Approve, edit, reject, send; log visit outcome |
-| Care Manager | Assigned patients and their recommendations, approved patient content | Approve, edit, reject, send; log call outcome |
+| Care Manager | Assigned patients, their care requests and recommendations, approved patient content | Approve, edit, reject, send; log call outcome; confirm what patients report, record medications, refills and instructions, route patients to an HCP by specialty, create clinic patients and invite them |
 | Healthcare Professional | Own profile, own inbox, adherence summary of own patients who consent to sharing | Read and respond to content; invite a Medical Representative or Care Manager |
-| Patient | Own medications, messages and consent | Change consent, respond, confirm a refill |
+| Patient | Own conditions, medications, care team, instructions, messages and consent | Build a health profile, ask to consult an HCP, change consent, respond, log a refill |
 
 - The role is fixed when the account is created: by patient sign-up, or by the invitation. No endpoint changes it.
-- Inviting is an onboarding authority, not a hierarchy: Administrator → HCP, MR, CM, MLR; HCP → MR, CM; nobody else invites. Only the administrator can bring in an MLR reviewer.
+- Inviting is an onboarding authority, not a hierarchy: Administrator → HCP, MR, CM, MLR; HCP → MR, CM; Care Manager → a clinic patient, from that patient's record; nobody else invites. Only the administrator can bring in an MLR reviewer.
 - Permissions come from one map (`backend/app/core/permissions.py`). Endpoints ask for a permission, never a role name.
 - Which records an account may see comes from its assignments, which are separate from the role. Changing an assignment never changes permissions.
 - Out-of-scope records return "not found"; a missing permission returns "forbidden".
@@ -81,7 +81,8 @@ More detail: [docs/architecture-auth-rbac.md](docs/architecture-auth-rbac.md).
 ## Signing in, signing up and invitations
 
 ```
-Patients:       Sign up (name, date of birth, email, password) → emailed code → patient dashboard
+Patients:       Sign up (name, date of birth, email, password) → emailed code → own empty health profile
+Clinic patients: Care manager records the visit → invitation email → emailed code → the prepared record
 Professionals:  Invitation email → /invite/<link> → name, date of birth, password → emailed code → role dashboard
 Everyone:       Log in with email and password → the account's own dashboard
 ```
@@ -92,7 +93,10 @@ Everyone:       Log in with email and password → the account's own dashboard
 - A new account must confirm a 6-digit code before it becomes active. The code expires after 10 minutes, works once, allows 5 attempts, and is stored only as a hash.
 - **Verified mark:** an invited professional who completes the code gets a blue check next to their name. Seeded demo staff carry it as platform-provisioned. Patients and the administrator do not. Email verification and professional verification are separate.
 - **Date of birth** is required at sign-up and acceptance, checked on the server, and never shown to other users. Professionals must be at least 18 (configurable); patients under that age may register and are marked as minors for administrators.
-- On confirmation the account receives starting data from the synthetic pool: one own record for a patient or HCP, a panel of patients for a care manager, a set of HCPs for a medical representative.
+- **A patient's data is their own.** A patient who signs up gets a new, empty record and a care manager; nothing from the synthetic demo population is attached. They can add conditions and medications and ask to consult a healthcare professional; each entry goes to their care manager, who confirms it, adds supply details and routes the patient to an HCP whose specialty suits the condition. Only confirmed medications count for adherence and recommendations. Location is the country (and US state) the person chose.
+- **Clinic patients:** a care manager can set up a record for someone seen at the clinic, record conditions, medications and the doctor's instructions, and invite the patient by email; the invitation is bound to that record and the care manager stays responsible.
+- On confirmation a professional account receives starting data from the synthetic pool: one own record for an HCP, a panel of demo patients for a care manager, a set of HCPs for a medical representative.
+- **Deleting a patient account:** an administrator can delete a patient account permanently (typing its email to confirm), also straight from the patient's deletion request. The account and the patient's own data go; the audit log keeps what happened without naming them; the same email can sign up again as a new, empty patient. Professional accounts are disabled, not deleted.
 - The administrator manages invitations on **Invitations** and accounts on **Users and assignments** (assignments, disable or re-enable, who invited whom). An HCP sees the invitations they sent under **Team**.
 - Sessions are kept in a cookie the page's JavaScript cannot read. Sign-out ends the session on the server. Two different accounts in two tabs of the same browser are no longer possible; use a private window or another browser profile for the second one.
 
@@ -347,7 +351,8 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 - Rate limits count by the client address the server sees. Behind a reverse proxy or load balancer every request would share one address; reading the forwarded client address is not configured yet.
 - Unverified accounts: the correct password for an account that has not confirmed its email answers "verify your email" instead of the generic sign-in failure, so the owner can finish. Anyone holding that password can see the account exists.
 - A professional cannot be invited to an email that already has a patient account.
-- An administrator can disable accounts but not delete them from the app; deletion requests are carried out by a person.
+- Only patient accounts can be deleted; professional accounts can only be disabled. Other privacy requests (correction, restriction) are still carried out by a person.
+- Invited HCP accounts still use a demo HCP record. Demo HCPs are all in the US, so patients elsewhere are offered every HCP of a suitable specialty.
 - **Legal documents are drafts.** Legal bases, retention periods, HIPAA applicability, sub-processors, hosting region, transfer mechanisms, governing law and adult-age rules are marked to be confirmed. No retention periods are enforced except for expired security records (sessions, codes, rate-limit counters).
 - No guardian / parental-consent flow for minors, and no consent model yet for content sent to healthcare professionals.
 - The hosted language-model provider has not been exercised; drafting uses offline templates.

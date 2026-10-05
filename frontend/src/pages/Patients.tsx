@@ -49,6 +49,9 @@ import {
   titleCase,
 } from "../ui";
 import type { Column } from "../ui";
+import { useAuth } from "../auth";
+import { P } from "../permissions";
+import { CarePanel, HealthSummary, OriginBadge } from "./Care";
 
 const DAY = 86_400_000;
 const WINDOW_DAYS = 365;
@@ -87,21 +90,21 @@ export function PatientList() {
             >
               {p.name}
             </Link>
-            <div className="tabular text-xs text-ink-subtle">{p.patient_id}</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="tabular text-xs text-ink-subtle">{p.patient_id}</span>
+              <OriginBadge origin={p.origin} />
+            </div>
           </div>
         </div>
       ),
     },
     { key: "risk", header: "Adherence risk", hideOnMobile: true, cell: (p) => <SegmentBadge value={p.risk_segment} /> },
-    { key: "plan", header: "Plan", cell: (p) => <span className="text-ink-muted">{p.plan_type}</span> },
+    { key: "plan", header: "Plan", cell: (p) => <span className="text-ink-muted">{p.plan_type ?? "—"}</span> },
     {
       key: "location",
       header: "Location",
-      cell: (p) => (
-        <span className="text-ink-muted">
-          {p.city}, {p.state}
-        </span>
-      ),
+      // Exactly what is on record: a demo record's city, or the country a real patient chose.
+      cell: (p) => <span className="text-ink-muted">{p.location ?? "—"}</span>,
     },
     {
       key: "channel",
@@ -485,6 +488,7 @@ function TherapyCard({ t, fills, asOf }: { t: Json; fills: Json[]; asOf: string 
 
 export function PatientProfile() {
   const { id } = useParams();
+  const { can } = useAuth();
   const profile = useQuery({ queryKey: ["patient", id], queryFn: () => api(`/patients/${id}`) });
   if (profile.isLoading) return <Loading label="Loading patient" />;
   if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="This patient could not be loaded" />;
@@ -506,10 +510,15 @@ export function PatientProfile() {
             <span className="min-w-0 break-words">{p.name}</span>
           </span>
         }
-        meta={<SegmentBadge value={p.risk_segment} />}
+        meta={
+          <span className="flex flex-wrap items-center gap-2">
+            <SegmentBadge value={p.risk_segment} />
+            <OriginBadge origin={p.origin} />
+          </span>
+        }
         subtitle={
           <span className="tabular">
-            {p.patient_id} · {p.age} years · {p.plan_type} · {p.city}, {p.state}
+            {[p.patient_id, `${p.age} years`, p.plan_type, p.location].filter(Boolean).join(" · ")}
           </span>
         }
       />
@@ -544,6 +553,14 @@ export function PatientProfile() {
           icon={<ShieldCheck className="h-4 w-4" aria-hidden />}
         />
       </KpiGrid>
+
+      {/* A real patient's care: managed by their care manager, read-only for other staff. */}
+      {p.origin !== "synthetic" &&
+        (can(P.PATIENT_CARE_MANAGE) ? (
+          <CarePanel patientId={p.patient_id} today={p.as_of_date} />
+        ) : (
+          p.health && <HealthSummary health={p.health} />
+        ))}
 
       {/* Bento: recommendation beside the consent it depends on; one full-width row per
           therapy (the supply timeline needs the width); the outreach timeline as a tall cell

@@ -134,17 +134,31 @@ class InvitationEmail:
     role_label: str
     link: str
     expires_at: datetime
+    # A clinic patient invited by their care manager: plainer wording. No health
+    # information either way (neither subject nor body names a condition).
+    patient: bool = False
 
 
 def invitation_email(data: InvitationEmail) -> EmailMessage:
     product = _product()
     expires = _when(data.expires_at)
     who = f"{data.inviter_name} ({data.inviter_role})"
+    if data.patient:
+        joins = f"to set up your account in the {product} patient portal"
+        why = (
+            "You are receiving this email because your care manager set up your account "
+            "and invited this address."
+        )
+    else:
+        joins = f"to join {product} as a {data.role_label}"
+        why = (
+            f"{product} recommends the next best engagement for patients and healthcare "
+            "professionals. You are receiving this email because an authorized member of the "
+            "platform invited this address."
+        )
     text = (
-        f"You have been invited by {who} to join {product} as a {data.role_label}.\n\n"
-        f"{product} recommends the next best engagement for patients and healthcare "
-        "professionals. You are receiving this email because an authorized member of the "
-        "platform invited this address.\n\n"
+        f"You have been invited by {who} {joins}.\n\n"
+        f"{why}\n\n"
         f"This invitation is intended for {data.to}.\n\n"
         f"Accept the invitation:\n{data.link}\n\n"
         f"This invitation expires on {expires} and can only be used once.\n"
@@ -163,11 +177,9 @@ def invitation_email(data: InvitationEmail) -> EmailMessage:
         "You're invited",
         f"""<p style="margin:0 0 16px;font-size:18px;font-weight:700;">You're invited to join
 {escape(product)}</p>
-<p style="margin:0 0 16px;">You have been invited by <strong>{escape(who)}</strong> to join
-{escape(product)} as a <strong>{escape(data.role_label)}</strong>.</p>
-<p style="margin:0 0 16px;color:{MUTED};">{escape(product)} recommends the next best engagement
-for patients and healthcare professionals. You are receiving this email because an authorized
-member of the platform invited this address.</p>
+<p style="margin:0 0 16px;">You have been invited by <strong>{escape(who)}</strong>
+{escape(joins)}.</p>
+<p style="margin:0 0 16px;color:{MUTED};">{escape(why)}</p>
 <p style="margin:0 0 8px;">This invitation is intended for
 <strong>{escape(data.to)}</strong>.</p>
 {button}
@@ -183,6 +195,9 @@ Please do not forward or share this link. If you were not expecting it, you can 
 this email.</td></tr></table>""",
     )
     return _message(
-        data.to, f"{data.inviter_name} invited you to join {product} as a {data.role_label}",
+        data.to,
+        f"{data.inviter_name} invited you to the {product} patient portal"
+        if data.patient
+        else f"{data.inviter_name} invited you to join {product} as a {data.role_label}",
         text, html,
     )  # fmt: skip

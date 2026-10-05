@@ -4,6 +4,7 @@ Specialty taxonomy codes and drug names/RxNorm ingredient codes are real public 
 Everything about individual people is invented.
 """
 
+from app.clinical.vocabulary import DRUGS, PRIMARY_CARE, SPECIALIST_FOR  # noqa: F401
 from app.models.enums import Measure
 
 # (specialty, NUCC taxonomy code, share of HCPs, median annual Rx volume)
@@ -13,34 +14,6 @@ SPECIALTIES = [
     ("Cardiovascular Disease", "207RC0000X", 0.17, 2200),
     ("Endocrinology", "207RE0101X", 0.13, 1900),
 ]
-PRIMARY_CARE = ("Family Medicine", "Internal Medicine")
-SPECIALIST_FOR = {
-    Measure.DIABETES: "Endocrinology",
-    Measure.HYPERTENSION: "Cardiovascular Disease",
-    Measure.CHOLESTEROL: "Cardiovascular Disease",
-}
-
-# measure -> [(generic name, RxNorm ingredient code, is_brand_tier)]
-DRUGS = {
-    Measure.DIABETES: [
-        ("metformin", "6809", False),
-        ("glipizide", "4821", False),
-        ("sitagliptin", "593411", True),
-        ("empagliflozin", "1545653", True),
-    ],
-    Measure.HYPERTENSION: [
-        ("lisinopril", "29046", False),
-        ("losartan", "52175", False),
-        ("valsartan", "69749", False),
-        ("ramipril", "35296", False),
-    ],
-    Measure.CHOLESTEROL: [
-        ("atorvastatin", "83367", False),
-        ("rosuvastatin", "301542", False),
-        ("simvastatin", "36567", False),
-        ("pravastatin", "42463", False),
-    ],
-}
 MEASURE_PREVALENCE = {
     Measure.DIABETES: 0.35,
     Measure.HYPERTENSION: 0.60,

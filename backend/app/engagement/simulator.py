@@ -18,7 +18,7 @@ from app.core.config import get_settings
 from app.datagen import behavior
 from app.engagement.delivery import capture_response, record_fill
 from app.models import Content, Interaction, MedicationFill, PatientTherapy, SimLatent
-from app.models.enums import Channel, Outcome, TargetType
+from app.models.enums import Channel, FillSource, Outcome, TargetType
 
 DIGITAL_OUTCOMES = [(Outcome.OPENED, 0.55), (Outcome.CLICKED, 0.35), (Outcome.REPLIED, 0.10)]
 ACTOR, ACTOR_ROLE = "simulator", "system"
@@ -65,12 +65,16 @@ def _fill_count(db: Session, therapy_id: int) -> int:
     )
 
 
-def apply_fill(db: Session, therapy: PatientTherapy, when: datetime) -> None:
-    """A fill happened (prompted or not): store it and reschedule the hidden next refill."""
-    record_fill(db, therapy, when)
+def apply_fill(
+    db: Session, therapy: PatientTherapy, when: datetime, source: str = FillSource.CLAIMS
+) -> None:
+    """A fill happened (prompted or not): store it and, for a simulated patient, reschedule
+    the hidden next refill. Real patients have no hidden traits and are never simulated."""
+    record_fill(db, therapy, when, source)
     db.flush()
     latent = db.get(SimLatent, (TargetType.PATIENT, therapy.patient_id))
-    schedule_next_fill(latent, therapy.id, when.date(), _fill_count(db, therapy.id))
+    if latent is not None and str(therapy.id) in latent.traits.get("therapies", {}):
+        schedule_next_fill(latent, therapy.id, when.date(), _fill_count(db, therapy.id))
 
 
 def _resolve_patient(db: Session, i: Interaction, new_today: date, stats: Counter) -> None:
@@ -166,7 +170,11 @@ def advance(db: Session, days: int, *, retrain: bool = True) -> dict:
     pending = db.scalars(
         select(Interaction).where(Interaction.outcome == Outcome.PENDING).order_by(Interaction.id)
     ).all()
+    simulated = {(t, i) for t, i in db.execute(select(SimLatent.target_type, SimLatent.target_id))}
     for i in pending:
+        if (i.target_type, i.target_id) not in simulated:
+            # A real person answers for themselves in their inbox; nothing is invented.
+            continue
         if i.target_type == TargetType.PATIENT:
             _resolve_patient(db, i, new_today, stats)
         else:

@@ -1,5 +1,6 @@
 """Invitations: the only way a professional account (HCP, Medical Representative, Care
-Manager, Compliance / MLR) comes into existence.
+Manager, Compliance / MLR) comes into existence, and the clinic path for a patient whose
+care manager prepared their record (the invitation is then bound to that record).
 
 Every operation is checked here, on the server, against the onboarding authority in
 core/permissions.py (`can_invite`). The role always comes from the stored invitation and
@@ -27,6 +28,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.auth.errors import AuthError
 from app.auth.repository import SqlUserRepository
+from app.clinical import records
 from app.core import age, jurisdiction
 from app.core.config import get_settings
 from app.core.permissions import (
@@ -39,8 +41,15 @@ from app.core.permissions import (
 from app.core.security import hash_password, new_token, token_hash
 from app.mail.templates import InvitationEmail, invitation_email
 from app.mail.transport import get_mailer
-from app.models import Invitation, User
-from app.models.enums import AccountSource, AccountStatus, InvitationStatus, VerificationSource
+from app.models import CareManagerPatient, Invitation, Patient, User
+from app.models.enums import (
+    AccountSource,
+    AccountStatus,
+    InvitationStatus,
+    PatientOrigin,
+    Role,
+    VerificationSource,
+)
 from app.models.tables import utcnow
 
 log = logging.getLogger("nba.invitations")
@@ -73,14 +82,35 @@ def refresh(db: Session, inv: Invitation) -> str:
     return inv.status
 
 
-def _authority_holds(db: Session, inv: Invitation) -> bool:
-    """The inviter still exists, is active and may still invite this role."""
-    inviter = db.get(User, inv.invited_by_user_id)
+def _responsible(db: Session, actor: User, patient_id: str | None) -> bool:
+    """The care manager is responsible for this patient (it is on their panel)."""
+    return patient_id is not None and (
+        db.get(CareManagerPatient, (actor.id, patient_id)) is not None
+    )
+
+
+def _record_free(db: Session, patient_id: str | None) -> bool:
+    """The bound clinic record still exists and no account uses it yet."""
+    patient = db.get(Patient, patient_id) if patient_id else None
     return (
+        patient is not None
+        and patient.origin == PatientOrigin.CLINIC
+        and db.scalar(select(User.id).where(User.patient_id == patient_id)) is None
+    )
+
+
+def _authority_holds(db: Session, inv: Invitation) -> bool:
+    """The inviter still exists, is active and may still invite this role (for a patient:
+    is still responsible for the bound record, which is still free)."""
+    inviter = db.get(User, inv.invited_by_user_id)
+    holds = (
         inviter is not None
         and inviter.status == AccountStatus.ACTIVE
         and can_invite(inviter, inv.role)
     )
+    if holds and inv.role == Role.PATIENT:
+        holds = _responsible(db, inviter, inv.patient_id) and _record_free(db, inv.patient_id)
+    return holds
 
 
 def _send(db: Session, inv: Invitation, token: str) -> str | None:
@@ -104,6 +134,7 @@ def _send(db: Session, inv: Invitation, token: str) -> str | None:
             role_label=ROLE_LABELS[inv.role],
             link=_link(token),
             expires_at=inv.expires_at,
+            patient=inv.role == Role.PATIENT,
         )
     )
     try:
@@ -115,12 +146,21 @@ def _send(db: Session, inv: Invitation, token: str) -> str | None:
     return None
 
 
-def _new(db: Session, *, email: str, role: str, inviter_id: int, inviter_role: str):
+def _new(
+    db: Session,
+    *,
+    email: str,
+    role: str,
+    inviter_id: int,
+    inviter_role: str,
+    patient_id: str | None = None,
+):
     token, now = new_token(), _now()
     inv = Invitation(
         token_hash=token_hash(token),
         email=email,
         role=role,
+        patient_id=patient_id,
         invited_by_user_id=inviter_id,
         inviter_role=inviter_role,
         status=InvitationStatus.PENDING,
@@ -152,11 +192,27 @@ def visible(db: Session, actor: User, invitation_id: int) -> Invitation:
 # --- Inviter side ------------------------------------------------------------------------
 
 
-def create(db: Session, actor: User, email: str, role: str) -> tuple[Invitation, str | None]:
+def create(
+    db: Session, actor: User, email: str, role: str, patient_id: str | None = None
+) -> tuple[Invitation, str | None]:
     if role not in INVITE_PERMISSION:
         raise AuthError(422, "invalid_role", "Choose a role that can be invited.")
     if not can_invite(actor, role):
         raise _forbidden()
+    if role == Role.PATIENT:
+        # Only from the patient's own record, by the care manager responsible for it.
+        if patient_id is None:
+            raise AuthError(422, "invite_from_record", "Invite a patient from their record.")
+        if not _responsible(db, actor, patient_id):
+            raise _forbidden()
+        if not _record_free(db, patient_id):
+            raise AuthError(
+                409,
+                "record_in_use",
+                "This record already has an account or is not a clinic record.",
+            )
+    elif patient_id is not None:
+        raise AuthError(422, "invalid_role", "Only a patient invitation is bound to a record.")
     from app.auth.service import validate_email  # local import: service imports this module
 
     email = validate_email(email)
@@ -178,7 +234,10 @@ def create(db: Session, actor: User, email: str, role: str) -> tuple[Invitation,
                 409, "invitation_pending", "Someone else has already invited this email."
             )
 
-    inv, token = _new(db, email=email, role=role, inviter_id=actor.id, inviter_role=actor.role)
+    inv, token = _new(
+        db, email=email, role=role, inviter_id=actor.id, inviter_role=actor.role,
+        patient_id=patient_id,
+    )  # fmt: skip
     for old in still_open:
         _revoke(db, actor, old, replaced_by=inv)
     dev_link = _send(db, inv, token)
@@ -230,6 +289,7 @@ def reissue(db: Session, actor: User, invitation_id: int) -> tuple[Invitation, s
         role=inv.role,
         inviter_id=inv.invited_by_user_id,
         inviter_role=inv.inviter_role,
+        patient_id=inv.patient_id,
     )
     if inv.status == InvitationStatus.PENDING:
         _revoke(db, actor, inv, replaced_by=new)
@@ -314,6 +374,7 @@ def lookup(db: Session, token: str) -> dict:
         "inviter_role_label": ROLE_LABELS.get(inv.inviter_role, inv.inviter_role),
         "expires_at": inv.expires_at,
         "account_exists": existing is not None and existing.verified,
+        "patient": inv.role == Role.PATIENT,
     }
 
 
@@ -328,6 +389,7 @@ def accept(
     country: str,
     region: str | None,
     accept_terms: bool,
+    consent_health_data: bool | None = None,
 ) -> User:
     """Creates (or refreshes) the pending account for the invited email with the invited
     role. The caller then issues the one-time code to that email."""
@@ -342,7 +404,9 @@ def accept(
     name = validate_name(name)
     country, region = jurisdiction.validate(country, region)
     dob = age.parse_dob(date_of_birth)
-    if age.is_minor_dob(dob, country, region):
+    patient = inv.role == Role.PATIENT
+    # Minors may hold a patient account (flagged on the server); professionals may not.
+    if not patient and age.is_minor_dob(dob, country, region):
         raise AuthError(
             422,
             "age_requirement",
@@ -350,7 +414,8 @@ def accept(
             f"(aged {jurisdiction.adult_age(country, region)} or over where you live).",
         )
     validate_password(password, confirm)
-    require_agreements(accept_terms)
+    # A patient also gives the separate, explicit consent to process health information.
+    require_agreements(accept_terms, bool(consent_health_data) if patient else None)
 
     repo = SqlUserRepository(db)
     user = repo.get_by_email(inv.email)
@@ -403,6 +468,18 @@ def complete_for(db: Session, user: User) -> Invitation | None:
         and inv.role == user.role
         and _authority_holds(db, inv)
     )
+    if valid and inv.role == Role.PATIENT:
+        # The clinic record the care manager prepared becomes this person's record. It
+        # follows the residence the person gave; the care manager stays responsible.
+        user.patient_id = inv.patient_id
+        records.sync_location(db, user)
+        user.invited_by_user_id = inv.invited_by_user_id
+        inv.status, inv.accepted_at = InvitationStatus.ACCEPTED, _now()
+        audit.record(
+            db, "invitation_accepted", "invitation", inv.id, actor=user.username,
+            actor_role=user.role, detail={"user": user.id, "invited_by": inv.invited_by_user_id},
+        )  # fmt: skip
+        return inv
     if not valid:
         raise AuthError(
             409,
@@ -456,6 +533,7 @@ def out(db: Session, inv: Invitation, viewer: User) -> dict:
         "invited_by": person(db.get(User, inv.invited_by_user_id)),
         "inviter_role_label": ROLE_LABELS.get(inv.inviter_role, inv.inviter_role),
         "accepted_user": person(accepted),
+        "patient_id": inv.patient_id,
         # Display hint only; every action is checked again when it is requested.
         "can_manage": _may_manage(viewer, inv) and status != InvitationStatus.ACCEPTED,
     }

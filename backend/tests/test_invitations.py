@@ -73,8 +73,11 @@ def test_authority_matrix_is_enforced_by_the_api(env, inviter, target):
     if (inviter, target) in ALLOWED:
         assert response.status_code == 201, response.text
         assert response.json()["invitation"]["role"] == target
-    elif target in ("admin", "patient") and inviter in ("admin", "hcp"):
+    elif target == "admin" and inviter in ("admin", "hcp", "care_manager"):
         assert response.status_code == 422 and code_of(response) == "invalid_role"
+    elif (inviter, target) == ("care_manager", "patient"):
+        # Only from the patient's own record (api/care.py), never from the general form.
+        assert response.status_code == 422 and code_of(response) == "invite_from_record"
     else:
         assert response.status_code == 403
     if (inviter, target) not in ALLOWED:
@@ -100,7 +103,10 @@ def test_options_mirror_the_authority(env):
     assert roles("hcp0001") == ["medical_rep", "care_manager"]
     for who in ("rep01", "cm01", "compliance1", "pat00001"):
         assert roles(who) == []
+    for who in ("rep01", "compliance1", "pat00001"):
         assert client.get("/api/invitations", headers=auth(client, who)).status_code == 403
+    # A care manager sees the patient invitations they sent from patients' records.
+    assert client.get("/api/invitations", headers=auth(client, "cm01")).status_code == 200
 
 
 def test_invitation_body_cannot_carry_extra_authority(env):

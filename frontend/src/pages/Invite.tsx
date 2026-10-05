@@ -28,6 +28,8 @@ interface InvitationInfo {
   inviter_role_label: string;
   expires_at: string;
   account_exists: boolean;
+  /** A clinic patient invited by their care manager to the record they prepared. */
+  patient: boolean;
 }
 
 const signInLink = (
@@ -148,11 +150,19 @@ export default function Invite() {
   }, [info, setValues]);
   const values = form.values;
   const [terms, setTerms] = useState(false);
+  const [health, setHealth] = useState(false);
+  const isPatient = Boolean(info?.patient);
   const termsError =
     (form.submitted && !terms) || (error instanceof ApiError && error.code === "terms_required")
       ? "Agree to the Terms and acknowledge the Privacy Policy to continue."
       : null;
-  const invalid = Object.values(accountProblems(values, true)).some(Boolean) || !terms;
+  const healthError =
+    isPatient &&
+    ((form.submitted && !health) || (error instanceof ApiError && error.code === "health_consent_required"))
+      ? "A patient account needs this consent."
+      : null;
+  const invalid =
+    Object.values(accountProblems(values, true)).some(Boolean) || !terms || (isPatient && !health);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -171,6 +181,7 @@ export default function Invite() {
         country: values.country,
         region: values.region,
         accept_terms: terms,
+        ...(isPatient ? { consent_health_data: health } : {}),
       });
       navigate("/signup/verify");
     } catch (e) {
@@ -231,11 +242,14 @@ export default function Invite() {
               <BadgeCheck className="h-5 w-5" />
             </span>
             <div className="min-w-0">
-              <div className="text-xs font-medium text-ink-subtle">Role · set by your invitation</div>
+              <div className="text-xs font-medium text-ink-subtle">
+                {isPatient ? "Patient portal · set up by your care manager" : "Role · set by your invitation"}
+              </div>
               <div className="text-[17px] font-semibold text-ink">{info.role_label}</div>
               <div className="mt-1 text-[13px] leading-5 text-ink-muted">
                 Invited by <span className="font-semibold text-ink">{info.inviter_name}</span> ({info.inviter_role_label}).
-                This invitation can be used once and expires {fmtDateTime(`${info.expires_at}Z`)}.
+                {isPatient && " Your account opens the record your care team has already prepared for you."} This
+                invitation can be used once and expires {fmtDateTime(`${info.expires_at}Z`)}.
               </div>
             </div>
           </div>
@@ -243,15 +257,21 @@ export default function Invite() {
 
         <AccountFields form={form} emailFixed serverError={error} />
 
-        <Agreements terms={terms} onTerms={setTerms} errors={{ terms: termsError }} />
+        <Agreements
+          terms={terms}
+          onTerms={setTerms}
+          health={health}
+          onHealth={isPatient ? setHealth : undefined}
+          errors={{ terms: termsError, health: healthError }}
+        />
 
-        {!fieldError(error) && !termsError && <ErrorNote error={error} />}
+        {!fieldError(error) && !termsError && !healthError && <ErrorNote error={error} />}
         <Button type="submit" variant="primary" size="lg" busy={busy} className="w-full sm:w-auto">
           {busy ? "Sending code" : "Accept and continue"}
         </Button>
         <p className="text-[13px] leading-5 text-ink-subtle">
-          Next, we email a 6-digit code to {info.email}. Your account becomes active, with the Verified mark, once you
-          enter it.
+          Next, we email a 6-digit code to {info.email}. Your account becomes active
+          {isPatient ? "" : ", with the Verified mark,"} once you enter it.
         </p>
       </form>
     );
@@ -261,7 +281,11 @@ export default function Invite() {
     <AuthLayout
       wide
       title="Accept your invitation"
-      subtitle="Join Next Best Action with the role your organization assigned to you."
+      subtitle={
+        info?.patient
+          ? "Set up your patient portal account."
+          : "Join Next Best Action with the role your organization assigned to you."
+      }
       footer={<>Already have an account? {signInLink}</>}
     >
       {body}
