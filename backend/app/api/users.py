@@ -20,13 +20,13 @@ from app.auth import erasure, invitations
 from app.auth.errors import AuthError
 from app.auth.provisioning import HCPS, OWN_HCP, OWN_PATIENT, PATIENTS, assignments
 from app.auth.sessions import sessions
-from app.clinical import activity
+from app.clinical import activity, care, records
 from app.clinical import hcps as hcp_records
 from app.core import age, jurisdiction
 from app.core.db import get_db
 from app.core.permissions import Permission, can, permissions_for
-from app.models import Hcp, Patient, SpecialtyChangeRequest, User
-from app.models.enums import AccountSource, AccountStatus
+from app.models import CareRequest, Hcp, Patient, SpecialtyChangeRequest, User
+from app.models.enums import AccountSource, AccountStatus, CareRequestStatus
 
 router = APIRouter(prefix="/api/admin/users", tags=["users"])
 
@@ -209,12 +209,30 @@ def set_status(
     if body.status == AccountStatus.ACTIVE and not user.verified:
         raise AuthError(409, "not_verified", "This account has not verified its email yet.")
     previous = user.status
+    moved = returned = 0
+    if body.status == AccountStatus.DISABLED and can(user, Permission.PATIENT_CARE_MANAGE):
+        # A care manager's real patients are never left without one: refuse when nobody
+        # could take them, otherwise move them (with their open work) before disabling.
+        impact = records.transfer_impact(db, user)
+        if impact["real_patients"] and impact["to"] is None:
+            raise AuthError(
+                409,
+                "no_other_care_manager",
+                "No other active care manager could take over this care manager's patients.",
+            )
     user.status = body.status
     revoked = 0
     if body.status == AccountStatus.DISABLED:
         sessions.revoke_all(db, user)  # signs the account out everywhere, immediately
         # Invitations it sent can no longer be accepted: its authority has ended.
         revoked = invitations.revoke_from(db, user, admin)
+        if can(user, Permission.PATIENT_CARE_MANAGE):
+            moved = records.transfer_patients(db, user, admin)
+        if user.hcp_id:
+            # Consultations waiting for this HCP go back to their care managers.
+            returned = care.return_consultations(db, admin, user.hcp_id)
+    elif can(user, Permission.PATIENT_CARE_MANAGE):
+        records.adopt_unassigned(db, admin.username, admin.role)
     audit.record(
         db,
         "account_status_changed",
@@ -227,10 +245,40 @@ def set_status(
             "previous": previous,
             "new": body.status,
             "invitations_revoked": revoked,
+            "patients_moved": moved,
+            "consultations_returned": returned,
         },
     )
     db.commit()
     return _detail(db, user)
+
+
+@router.get("/{user_id}/impact")
+def disable_impact(user_id: int, _: User = Depends(manager), db: Session = Depends(get_db)) -> dict:
+    """What disabling this account would change, shown before the administrator confirms."""
+    user = _get(db, user_id)
+    result: dict = {"real_patients": 0, "open_requests": 0, "to": None, "consultations": 0}
+    if can(user, Permission.PATIENT_CARE_MANAGE):
+        result |= records.transfer_impact(db, user)
+    if user.hcp_id:
+        result["consultations"] = db.scalar(
+            select(func.count())
+            .select_from(CareRequest)
+            .where(
+                CareRequest.assigned_hcp_id == user.hcp_id,
+                CareRequest.status == CareRequestStatus.AWAITING_HCP,
+            )
+        )
+    return result
+
+
+@router.get("/attention/unassigned")
+def unassigned_patients(_: User = Depends(manager), db: Session = Depends(get_db)) -> list[dict]:
+    """Real patients waiting for a care manager (none active when they registered)."""
+    return [
+        {"patient_id": pid, "name": out.patient_name(db.get(Patient, pid))}
+        for pid in records.unassigned_real_patients(db)
+    ]
 
 
 @router.put("/{user_id}/assignments")

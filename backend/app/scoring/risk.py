@@ -53,7 +53,7 @@ def score_risk(adherence: Adherence, unresponsive_share: float, config: dict) ->
         (
             "never_filled",
             1.0 if adherence.never_filled else 0.0,
-            "Prescription has never been filled",
+            "No fill on record since the medication started",
         ),
     ]
     drivers = [

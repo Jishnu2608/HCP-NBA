@@ -58,7 +58,7 @@ function RequestCard({ request }: { request: Json }) {
       </div>
       {request.details && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-muted">{request.details}</p>}
       <div className="mt-3 text-[13px] text-ink-subtle">
-        Submitted {fmtDateTime(`${request.created_at}Z`)}
+        Submitted {fmtDateTime(request.created_at)}
         {request.respond_by && ` · respond by ${fmtDate(request.respond_by)}`}
       </div>
       {request.resolution && (
@@ -126,7 +126,7 @@ function SpecialtyRequestCard({ request }: { request: Json }) {
             {ACTION_TEXT[request.action]} · {request.hcp_name}
           </div>
           <div className="mt-0.5 text-[13px] text-ink-subtle">
-            Requested by {request.requested_by ?? "a deleted account"} · {fmtDateTime(`${request.created_at}Z`)}
+            Requested by {request.requested_by ?? "a deleted account"} · {fmtDateTime(request.created_at)}
           </div>
         </div>
         <Badge tone={request.status === "approved" ? "ok" : request.status === "rejected" ? "bad" : "warn"}>

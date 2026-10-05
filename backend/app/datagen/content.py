@@ -66,6 +66,37 @@ def _hcp_specs(m: Measure) -> list[tuple]:
     return specs
 
 
+def education_text(m: Measure, subtopic: str) -> str:
+    """The patient education material itself (not a description of it): what a patient
+    reads in their message. Plain language, no links, nothing that changes a dose."""
+    cond, med = _LABEL[m]
+    if subtopic == "adherence":
+        return (
+            f"Your {med} works quietly in the background: it keeps {cond} under control "
+            "only while it is in your body every day, even on days you feel completely well. "
+            "Missing doses lets the effect wear off without you noticing.\n\n"
+            "Three things that help most people:\n"
+            "- Take it at the same time each day, linked to something you already do, such "
+            "as brushing your teeth or your evening meal.\n"
+            "- Keep a week's supply in a pill organiser where you will see it.\n"
+            "- Order your next supply when about a week is left, so you never run out.\n\n"
+            "If you miss a dose and are unsure what to do, ask your pharmacist or care team. "
+            "If side effects, cost or anything else makes it hard to keep going, tell your "
+            "care team: there is usually a way to help."
+        )
+    return (
+        f"Living well with {cond} is mostly about small, steady habits.\n\n"
+        "- Food: plenty of vegetables, whole grains and pulses; less salt, sugar and "
+        "processed food.\n"
+        "- Activity: about 30 minutes of walking or similar on most days, building up "
+        "gently.\n"
+        "- Check-ups: keep your regular reviews and bring any home readings with you.\n"
+        f"- Medicines: keep taking your {med} as prescribed; it works alongside these "
+        "habits, not instead of them.\n\n"
+        "Your care team can help you choose one change to start with."
+    )
+
+
 def _patient_specs(m: Measure) -> list[tuple]:
     cond, med = _LABEL[m]
     return [
@@ -80,12 +111,11 @@ def _patient_specs(m: Measure) -> list[tuple]:
          "refill through the portal or ask your care team for help."),
         (ActionType.EDUCATION, "adherence", DIGITAL, APPROVED,
          f"Why taking your {med} every day matters",
-         f"A short, plain-language guide to how your {med} works for {cond} and simple "
-         "routines that make daily doses easier to remember."),
+         education_text(m, "adherence")),
         (ActionType.EDUCATION, "guidelines", ["portal", "email"],
          PENDING if m == Measure.DIABETES else APPROVED,
          f"Living well with {cond}",
-         f"Everyday tips on food, activity and check-ups for people managing {cond}."),
+         education_text(m, "guidelines")),
         (ActionType.CHECK_IN, "adherence", ["phone"], APPROVED,
          f"Care-team check-in call guide: {med}",
          "Call guide: ask how {{ first_name }} is getting on with {{ drug_name }}, listen for "

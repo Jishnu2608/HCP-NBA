@@ -133,7 +133,7 @@ def patient_reasons(
         text = f"Refilled after {fills} of {sent} earlier {label} contacts"
         reasons.append(_reason("action", "action_history", text))
     elif adherence.never_filled:
-        text = f"First prescription not yet filled, so {_a(label)} fits better than a reminder"
+        text = f"No fill on record yet, so {_a(label)} fits better than a reminder"
         reasons.append(_reason("action", "primary_non_adherence", text))
     else:
         text = f"{_a(label).capitalize()} has the highest predicted chance of a fill"
@@ -209,7 +209,7 @@ def to_text(reasons: list[dict]) -> str:
 
 def patient_timing(adherence: Adherence, today: date, runout: date | None) -> tuple[date, str]:
     if adherence.never_filled:
-        return today, f"Act now: prescribed {adherence.gap_days} days ago and still not filled"
+        return today, f"Act now: started {adherence.gap_days} days ago with no fill on record"
     if adherence.gap_days > 0:
         return today, f"Act now: supply ran out {adherence.gap_days} days ago"
     when = max(today, runout) if runout else today

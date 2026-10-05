@@ -43,7 +43,9 @@ class ConditionBody(StrictBody):
 
 
 class ConditionStatusBody(StrictBody):
-    status: Literal["confirmed", "resolved"]
+    status: Literal["confirmed", "resolved", "dismissed"]
+    # Required when dismissing: shown to the patient ("Not added: ...").
+    reason: str | None = Field(default=None, max_length=300)
 
 
 class ConfirmBody(StrictBody):
@@ -51,6 +53,8 @@ class ConfirmBody(StrictBody):
     days_supply: int
     copay: float = 0.0
     prescriber_hcp_id: str | None = Field(default=None, max_length=16)
+    # When the patient last collected a supply, if known: recorded as a fill.
+    last_refill_date: str | None = Field(default=None, max_length=10)
 
 
 class MedicationBody(ConfirmBody):
@@ -72,6 +76,21 @@ class NoteBody(StrictBody):
     text: str = Field(max_length=1000)
     hcp_id: str | None = Field(default=None, max_length=16)
     visible_to_patient: bool = True
+    # An instruction can say which request it answers; a follow-up needs a due date.
+    request_id: int | None = None
+    due_date: str | None = Field(default=None, max_length=10)
+
+
+class DismissBody(StrictBody):
+    reason: str = Field(max_length=300)
+
+
+class HcpResponseBody(StrictBody):
+    """The response of an HCP who does not use the app, recorded by the care manager."""
+
+    response: Literal["advice", "decline"]
+    message: str | None = Field(default=None, max_length=1000)
+    note_to_care_team: str | None = Field(default=None, max_length=1000)
 
 
 class AssignHcpBody(StrictBody):
@@ -113,6 +132,7 @@ def _record(db: Session, patient: Patient) -> dict:
     return care.health_record(db, patient, for_patient=False) | {
         "portal": care.portal_access(db, patient),
         "location": out.location_label(patient),
+        "country": patient.country,
     }
 
 
@@ -135,10 +155,14 @@ def specialty_options(_: User = Depends(get_current_user)) -> list[dict]:
     return vocabulary.specialty_options()
 
 
+RequestStatus = Literal["open", "in_progress", "awaiting_hcp", "hcp_responded", "closed", "active"]
+
+
 @router.get("/requests")
 def list_requests(
-    status: Literal["open", "in_progress", "closed"] | None = None,
-    type: Literal["condition_review", "medication_review", "consultation"] | None = None,  # noqa: A002
+    status: RequestStatus | None = None,
+    type: Literal["condition_review", "medication_review", "consultation", "follow_up"]  # noqa: A002
+    | None = None,
     user: User = Depends(manager),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -160,7 +184,28 @@ def update_request(
     request = _owned(db, user, CareRequest, request_id)
     care.update_request(db, user, request, body.status, body.resolution)
     db.commit()
-    return care.request_out(db, request)
+    # The care record comes back with it, like every other care action.
+    return {
+        "request": care.request_out(db, request),
+        "record": _record(db, db.get(Patient, request.patient_id)),
+    }
+
+
+@router.post("/requests/{request_id}/hcp-response")
+def record_hcp_response(
+    request_id: int,
+    body: HcpResponseBody,
+    user: User = Depends(manager),
+    db: Session = Depends(get_db),
+) -> dict:
+    """For an HCP who answers outside the app: the care manager records their response."""
+    request = _owned(db, user, CareRequest, request_id)
+    care.respond_consultation(
+        db, user, request, response=body.response, message=body.message,
+        note_to_care_team=body.note_to_care_team,
+    )  # fmt: skip
+    db.commit()
+    return _record(db, db.get(Patient, request.patient_id))
 
 
 @router.post("/patients", status_code=201)
@@ -204,7 +249,7 @@ def set_condition_status(
     db: Session = Depends(get_db),
 ) -> dict:
     condition = _owned(db, user, PatientCondition, condition_id)
-    care.set_condition_status(db, user, condition, body.status)
+    care.set_condition_status(db, user, condition, body.status, body.reason)
     db.commit()
     return _record(db, db.get(Patient, condition.patient_id))
 
@@ -242,13 +287,25 @@ def stop_medication(
     return _record(db, db.get(Patient, therapy.patient_id))
 
 
+@router.post("/medications/{therapy_id}/dismiss")
+def dismiss_medication(
+    therapy_id: int, body: DismissBody, user: User = Depends(manager), db: Session = Depends(get_db)
+) -> dict:
+    therapy = _owned(db, user, PatientTherapy, therapy_id)
+    care.dismiss_medication(db, user, therapy, body.reason)
+    db.commit()
+    return _record(db, db.get(Patient, therapy.patient_id))
+
+
 @router.post("/medications/{therapy_id}/fills", status_code=201)
 def log_fill(
     therapy_id: int, body: FillBody, user: User = Depends(manager), db: Session = Depends(get_db)
 ) -> dict:
     therapy = _owned(db, user, PatientTherapy, therapy_id)
     care.require_real(db.get(Patient, therapy.patient_id))
-    care.log_refill(db, user, therapy, body.fill_date, FillSource.CARE_MANAGER)
+    care.require_new_refill(
+        care.log_refill(db, user, therapy, body.fill_date, FillSource.CARE_MANAGER)
+    )
     db.commit()
     return _record(db, db.get(Patient, therapy.patient_id))
 

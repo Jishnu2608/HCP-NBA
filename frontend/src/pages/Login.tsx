@@ -60,7 +60,7 @@ export default function Login() {
       )}
       <form onSubmit={submit} className="space-y-5">
         <TextField
-          label="Work email"
+          label="Email"
           type="email"
           autoComplete="email"
           inputMode="email"

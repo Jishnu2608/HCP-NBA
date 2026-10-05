@@ -67,9 +67,9 @@ function ConsentRow({ item, onWithdraw, busy }: { item: Json; onWithdraw: () => 
           <div className="font-semibold text-ink">{item.label}</div>
           <div className="mt-0.5 text-[13px] text-ink-subtle">
             {given
-              ? `Given for version ${item.version} on ${fmtDateTime(`${item.at}Z`)}`
+              ? `Given for version ${item.version} on ${fmtDateTime(item.at)}`
               : item.state === "withdrawn"
-                ? `Withdrawn on ${fmtDateTime(`${item.at}Z`)}`
+                ? `Withdrawn on ${fmtDateTime(item.at)}`
                 : "Not given"}
             {item.document && (
               <>
@@ -204,7 +204,7 @@ export default function Privacy() {
   const requestColumns: Column<Json>[] = [
     { key: "type", header: "Request", primary: true, cell: (r) => <span className="font-medium text-ink">{r.type_label}</span> },
     { key: "status", header: "Status", hideOnMobile: true, cell: (r) => <RequestStatus status={r.status} /> },
-    { key: "created", header: "Submitted", cell: (r) => <span className="tabular text-ink-muted">{fmtDateTime(`${r.created_at}Z`)}</span> },
+    { key: "created", header: "Submitted", cell: (r) => <span className="tabular text-ink-muted">{fmtDateTime(r.created_at)}</span> },
     {
       key: "resolution",
       header: "Outcome",
@@ -216,7 +216,7 @@ export default function Privacy() {
     { key: "action", header: "Action", cell: (h) => <Badge tone={h.action === "accepted" ? "ok" : "warn"}>{h.action === "accepted" ? "Accepted" : "Withdrawn"}</Badge> },
     { key: "version", header: "Version", cell: (h) => <span className="tabular text-ink-muted">{h.version}</span> },
     { key: "source", header: "Where", hideOnMobile: true, cell: (h) => <span className="text-ink-muted">{h.source}</span> },
-    { key: "at", header: "When", cell: (h) => <span className="tabular text-ink-muted">{fmtDateTime(`${h.at}Z`)}</span> },
+    { key: "at", header: "When", cell: (h) => <span className="tabular text-ink-muted">{fmtDateTime(h.at)}</span> },
   ];
 
   return (

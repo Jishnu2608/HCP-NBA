@@ -199,7 +199,7 @@ export default function Admin() {
       ),
     },
     { key: "date", header: "Cycle date", cell: (c) => <span className="tabular">{fmtDate(c.as_of_date)}</span> },
-    { key: "run", header: "Run at", cell: (c) => <span className="tabular text-ink-subtle">{fmtDateTime(`${c.started_ts}Z`)}</span> },
+    { key: "run", header: "Run at", cell: (c) => <span className="tabular text-ink-subtle">{fmtDateTime(c.started_ts)}</span> },
     { key: "pr", header: "Patient ready", align: "right", cell: (c) => <span className="tabular">{num(c.stats?.patient_ready ?? 0)}</span> },
     { key: "pb", header: "Patient blocked", align: "right", cell: (c) => <span className="tabular">{num(c.stats?.patient_blocked ?? 0)}</span> },
     { key: "hr", header: "HCP ready", align: "right", cell: (c) => <span className="tabular">{num(c.stats?.hcp_ready ?? 0)}</span> },

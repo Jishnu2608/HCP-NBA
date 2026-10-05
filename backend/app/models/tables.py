@@ -363,6 +363,9 @@ class PatientTherapy(Base):
     end_date: Mapped[date | None] = mapped_column(Date)
     confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # When the patient says they last collected a supply (their own report). The care
+    # manager confirms it; it becomes a fill only then.
+    reported_last_fill: Mapped[date | None] = mapped_column(Date)
 
 
 class MedicationFill(Base):
@@ -412,6 +415,10 @@ class CareRequest(Base):
     assigned_hcp_id: Mapped[str | None] = mapped_column(ForeignKey("hcp.hcp_id"))
     handled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     resolution: Mapped[str | None] = mapped_column(String(500))
+    # A follow-up is work the care team owes the patient: who owns it and by when.
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    due_date: Mapped[date | None] = mapped_column(Date)
+    visible_to_patient: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -428,6 +435,8 @@ class CareNote(Base):
     kind: Mapped[str] = mapped_column(String(24))
     text: Mapped[str] = mapped_column(String(1000))
     visible_to_patient: Mapped[bool] = mapped_column(Boolean, default=True)
+    # The request this instruction answers (a consultation, a follow-up), if any.
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("care_request.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

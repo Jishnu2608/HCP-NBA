@@ -10,7 +10,7 @@ import { ThemeProvider } from "./theme";
 import { ToastProvider } from "./toast";
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false, retry: false } },
+  defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: true, retry: false } },
 });
 
 createRoot(document.getElementById("root")!).render(

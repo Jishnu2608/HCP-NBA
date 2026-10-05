@@ -60,6 +60,7 @@ import {
   SupplyFields,
   specialtyText,
   todayISO,
+  currencyFor,
 } from "./HealthForms";
 
 const ORIGIN_LABEL: Record<string, string> = {
@@ -75,11 +76,11 @@ export function OriginBadge({ origin }: { origin: string | null | undefined }) {
 
 /* ------------------------------------------------------------------ request queue */
 
-type StatusFilter = "open" | "in_progress" | "closed" | "";
+type StatusFilter = "active" | "awaiting_hcp" | "hcp_responded" | "closed" | "";
 
 export default function CareRequestsPage() {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<StatusFilter>("open");
+  const [status, setStatus] = useState<StatusFilter>("active");
   const [creating, setCreating] = useState(false);
   const close = useCallback(() => setCreating(false), []);
   const list = useQuery({
@@ -89,6 +90,8 @@ export default function CareRequestsPage() {
   });
   const counts: Record<string, number> = list.data?.counts ?? {};
   const shown = (n: number) => (list.data ? num(n) : "—");
+  const needsYou = (counts.open ?? 0) + (counts.in_progress ?? 0) + (counts.hcp_responded ?? 0);
+  const active = needsYou + (counts.awaiting_hcp ?? 0);
   const columns: Column<Json>[] = [
     {
       key: "patient",
@@ -114,11 +117,32 @@ export default function CareRequestsPage() {
       header: "Details",
       hideOnMobile: true,
       cell: (r) => (
-        <span className="line-clamp-2 text-ink-muted">{r.condition?.label ?? r.medication ?? r.reason ?? "—"}</span>
+        <span className="line-clamp-2 text-ink-muted">
+          {r.condition?.label ?? r.medication ?? r.reason ?? "—"}
+          {r.assigned_hcp ? ` · ${r.assigned_hcp.name}` : ""}
+        </span>
       ),
     },
-    { key: "created", header: "Received", cell: (r) => <span className="tabular text-ink-muted">{fmtDate(r.created_at)}</span> },
-    { key: "status", header: "Status", hideOnMobile: true, cell: (r) => <StatusChip status={r.status} staff /> },
+    {
+      key: "created",
+      header: "Received / due",
+      cell: (r) => (
+        <span className="tabular text-ink-muted">
+          {r.type === "follow_up" && r.due_date ? `Due ${fmtDate(r.due_date)}` : fmtDate(r.created_at)}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      hideOnMobile: true,
+      cell: (r) => (
+        <span className="flex flex-wrap gap-1.5">
+          {r.overdue && <Badge tone="bad">Overdue</Badge>}
+          <StatusChip status={r.status} staff />
+        </span>
+      ),
+    },
   ];
   return (
     <>
@@ -132,8 +156,8 @@ export default function CareRequestsPage() {
         }
       />
       <KpiGrid>
-        <Stat label="Open" value={shown(counts.open ?? 0)} tone={counts.open ? "warn" : undefined} icon={<ClipboardList className="h-4 w-4" aria-hidden />} />
-        <Stat label="In progress" value={shown(counts.in_progress ?? 0)} icon={<RefreshCcw className="h-4 w-4" aria-hidden />} />
+        <Stat label="Need you" value={shown(needsYou)} tone={needsYou ? "warn" : undefined} icon={<ClipboardList className="h-4 w-4" aria-hidden />} />
+        <Stat label="Waiting for an HCP" value={shown(counts.awaiting_hcp ?? 0)} icon={<RefreshCcw className="h-4 w-4" aria-hidden />} />
         <Stat label="Closed" value={shown(counts.closed ?? 0)} tone="ok" icon={<Check className="h-4 w-4" aria-hidden />} />
       </KpiGrid>
       <div className="mb-4">
@@ -142,8 +166,9 @@ export default function CareRequestsPage() {
           value={status}
           onChange={setStatus}
           options={[
-            { value: "open", label: "Open", count: counts.open ?? 0 },
-            { value: "in_progress", label: "In progress", count: counts.in_progress ?? 0 },
+            { value: "active", label: "Active", count: active },
+            { value: "hcp_responded", label: "HCP responded", count: counts.hcp_responded ?? 0 },
+            { value: "awaiting_hcp", label: "Waiting for HCP", count: counts.awaiting_hcp ?? 0 },
             { value: "closed", label: "Closed", count: counts.closed ?? 0 },
             { value: "", label: "All" },
           ]}
@@ -168,7 +193,7 @@ export default function CareRequestsPage() {
             rows={list.data.items}
             rowKey={(r) => r.id}
             onRowClick={(r) => navigate(`/patients/${r.patient_id}`)}
-            mobileAside={(r) => <StatusChip status={r.status} staff />}
+            mobileAside={(r) => (r.overdue ? <Badge tone="bad">Overdue</Badge> : <StatusChip status={r.status} staff />)}
           />
         )}
       </Card>
@@ -244,6 +269,9 @@ type Sheet =
   | { kind: "note" }
   | { kind: "hcp"; conditionId?: number; requestId?: number }
   | { kind: "close"; r: Json }
+  | { kind: "dismiss"; path: string; what: string }
+  | { kind: "response"; r: Json }
+  | { kind: "followup"; requestId?: number }
   | null;
 
 const emptySupply = { measure: "", days_supply: "30", copay: "0" };
@@ -257,9 +285,14 @@ export function CarePanel({ patientId }: { patientId: string }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const close = useCallback(() => setSheet(null), []);
   const done = (message: string) => (data: Json) => {
-    client.setQueryData(key, data.record ?? data);
+    // Every care endpoint returns the care record (alone, or as `record`). Anything else
+    // is refetched rather than written into the cache in the wrong shape.
+    const fresh = data?.record ?? data;
+    if (fresh && Array.isArray(fresh.conditions)) client.setQueryData(key, fresh);
+    else void client.invalidateQueries({ queryKey: key });
     void client.invalidateQueries({ queryKey: ["patient", patientId] });
     void client.invalidateQueries({ queryKey: ["care-requests"] });
+    void client.invalidateQueries({ queryKey: ["attention"] });
     setSheet(null);
     toast(message);
   };
@@ -284,6 +317,9 @@ export function CarePanel({ patientId }: { patientId: string }) {
     note: "Add an instruction or follow-up",
     hcp: "Route to a healthcare professional",
     close: "Close request",
+    dismiss: "Not added",
+    response: "Record the HCP's response",
+    followup: "Schedule a follow-up",
   };
 
   return (
@@ -324,11 +360,16 @@ export function CarePanel({ patientId }: { patientId: string }) {
             actions={(c) => (
               <>
                 {c.status === "reported" && (
-                  <Button size="sm" variant="primary" busy={busy} onClick={() => run("post", `/care/conditions/${c.id}/status`, { status: "confirmed" }, "Condition confirmed.")}>
-                    Confirm
-                  </Button>
+                  <>
+                    <Button size="sm" variant="primary" busy={busy} onClick={() => run("post", `/care/conditions/${c.id}/status`, { status: "confirmed" }, "Condition confirmed.")}>
+                      Confirm
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setSheet({ kind: "dismiss", path: `/care/conditions/${c.id}/status`, what: c.label })}>
+                      Dismiss
+                    </Button>
+                  </>
                 )}
-                {c.status !== "resolved" && (
+                {(c.status === "reported" || c.status === "confirmed") && (
                   <Button size="sm" onClick={() => setSheet({ kind: "hcp", conditionId: c.id })}>
                     Find HCP
                   </Button>
@@ -365,16 +406,21 @@ export function CarePanel({ patientId }: { patientId: string }) {
                 <MedicationSummary m={m} staff />
                 <div className="flex shrink-0 flex-wrap gap-2">
                   {m.review_status === "reported" && (
-                    <Button size="sm" variant="primary" onClick={() => setSheet({ kind: "confirm", m })}>
-                      Confirm
-                    </Button>
+                    <>
+                      <Button size="sm" variant="primary" onClick={() => setSheet({ kind: "confirm", m })}>
+                        Confirm
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setSheet({ kind: "dismiss", path: `/care/medications/${m.therapy_id}/dismiss`, what: m.drug_name })}>
+                        Dismiss
+                      </Button>
+                    </>
                   )}
                   {m.review_status === "confirmed" && (
                     <Button size="sm" onClick={() => setSheet({ kind: "fill", m })}>
                       <Pill className="h-3.5 w-3.5" aria-hidden /> Log refill
                     </Button>
                   )}
-                  {m.review_status !== "stopped" && (
+                  {m.review_status === "confirmed" && (
                     <Button size="sm" variant="ghost" busy={busy} onClick={() => run("post", `/care/medications/${m.therapy_id}/stop`, {}, "Medication stopped.")}>
                       Stop
                     </Button>
@@ -394,9 +440,19 @@ export function CarePanel({ patientId }: { patientId: string }) {
             actions={(q) =>
               q.status !== "closed" && (
                 <>
-                  {q.type === "consultation" && (
+                  {q.type === "consultation" && (q.status === "open" || q.status === "in_progress") && (
                     <Button size="sm" variant="primary" onClick={() => setSheet({ kind: "hcp", requestId: q.id })}>
                       Route to HCP
+                    </Button>
+                  )}
+                  {q.status === "awaiting_hcp" && q.assigned_hcp && !q.assigned_hcp.in_app && (
+                    <Button size="sm" variant="primary" onClick={() => setSheet({ kind: "response", r: q })}>
+                      Record HCP response
+                    </Button>
+                  )}
+                  {q.status === "hcp_responded" && (
+                    <Button size="sm" onClick={() => setSheet({ kind: "followup", requestId: q.id })}>
+                      Schedule follow-up
                     </Button>
                   )}
                   {q.status === "open" && (
@@ -404,8 +460,8 @@ export function CarePanel({ patientId }: { patientId: string }) {
                       Start
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => setSheet({ kind: "close", r: q })}>
-                    Close
+                  <Button size="sm" variant={q.status === "hcp_responded" ? "primary" : "ghost"} onClick={() => setSheet({ kind: "close", r: q })}>
+                    {q.status === "hcp_responded" ? "Close with outcome" : "Close"}
                   </Button>
                 </>
               )
@@ -428,11 +484,16 @@ export function CarePanel({ patientId }: { patientId: string }) {
               onSubmit={(b) => run("post", `/care/patients/${patientId}/conditions`, b, "Condition recorded.")}
             />
           )}
-          {sheet.kind === "medication" && <RecordMedication patientId={patientId} run={run} busy={busy} error={call.error} />}
-          {sheet.kind === "confirm" && <ConfirmMedication m={sheet.m} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "medication" && <RecordMedication patientId={patientId} currency={currencyFor(r.country)} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "confirm" && <ConfirmMedication m={sheet.m} currency={currencyFor(r.country)} run={run} busy={busy} error={call.error} />}
           {sheet.kind === "fill" && <LogFill m={sheet.m} today={todayISO()} run={run} busy={busy} error={call.error} />}
-          {sheet.kind === "note" && <NoteForm patientId={patientId} hcps={r.care_team.hcps} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "note" && <NoteForm patientId={patientId} hcps={r.care_team.hcps} requests={r.requests} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "followup" && (
+            <NoteForm patientId={patientId} hcps={r.care_team.hcps} requests={r.requests} initialKind="follow_up" requestId={sheet.requestId} run={run} busy={busy} error={call.error} />
+          )}
           {sheet.kind === "close" && <CloseRequest r={sheet.r} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "dismiss" && <DismissEntry path={sheet.path} what={sheet.what} run={run} busy={busy} error={call.error} />}
+          {sheet.kind === "response" && <RecordHcpResponse r={sheet.r} run={run} busy={busy} error={call.error} />}
           {sheet.kind === "hcp" && (
             <HcpPicker
               patientId={patientId}
@@ -456,7 +517,7 @@ function supplyBody(s: typeof emptySupply) {
   return { measure: s.measure || null, days_supply: Number(s.days_supply), copay: Number(s.copay || 0) };
 }
 
-function RecordMedication({ patientId, run, busy, error }: { patientId: string; run: Run; busy: boolean; error: unknown }) {
+function RecordMedication({ patientId, currency, run, busy, error }: { patientId: string; currency: string; run: Run; busy: boolean; error: unknown }) {
   const [supply, setSupply] = useState(emptySupply);
   return (
     <MedicationForm
@@ -464,25 +525,46 @@ function RecordMedication({ patientId, run, busy, error }: { patientId: string; 
       submitLabel="Record medication"
       busy={busy}
       error={error}
-      extra={<SupplyFields value={supply} onChange={setSupply} />}
+      extra={<SupplyFields value={supply} onChange={setSupply} currency={currency} />}
       onSubmit={(b) => run("post", `/care/patients/${patientId}/medications`, { ...b, ...supplyBody(supply) }, "Medication recorded.")}
     />
   );
 }
 
-function ConfirmMedication({ m, run, busy, error }: { m: Json; run: Run; busy: boolean; error: unknown }) {
+function ConfirmMedication({ m, currency, run, busy, error }: { m: Json; currency: string; run: Run; busy: boolean; error: unknown }) {
   const [supply, setSupply] = useState(emptySupply);
+  const [lastRefill, setLastRefill] = useState<string>(m.reported_last_fill ?? "");
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-line p-4">
         <MedicationSummary m={m} staff />
       </div>
-      <SupplyFields value={supply} onChange={setSupply} knownMeasure={m.measure} />
+      <SupplyFields value={supply} onChange={setSupply} knownMeasure={m.measure} currency={currency} />
+      <TextField
+        label="Last refill date"
+        type="date"
+        min={m.start_date}
+        max={todayISO()}
+        value={lastRefill}
+        onChange={(e) => setLastRefill(e.target.value)}
+        hint={
+          m.reported_last_fill
+            ? "As the patient reported it. Recorded as their first refill when you confirm."
+            : "If the patient already takes it. Leave empty if no supply has been collected yet."
+        }
+      />
       <ErrorNote error={error} />
       <Button
         variant="primary"
         busy={busy}
-        onClick={() => run("post", `/care/medications/${m.therapy_id}/confirm`, supplyBody(supply), "Medication confirmed.")}
+        onClick={() =>
+          run(
+            "post",
+            `/care/medications/${m.therapy_id}/confirm`,
+            { ...supplyBody(supply), last_refill_date: lastRefill || null },
+            "Medication confirmed. Adherence is up to date.",
+          )
+        }
       >
         <Check className="h-4 w-4" aria-hidden /> Confirm medication
       </Button>
@@ -504,12 +586,34 @@ function LogFill({ m, today, run, busy, error }: { m: Json; today: string; run: 
   );
 }
 
-function NoteForm({ patientId, hcps, run, busy, error }: { patientId: string; hcps: Json[]; run: Run; busy: boolean; error: unknown }) {
-  const [kind, setKind] = useState<"hcp_instruction" | "follow_up">("hcp_instruction");
+function NoteForm({
+  patientId,
+  hcps,
+  requests,
+  initialKind = "hcp_instruction",
+  requestId,
+  run,
+  busy,
+  error,
+}: {
+  patientId: string;
+  hcps: Json[];
+  requests: Json[];
+  initialKind?: "hcp_instruction" | "follow_up";
+  requestId?: number;
+  run: Run;
+  busy: boolean;
+  error: unknown;
+}) {
+  const [kind, setKind] = useState<"hcp_instruction" | "follow_up">(initialKind);
   const [text, setText] = useState("");
   const [hcp, setHcp] = useState("");
+  const [about, setAbout] = useState(requestId ? String(requestId) : "");
+  const [due, setDue] = useState("");
   const [visible, setVisible] = useState(true);
   const [tried, setTried] = useState(false);
+  const followUp = kind === "follow_up";
+  const dueMissing = followUp && !due;
   return (
     <form
       className="space-y-4"
@@ -517,8 +621,20 @@ function NoteForm({ patientId, hcps, run, busy, error }: { patientId: string; hc
       onSubmit={(e) => {
         e.preventDefault();
         setTried(true);
-        if (text.trim())
-          run("post", `/care/patients/${patientId}/notes`, { kind, text: text.trim(), hcp_id: hcp || null, visible_to_patient: visible }, "Saved.");
+        if (!text.trim() || dueMissing) return;
+        run(
+          "post",
+          `/care/patients/${patientId}/notes`,
+          {
+            kind,
+            text: text.trim(),
+            hcp_id: followUp ? null : hcp || null,
+            visible_to_patient: visible,
+            request_id: !followUp && about ? Number(about) : null,
+            due_date: followUp ? due : null,
+          },
+          followUp ? "Follow-up scheduled. It is in your care requests until you close it." : "Saved.",
+        );
       }}
     >
       <Segmented
@@ -530,7 +646,37 @@ function NoteForm({ patientId, hcps, run, busy, error }: { patientId: string; hc
           { value: "follow_up", label: "Follow-up" },
         ]}
       />
-      {hcps.length > 0 && (
+      {followUp && (
+        <TextField
+          label="Due date"
+          type="date"
+          min={todayISO()}
+          value={due}
+          required
+          onChange={(e) => setDue(e.target.value)}
+          hint="You own this follow-up. It stays in your care requests, marked overdue after this date, until you close it."
+          error={tried && dueMissing ? "Choose when this follow-up is due." : null}
+        />
+      )}
+      {!followUp && requests.length > 0 && (
+        <label className="block text-sm font-medium text-ink">
+          About
+          <select
+            value={about}
+            onChange={(e) => setAbout(e.target.value)}
+            className="mt-1.5 block h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-[15px] text-ink shadow-card"
+          >
+            <option value="">Not about a specific request</option>
+            {requests.map((q) => (
+              <option key={q.id} value={q.id}>
+                {REQUEST_LABEL[q.type] ?? q.type} · {fmtDate(q.created_at)}
+                {q.reason ? ` · ${q.reason.slice(0, 40)}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {!followUp && hcps.length > 0 && (
         <label className="block text-sm font-medium text-ink">
           From
           <select
@@ -557,8 +703,14 @@ function NoteForm({ patientId, hcps, run, busy, error }: { patientId: string; hc
         error={tried && !text.trim() ? "Write the instruction or follow-up." : null}
       />
       <label className="flex items-center gap-2 text-sm text-ink">
-        <input type="checkbox" checked={visible} onChange={(e) => setVisible(e.target.checked)} className="h-4 w-4" />
-        Show to the patient
+        <input
+          type="checkbox"
+          aria-label={followUp ? "Tell the patient" : "Show to the patient"}
+          checked={visible}
+          onChange={(e) => setVisible(e.target.checked)}
+          className="h-4 w-4"
+        />
+        {followUp ? "Tell the patient (they see when you will follow up)" : "Show to the patient"}
       </label>
       <ErrorNote error={error} />
       <Button type="submit" variant="primary" busy={busy}>
@@ -568,12 +720,116 @@ function NoteForm({ patientId, hcps, run, busy, error }: { patientId: string; hc
   );
 }
 
+/** A reported entry that does not belong (a duplicate, an entry error). The patient sees it
+ *  as "Not added" with this reason, instead of waiting forever. */
+function DismissEntry({ path, what, run, busy, error }: { path: string; what: string; run: Run; busy: boolean; error: unknown }) {
+  const [reason, setReason] = useState("");
+  const [tried, setTried] = useState(false);
+  const condition = path.includes("/conditions/");
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-ink-muted">
+        <span className="font-semibold text-ink">{what}</span> will not be added. The patient sees it as “Not added” with
+        your reason.
+      </p>
+      <TextArea
+        label="Reason the patient will read"
+        rows={3}
+        maxLength={300}
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="For example: this is already on your profile."
+        error={tried && !reason.trim() ? "Give the reason." : null}
+      />
+      <ErrorNote error={error} />
+      <Button
+        variant="danger"
+        busy={busy}
+        onClick={() => {
+          setTried(true);
+          if (reason.trim())
+            run("post", path, condition ? { status: "dismissed", reason: reason.trim() } : { reason: reason.trim() }, "Marked as not added.");
+        }}
+      >
+        Dismiss
+      </Button>
+    </div>
+  );
+}
+
+/** For an HCP who does not use the app: the care manager records what they advised. */
+function RecordHcpResponse({ r, run, busy, error }: { r: Json; run: Run; busy: boolean; error: unknown }) {
+  const [response, setResponse] = useState<"advice" | "decline">("advice");
+  const [message, setMessage] = useState("");
+  const [note, setNote] = useState("");
+  const [tried, setTried] = useState(false);
+  const missing = response === "advice" ? !message.trim() : !note.trim();
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-ink-muted">
+        {r.assigned_hcp?.name} does not use the app. Record their answer to “{r.reason}”.
+      </p>
+      <Segmented
+        label="Response"
+        value={response}
+        onChange={setResponse}
+        options={[
+          { value: "advice", label: "Advice for the patient" },
+          { value: "decline", label: "Could not take it" },
+        ]}
+      />
+      {response === "advice" && (
+        <TextArea
+          label="Advice, as the patient will read it"
+          rows={4}
+          maxLength={1000}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          error={tried && missing ? "Write the advice." : null}
+        />
+      )}
+      <TextArea
+        label={response === "advice" ? "Note for the care team (optional)" : "Reason"}
+        rows={3}
+        maxLength={1000}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        error={tried && missing && response === "decline" ? "Give the reason." : null}
+      />
+      <ErrorNote error={error} />
+      <Button
+        variant="primary"
+        busy={busy}
+        onClick={() => {
+          setTried(true);
+          if (!missing)
+            run(
+              "post",
+              `/care/requests/${r.id}/hcp-response`,
+              { response, message: message.trim() || null, note_to_care_team: note.trim() || null },
+              response === "advice" ? "Response recorded. Close the request when done." : "Returned for routing.",
+            );
+        }}
+      >
+        Record response
+      </Button>
+    </div>
+  );
+}
+
 function CloseRequest({ r, run, busy, error }: { r: Json; run: Run; busy: boolean; error: unknown }) {
   const [resolution, setResolution] = useState("");
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-muted">{REQUEST_LABEL[r.type]} · received {fmtDate(r.created_at)}</p>
-      <TextArea label="What was done" rows={4} maxLength={500} value={resolution} onChange={(e) => setResolution(e.target.value)} />
+      <TextArea
+        label="What was done"
+        hint="The patient reads this as the outcome of their request."
+        rows={4}
+        maxLength={500}
+        value={resolution}
+        onChange={(e) => setResolution(e.target.value)}
+      />
       <ErrorNote error={error} />
       <Button
         variant="primary"
@@ -608,6 +864,8 @@ function HcpPicker({
     queryKey: ["hcp-options", patientId, condition],
     queryFn: () => api(`/care/patients/${patientId}/hcp-options${query({ condition_id: condition })}`),
   });
+  // Only the chosen row shows progress.
+  const [choosing, setChoosing] = useState<string | null>(null);
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-muted">
@@ -632,6 +890,18 @@ function HcpPicker({
         </label>
       )}
       {!conditions.length && <Alert tone="info" title="No condition recorded">Primary care is offered. Record a condition to see specialists.</Alert>}
+      {options.data && !options.data.local_match && (options.data.items ?? []).length > 0 && (
+        <Alert tone="warn" title={`No suitable HCP is registered in ${options.data.patient_location ?? "the patient's country"}`}>
+          The options below practise elsewhere; their location is shown on each. Check that the patient can see them
+          before routing.
+        </Alert>
+      )}
+      {options.data && !(options.data.items ?? []).length && (
+        <Alert tone="info" title="No suitable HCP available">
+          No available healthcare professional holds a specialty that suits this condition. Choose primary care, or ask
+          an administrator to configure HCP specialties.
+        </Alert>
+      )}
       <ErrorNote error={error} />
       {options.isLoading ? (
         <LoadingRows rows={4} label="Loading HCPs" />
@@ -644,23 +914,27 @@ function HcpPicker({
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-ink">{h.name}</div>
                 <div className="text-[13px] text-ink-subtle">
-                  {h.reason}
-                  {h.location ? ` · ${h.location}` : ""}
-                  {h.origin === "invited" ? " · Invited HCP" : ""}
+                  {h.reason} · {h.location ?? "Location not recorded"}
                 </div>
                 <div className="mt-1 text-[13px] text-ink-muted">All specialties: {specialtyText(h.specialties)}</div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {h.in_app ? <Badge tone="ok">Answers in the app</Badge> : <Badge tone="neutral">Off-platform: you record their response</Badge>}
+                  {!h.same_country && h.country && <Badge tone="warn">Outside the patient's country</Badge>}
+                </div>
               </div>
               <Button
                 size="sm"
-                busy={busy}
-                onClick={() =>
+                busy={busy && choosing === h.hcp_id}
+                disabled={busy && choosing !== h.hcp_id}
+                onClick={() => {
+                  setChoosing(h.hcp_id);
                   run(
                     "put",
                     `/care/patients/${patientId}/hcp`,
                     { hcp_id: h.hcp_id, condition_id: condition ? Number(condition) : null, request_id: requestId ?? null },
-                    `Routed to ${h.name}.`,
-                  )
-                }
+                    requestId ? `Routed to ${h.name}. The consultation now waits for their response.` : `${h.name} added to the care team.`,
+                  );
+                }}
               >
                 Assign
               </Button>
@@ -727,7 +1001,7 @@ function PortalAccess({ patientId, portal, onInvited }: { patientId: string; por
         </div>
         <p className="mt-1.5 text-[13px] text-ink-subtle">
           {state === "invited"
-            ? `Invitation sent, expires ${fmtDateTime(`${portal.expires_at}Z`)}. Sending again replaces it.`
+            ? `Invitation sent, expires ${fmtDateTime(portal.expires_at)}. Sending again replaces it.`
             : "The invitation is bound to this record. The patient sees what you recorded once they join."}
         </p>
       </form>

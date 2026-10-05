@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from app.core import clock
 from app.core.engine_config import get_config
 from app.features.engagement import EngagementState
-from app.models import Consent, Content, Interaction, Nba
-from app.models.enums import TargetType
+from app.models import Consent, Content, Interaction, Nba, PatientTherapy
+from app.models.enums import ReviewStatus, TargetType
 from app.nba import gates
 
 
@@ -41,4 +41,7 @@ def current_failures(db: Session, nba: Nba, *, include_frequency: bool = True) -
     )
     if not include_frequency:
         failures = [f for f in failures if f not in gates.FREQUENCY_CODES]
+    therapy = db.get(PatientTherapy, nba.therapy_id) if nba.therapy_id else None
+    if therapy is not None and therapy.review_status != ReviewStatus.CONFIRMED:
+        failures.append(gates.THERAPY_INACTIVE)
     return failures

@@ -161,7 +161,9 @@ def _natural_fills(db: Session, after: date, until: date, stats: Counter) -> Non
 
 
 def _now() -> datetime:
-    return datetime.combine(clock.today(), utcnow().time().replace(microsecond=0))
+    """Now as a UTC instant (the test date override, if any, at the current time)."""
+    now = utcnow().replace(microsecond=0)
+    return now if now.date() == clock.today() else datetime.combine(clock.today(), now.time())
 
 
 def catch_up(db: Session) -> dict:

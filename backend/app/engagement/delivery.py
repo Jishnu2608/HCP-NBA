@@ -67,8 +67,10 @@ class SendBlocked(Exception):
 
 
 def now_on(db: Session) -> datetime:
-    """Now: today's date with the current time of day."""
-    return datetime.combine(clock.get_today(db), utcnow().time().replace(microsecond=0))
+    """Now, as a UTC instant. Under a test date override, that date at the current time."""
+    now = utcnow().replace(microsecond=0)
+    today = clock.get_today(db)
+    return now if now.date() == today else datetime.combine(today, now.time())
 
 
 def send(db: Session, nba: Nba, user: User) -> Interaction:

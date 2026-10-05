@@ -259,7 +259,7 @@ def test_cost_barrier_and_never_starter_get_fitting_actions(cycled):
     assert latest(db, "PAT_00005").action == "cost_support"
     never_started = latest(db, "PAT_00006")
     assert never_started.action != "refill_nudge"
-    assert "never been filled" in never_started.rationale
+    assert "no fill on record" in never_started.rationale.lower()
 
 
 def test_scenario_2_mlr_approval_unlocks_the_withheld_content(cycled):

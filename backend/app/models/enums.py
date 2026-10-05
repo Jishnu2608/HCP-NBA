@@ -59,12 +59,15 @@ class ReviewStatus(StrEnum):
     REPORTED = "reported"  # entered by the patient, not yet reviewed by the care team
     CONFIRMED = "confirmed"
     STOPPED = "stopped"
+    DISMISSED = "dismissed"  # not added: the care team decided it does not belong
 
 
 class ConditionStatus(StrEnum):
     REPORTED = "reported"
     CONFIRMED = "confirmed"
     RESOLVED = "resolved"
+    # Not added: the care manager decided it does not belong (a duplicate, for example).
+    DISMISSED = "dismissed"
 
 
 class FillSource(StrEnum):
@@ -77,11 +80,17 @@ class CareRequestType(StrEnum):
     CONDITION_REVIEW = "condition_review"
     MEDICATION_REVIEW = "medication_review"
     CONSULTATION = "consultation"
+    # Work the care team owes the patient by a due date (owner: a care manager).
+    FOLLOW_UP = "follow_up"
 
 
 class CareRequestStatus(StrEnum):
     OPEN = "open"
     IN_PROGRESS = "in_progress"
+    # A consultation routed to an HCP, waiting for their response.
+    AWAITING_HCP = "awaiting_hcp"
+    # The HCP responded; back with the care manager to close.
+    HCP_RESPONDED = "hcp_responded"
     CLOSED = "closed"
 
 

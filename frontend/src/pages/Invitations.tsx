@@ -275,9 +275,9 @@ export default function Invitations() {
       header: "Sent / expires",
       cell: (i) => (
         <span className="tabular text-[13px] text-ink-muted">
-          {fmtDateTime(`${i.created_at}Z`)}
+          {fmtDateTime(i.created_at)}
           <br />
-          {i.status === "accepted" ? `Accepted ${fmtDateTime(`${i.accepted_at}Z`)}` : `Expires ${fmtDateTime(`${i.expires_at}Z`)}`}
+          {i.status === "accepted" ? `Accepted ${fmtDateTime(i.accepted_at)}` : `Expires ${fmtDateTime(i.expires_at)}`}
         </span>
       ),
     },

@@ -280,11 +280,22 @@ function AccountPanel({ id, onDeleted }: { id: number; onDeleted: () => void }) 
   const client = useQueryClient();
   const toast = useToast();
   const detail = useQuery({ queryKey: ["users", id], queryFn: () => api(`/admin/users/${id}`) });
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  // What disabling would change (a care manager's patients, an HCP's waiting consultations),
+  // shown before the administrator confirms.
+  const impact = useQuery({
+    queryKey: ["users", id, "impact"],
+    queryFn: () => api(`/admin/users/${id}/impact`),
+    enabled: confirmDisable,
+  });
   const setStatus = useMutation({
     mutationFn: (status: string) => patch(`/admin/users/${id}/status`, { status }),
     onSuccess: (_, status) => {
       toast(status === "disabled" ? "Account disabled and signed out everywhere" : "Account re-enabled");
+      setConfirmDisable(false);
       void client.invalidateQueries({ queryKey: ["users"] });
+      void client.invalidateQueries({ queryKey: ["attention"] });
+      void client.invalidateQueries({ queryKey: ["unassigned"] });
     },
   });
   if (detail.isLoading) return <LoadingRows rows={6} label="Loading account" />;
@@ -354,7 +365,7 @@ function AccountPanel({ id, onDeleted }: { id: number; onDeleted: () => void }) 
         <div>
           <dt className="text-[13px] text-ink-subtle">Last sign-in</dt>
           <dd className="tabular mt-0.5 text-sm font-semibold text-ink">
-            {a.last_login_at ? fmtDateTime(`${a.last_login_at}Z`) : "Never"}
+            {a.last_login_at ? fmtDateTime(a.last_login_at) : "Never"}
           </dd>
         </div>
       </dl>
@@ -402,10 +413,56 @@ function AccountPanel({ id, onDeleted }: { id: number; onDeleted: () => void }) 
         ) : (
           <div className="flex flex-wrap items-center gap-3">
             {a.status === "pending" && <span className="text-sm text-ink-subtle">Waiting for email verification.</span>}
-            <Button variant="quiet-danger" busy={setStatus.isPending} onClick={() => setStatus.mutate("disabled")}>
-              <UserX className="h-4 w-4" aria-hidden /> Disable account
-            </Button>
+            {!confirmDisable && (
+              <Button variant="quiet-danger" onClick={() => setConfirmDisable(true)}>
+                <UserX className="h-4 w-4" aria-hidden /> Disable account
+              </Button>
+            )}
           </div>
+        )}
+        {confirmDisable && a.status !== "disabled" && (
+          <Alert tone="warn" title="Disable this account?" className="mt-3">
+            {impact.isLoading ? (
+              <p>Checking what this changes…</p>
+            ) : (
+              <ul className="list-disc space-y-1 pl-5">
+                <li>The account is signed out everywhere and cannot sign in.</li>
+                {impact.data?.real_patients > 0 &&
+                  (impact.data.to ? (
+                    <li>
+                      {impact.data.real_patients} registered patient{impact.data.real_patients === 1 ? "" : "s"} and{" "}
+                      {impact.data.open_requests} open request{impact.data.open_requests === 1 ? "" : "s"} move to{" "}
+                      <span className="font-semibold">{impact.data.to.name}</span>.
+                    </li>
+                  ) : (
+                    <li className="font-semibold">
+                      No other active care manager can take this account's {impact.data.real_patients} registered
+                      patients, so it cannot be disabled yet.
+                    </li>
+                  ))}
+                {impact.data?.consultations > 0 && (
+                  <li>
+                    {impact.data.consultations} consultation{impact.data.consultations === 1 ? "" : "s"} waiting for this
+                    HCP go back to the care manager to route again.
+                  </li>
+                )}
+              </ul>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="danger"
+                busy={setStatus.isPending}
+                disabled={impact.isLoading || (impact.data?.real_patients > 0 && !impact.data?.to)}
+                onClick={() => setStatus.mutate("disabled")}
+              >
+                Disable account
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDisable(false)}>
+                Cancel
+              </Button>
+            </div>
+          </Alert>
         )}
         <p className="mt-2 text-[13px] text-ink-subtle">Disabling signs the account out everywhere at once and blocks sign-in.</p>
       </section>
@@ -511,6 +568,7 @@ export default function UsersPage() {
         title="Users and assignments"
         subtitle="Every account, its role and what it is assigned to. Assignments and status can be changed here. Roles cannot: permissions come only from the role an account was created with."
       />
+      <UnassignedPatients />
       <KpiGrid>
         <Stat label="Accounts" value={shown(totalAccounts)} icon={<UsersIcon className="h-4 w-4" aria-hidden />} hint={role || source || q ? "across all filters" : undefined} />
         <Stat label="Active" value={shown(countStatus("active"))} tone="ok" icon={<UserCheck className="h-4 w-4" aria-hidden />} hint="in this view" />
@@ -575,5 +633,18 @@ export default function UsersPage() {
         </Drawer>
       )}
     </>
+  );
+}
+
+/** Registered patients nobody is looking after (no active care manager when they joined).
+ *  They are assigned automatically as soon as a care manager is active again. */
+function UnassignedPatients() {
+  const waiting = useQuery({ queryKey: ["unassigned"], queryFn: () => api<Json[]>("/admin/users/attention/unassigned") });
+  if (!waiting.data?.length) return null;
+  return (
+    <Alert tone="bad" title={`${waiting.data.length} registered patient${waiting.data.length === 1 ? "" : "s"} without a care manager`} className="mb-6">
+      Their requests reach nobody until a care manager is active. Re-enable or invite a care manager: they are assigned
+      automatically. Waiting: {waiting.data.map((p) => `${p.name} (${p.patient_id})`).join(", ")}.
+    </Alert>
   );
 }

@@ -6,7 +6,7 @@ import { useAuth } from "../auth";
 import { pendingSignup } from "../session";
 import type { Challenge } from "../session";
 import { useToast } from "../toast";
-import { Alert, Button, ErrorNote, cx } from "../ui";
+import { Alert, Button, EmailText, ErrorNote, cx } from "../ui";
 import AuthLayout from "./AuthLayout";
 
 const LENGTH = 6;
@@ -162,7 +162,7 @@ export default function VerifyOtp() {
       subtitle={
         <>
           Enter the 6-digit code for{" "}
-          <span className="break-all font-semibold text-ink">{challenge.email}</span> to finish setting up your
+          <EmailText email={challenge.email} className="font-semibold text-ink" /> to finish setting up your
           account.
         </>
       }
@@ -179,7 +179,7 @@ export default function VerifyOtp() {
       {failed ? (
         <Alert tone="bad" icon={<MailX className="h-5 w-5" aria-hidden />} title="We couldn't send the verification email" className="mb-6">
           <span className="text-bad">
-            The code could not be delivered to <span className="break-all font-semibold">{challenge.email}</span>. Your
+            The code could not be delivered to <EmailText email={challenge.email} className="font-semibold" />. Your
             account is saved but not active yet. Check the address, then send a new code below.
           </span>
         </Alert>

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
-from app.clinical import activity, care
+from app.clinical import activity, care, records
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
@@ -15,6 +15,7 @@ from app.core.permissions import Permission
 from app.models import (
     Consent,
     Content,
+    EngineCycle,
     Hcp,
     HcpSpecialty,
     Interaction,
@@ -25,7 +26,9 @@ from app.models import (
     PatientTherapy,
     User,
 )
-from app.models.enums import NbaStatus, ReviewStatus, TargetType
+from app.models.enums import Channel, ConsentPurpose, NbaStatus, ReviewStatus, TargetType
+
+OUTREACH_CHANNELS = (Channel.SMS, Channel.EMAIL, Channel.PORTAL, Channel.PHONE)
 
 router = APIRouter(prefix="/api", tags=["profiles"])
 
@@ -181,6 +184,25 @@ def patient_360(
             for h, primary in hcps
         ],
         "consents": [consent_out(c, today) for c in consents],
+        # Of the four outreach channels, how many the patient allows today.
+        "outreach_channels_granted": sum(
+            1
+            for ch in OUTREACH_CHANNELS
+            if any(
+                c.granted
+                and c.purpose == ConsentPurpose.OUTREACH
+                and c.channel == ch
+                and c.effective_from <= today
+                and (c.effective_to is None or today < c.effective_to)
+                for c in consents
+            )
+        ),
+        "outreach_channels_total": len(OUTREACH_CHANNELS),
+        "care_managers": [
+            {"id": u.id, "name": u.display_name}
+            for u in records.responsible_care_managers(db, patient_id, active_only=True)
+        ],
+        "last_cycle_at": db.scalar(select(func.max(EngineCycle.finished_ts))),
         "features": out.features_out(db, TargetType.PATIENT, patient_id, today),
         "interactions": _history(db, TargetType.PATIENT, patient_id),
         "open_nba": _open_nba(db, TargetType.PATIENT, patient_id),

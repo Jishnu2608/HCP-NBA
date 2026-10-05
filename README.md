@@ -39,7 +39,9 @@ Unify → Segment → Predict NBA → Personalize → Orchestrate → Engage →
 | Patient 360 | Therapies, days covered (PDC), gaps, a fill-coverage timeline, consent, outreach history; for real patients, their conditions, reported and confirmed medications, care requests and instructions |
 | Patient lists | Every list of patients is ordered on the server by latest activity, newest first (sign-ups, changes, entries, refills, messages, consent changes, sign-ins), with a "Last activity" column; ties are broken by patient ID |
 | Patient health profile | A patient's own conditions and medications, care team (care manager and HCPs), instructions from the care team, and a "Consult a HCP" request. New patients start empty and build it themselves |
-| Care management | Care managers work a queue of care requests: confirm what patients reported (only confirmed medications count for adherence), record medications, refills and instructions, route patients to an HCP by the condition's specialty, and set up and invite clinic patients |
+| Care management | Care managers work a queue of care requests: confirm or dismiss what patients reported (only confirmed medications count for adherence; a last refill date keeps an already-taken medication from looking unfilled), record medications, refills and instructions, route patients to an HCP by the condition's specialty, schedule follow-ups with a due date, and set up and invite clinic patients. Every real patient always has one active care manager |
+| Consultations | A patient's consultation stays open after routing: the HCP sees it in the app and answers or declines (or the care manager records the answer of an HCP without an account), then the care manager closes it with the outcome. The patient sees each step and the advice under their request |
+| Work awareness | Menu counts show new work (care requests, consultations, unread messages, administrator requests); adherence updates the moment a medication is confirmed, refilled or stopped |
 | HCP 360 | Segment and value, topics and channels the HCP engages with, interaction history |
 | Adherence risk | Rule-based 0-100 score with named drivers: days covered, current gap, widening gaps, non-response, never filled |
 | Propensity models | Chance of a response and of a fill, per action and channel. Logistic regression, compared against a boosted-tree challenger and a no-model baseline |
@@ -336,6 +338,8 @@ scripts/                setup and run
 13. A real patient's data is their own. Sign-up never attaches synthetic demo data; clinical information enters only through the patient or their care team, and only synthetic people are simulated.
 14. Care managers route patients to HCPs; nothing is diagnosed or assigned automatically.
 15. Patient lists have one server-side order, latest activity first; the recommendation queue keeps its priority ranking.
+16. A consultation closes only with an outcome: routing hands it to the HCP; the HCP's answer returns it to the care manager.
+17. One time base: stored times are UTC and "today" is the UTC date; screens show local time.
 
 ## Path to production
 

@@ -34,6 +34,7 @@ export const P = {
   SELF_PATIENTS_READ: "self:patients:read",
   SELF_HEALTH_MANAGE: "self:health:manage",
   SELF_SPECIALTY_REQUEST: "self:specialty:request",
+  SELF_CONSULTATIONS_MANAGE: "self:consultations:manage",
   INVITE_HCP: "invite:hcp",
   INVITE_MEDICAL_REP: "invite:medical_rep",
   INVITE_CARE_MANAGER: "invite:care_manager",

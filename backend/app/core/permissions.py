@@ -58,6 +58,8 @@ class Permission(StrEnum):
     SELF_HEALTH_MANAGE = "self:health:manage"
     # An HCP asking for their specialties to change (an administrator decides).
     SELF_SPECIALTY_REQUEST = "self:specialty:request"
+    # An HCP seeing and answering the consultations care managers routed to them.
+    SELF_CONSULTATIONS_MANAGE = "self:consultations:manage"
     # Onboarding authority: who may invite whom. One permission per target role, so the
     # whole authority matrix is the set of these permissions in ROLE_PERMISSIONS below.
     # It grants no data access; it is not an organisational hierarchy.
@@ -153,6 +155,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.INVITE_MEDICAL_REP,
             P.INVITE_CARE_MANAGER,
             P.SELF_SPECIALTY_REQUEST,
+            P.SELF_CONSULTATIONS_MANAGE,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
         }

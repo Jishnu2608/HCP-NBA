@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.clinical import activity
+from app.core import clock
 from app.core.permissions import Permission as P
 from app.core.permissions import can
 from app.models import (
@@ -87,13 +88,8 @@ def care_managers(db: Session) -> list[User]:
     return [u for u in candidates if can(u, P.PATIENT_CARE_MANAGE)]
 
 
-def pick_care_manager(db: Session) -> User | None:
-    """The active care manager with the fewest real patients; ties go to the earliest
-    account. Deterministic, and it creates no clinical data."""
-    managers = care_managers(db)
-    if not managers:
-        return None
-    loads = dict(
+def _real_loads(db: Session) -> dict[int, int]:
+    return dict(
         db.execute(
             select(CareManagerPatient.care_manager_user_id, func.count())
             .join(Patient, Patient.patient_id == CareManagerPatient.patient_id)
@@ -101,25 +97,151 @@ def pick_care_manager(db: Session) -> User | None:
             .group_by(CareManagerPatient.care_manager_user_id)
         ).all()
     )
+
+
+def pick_care_manager(db: Session, *, excluding: int | None = None) -> User | None:
+    """The active care manager with the fewest real patients; ties go to the earliest
+    account. Deterministic, and it creates no clinical data."""
+    managers = [u for u in care_managers(db) if u.id != excluding]
+    if not managers:
+        return None
+    loads = _real_loads(db)
     return min(managers, key=lambda u: (loads.get(u.id, 0), u.id))
 
 
 def assign_care_manager(db: Session, patient: Patient, manager: User | None) -> None:
+    """Makes `manager` the care manager responsible for the patient. A real patient has
+    exactly one: any other link is moved, with the open work it owns."""
     if manager is None:
         return
+    if is_real(patient):
+        for link in db.scalars(
+            select(CareManagerPatient).where(
+                CareManagerPatient.patient_id == patient.patient_id,
+                CareManagerPatient.care_manager_user_id != manager.id,
+            )
+        ).all():
+            _move_owned_work(db, patient.patient_id, link.care_manager_user_id, manager.id)
+            db.delete(link)
     exists = db.get(CareManagerPatient, (manager.id, patient.patient_id))
     if exists is None:
         db.add(CareManagerPatient(care_manager_user_id=manager.id, patient_id=patient.patient_id))
-        db.flush()
+    db.flush()
 
 
-def responsible_care_managers(db: Session, patient_id: str) -> list[User]:
+def _move_owned_work(db: Session, patient_id: str, from_id: int, to_id: int) -> None:
+    """Follow-ups the previous care manager owned for this patient move with the patient."""
+    for r in db.scalars(
+        select(CareRequest).where(
+            CareRequest.patient_id == patient_id,
+            CareRequest.owner_user_id == from_id,
+            CareRequest.status != "closed",
+        )
+    ):
+        r.owner_user_id = to_id
+
+
+def responsible_care_managers(
+    db: Session, patient_id: str, *, active_only: bool = False
+) -> list[User]:
     ids = db.scalars(
         select(CareManagerPatient.care_manager_user_id).where(
             CareManagerPatient.patient_id == patient_id
         )
     ).all()
-    return [u for u in (db.get(User, i) for i in ids) if u is not None]
+    users = [u for u in (db.get(User, i) for i in ids) if u is not None]
+    if active_only:
+        users = [u for u in users if u.status == AccountStatus.ACTIVE]
+    return users
+
+
+def real_patients_of(db: Session, manager: User) -> list[str]:
+    return list(
+        db.scalars(
+            select(CareManagerPatient.patient_id)
+            .join(Patient, Patient.patient_id == CareManagerPatient.patient_id)
+            .where(
+                CareManagerPatient.care_manager_user_id == manager.id,
+                Patient.origin.in_(REAL),
+            )
+        )
+    )
+
+
+def unassigned_real_patients(db: Session) -> list[str]:
+    """Real patients with no active care manager: nobody would see their requests."""
+    active = (
+        select(CareManagerPatient.patient_id)
+        .join(User, User.id == CareManagerPatient.care_manager_user_id)
+        .where(User.status == AccountStatus.ACTIVE)
+    )
+    return list(
+        db.scalars(
+            select(Patient.patient_id)
+            .where(Patient.origin.in_(REAL), Patient.patient_id.not_in(active))
+            .order_by(Patient.patient_id)
+        )
+    )
+
+
+def transfer_impact(db: Session, manager: User) -> dict:
+    """What disabling this care manager would move, and to whom."""
+    from app.models.enums import CareRequestStatus
+
+    patients = real_patients_of(db, manager)
+    open_requests = (
+        db.scalar(
+            select(func.count())
+            .select_from(CareRequest)
+            .where(
+                CareRequest.patient_id.in_(patients),
+                CareRequest.status != CareRequestStatus.CLOSED,
+            )
+        )
+        if patients
+        else 0
+    )
+    target = pick_care_manager(db, excluding=manager.id)
+    return {
+        "real_patients": len(patients),
+        "open_requests": open_requests or 0,
+        "to": {"id": target.id, "name": target.display_name} if target else None,
+    }
+
+
+def transfer_patients(db: Session, manager: User, actor: User) -> int:
+    """The care manager can no longer act (disabled): each of their real patients moves to the
+    least-loaded active care manager, with their open work. Synthetic panels are unaffected."""
+    db.flush()
+    moved = 0
+    for pid in real_patients_of(db, manager):
+        target = pick_care_manager(db, excluding=manager.id)
+        if target is None:
+            break
+        assign_care_manager(db, db.get(Patient, pid), target)
+        audit.record(
+            db, "care_manager_reassigned", "patient", pid, actor=actor.username,
+            actor_role=actor.role, detail={"from": manager.id, "to": target.id},
+        )  # fmt: skip
+        moved += 1
+    return moved
+
+
+def adopt_unassigned(db: Session, actor: str = "system", actor_role: str = "system") -> int:
+    """Real patients waiting for a care manager get one as soon as one is active."""
+    db.flush()  # account status changes made in this request must count
+    adopted = 0
+    for pid in unassigned_real_patients(db):
+        target = pick_care_manager(db)
+        if target is None:
+            break
+        assign_care_manager(db, db.get(Patient, pid), target)
+        audit.record(
+            db, "care_manager_assigned", "patient", pid, actor=actor, actor_role=actor_role,
+            detail={"to": target.id},
+        )  # fmt: skip
+        adopted += 1
+    return adopted
 
 
 def provision_self_registered(db: Session, user: User) -> Patient:
@@ -128,7 +250,7 @@ def provision_self_registered(db: Session, user: User) -> Patient:
     patient = create_patient(
         db,
         name=user.display_name,
-        birth_date=user.date_of_birth or date.today(),
+        birth_date=user.date_of_birth or clock.today(),
         country=user.country,
         region=user.region,
         origin=PatientOrigin.SELF_REGISTERED,

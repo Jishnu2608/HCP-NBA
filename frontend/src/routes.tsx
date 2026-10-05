@@ -73,6 +73,9 @@ export interface AppRoute {
   icon?: ReactNode;
   /** Menu section the item is listed under (a function when it depends on the account). */
   group?: NavGroup | ((can: Can) => NavGroup);
+  /** Key in `GET /api/me/attention` whose count is shown next to the menu item: work that
+   *  arrived for this account, so nobody has to know which page to open. */
+  badge?: string;
 }
 
 export const groupOf = (route: AppRoute, can: Can): NavGroup | undefined =>
@@ -135,6 +138,7 @@ export const ROUTES: AppRoute[] = [
     label: () => "Care requests",
     icon: icon(HandHeart),
     group: "work",
+    badge: "care_requests",
   },
   {
     path: "/hcps",
@@ -168,6 +172,7 @@ export const ROUTES: AppRoute[] = [
     label: () => "Users & assignments",
     icon: icon(UserCog),
     group: "admin",
+    badge: "patients_without_care_manager",
   },
   {
     path: "/admin",
@@ -200,6 +205,7 @@ export const ROUTES: AppRoute[] = [
     label: (can) => (can(P.SELF_CONSENT_MANAGE) ? "Messages" : "Inbox"),
     icon: icon(Inbox),
     group: "self",
+    badge: "messages",
   },
   {
     path: "/consent",
@@ -216,6 +222,7 @@ export const ROUTES: AppRoute[] = [
     label: () => "My patients",
     icon: icon(Users),
     group: "self",
+    badge: "consultations",
   },
   {
     path: "/profile",
@@ -251,6 +258,7 @@ export const ROUTES: AppRoute[] = [
     label: (can) => (can(P.USER_MANAGE) ? "Requests" : "Privacy requests"),
     icon: icon(FileLock2),
     group: "admin",
+    badge: "requests",
   },
   // Detail pages: guarded the same way, not shown in the menu.
   { path: "/nba/:id", anyOf: NBA_READ, element: <NbaDetail /> },

@@ -2,7 +2,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -16,8 +16,8 @@ from app.engagement import delivery
 from app.llm import service as drafting
 from app.llm.base import DraftOutput, MessageVariant
 from app.llm.validator import DraftValidationError, validate
-from app.models import Interaction, MessageDraft, Nba, User
-from app.models.enums import Channel, NbaStatus, Outcome
+from app.models import Interaction, MessageDraft, Nba, Patient, User
+from app.models.enums import Channel, NbaStatus, Outcome, PatientOrigin, TargetType
 from app.models.tables import utcnow
 from app.nba import gates
 from app.nba.revalidate import current_failures
@@ -25,6 +25,7 @@ from app.nba.revalidate import current_failures
 router = APIRouter(prefix="/api/nba", tags=["recommendations"])
 
 OPEN = (NbaStatus.READY_FOR_REVIEW, NbaStatus.APPROVED, NbaStatus.BLOCKED)
+REAL_PATIENTS = select(Patient.patient_id).where(Patient.origin != PatientOrigin.SYNTHETIC)
 
 # Any recommendation endpoint needs a recommendation-read permission; which rows are
 # visible is then decided by rbac.nba_filter, and acting on one by rbac.can_review.
@@ -83,6 +84,7 @@ def _require_status(nba: Nba, *allowed: str) -> None:
 def list_recommendations(
     status_in: list[str] | None = Query(None, alias="status"),
     target_type: str | None = None,
+    real_only: bool = False,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(readers),
@@ -92,7 +94,16 @@ def list_recommendations(
     where = [rbac.nba_filter(user), Nba.status.in_(status_in or OPEN)]
     if target_type:
         where.append(Nba.target_type == target_type)
+    # Real people (self-registered and clinic patients), as opposed to the demo population.
+    real = and_(Nba.target_type == TargetType.PATIENT, Nba.target_id.in_(REAL_PATIENTS))
+    if real_only:
+        where.append(real)
     total = db.scalar(select(func.count()).select_from(Nba).where(*where))
+    real_waiting = db.scalar(
+        select(func.count())
+        .select_from(Nba)
+        .where(rbac.nba_filter(user), real, Nba.status == NbaStatus.READY_FOR_REVIEW)
+    )
     by_status = dict(
         db.execute(
             select(Nba.status, func.count())
@@ -107,6 +118,7 @@ def list_recommendations(
     return {
         "total": total,
         "counts": by_status,
+        "real_waiting": real_waiting if rbac.can_see_target_profile(user) else None,
         "items": [out.nba_summary(db, n, with_identity=identity) for n in rows],
     }
 

@@ -4,9 +4,12 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, query } from "../api";
 import type { Json } from "../api";
+import { useAttention } from "../attention";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
+import { OriginBadge } from "./Care";
 import {
+  Alert,
   Badge,
   Card,
   ChannelIcon,
@@ -59,13 +62,20 @@ export default function Queue() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<FilterKey>("open");
   const [audience, setAudience] = useState("");
+  const [realOnly, setRealOnly] = useState(false);
   const [page, setPage] = useState(0);
   const statuses = FILTERS.find((f) => f.key === filter)!.statuses;
   const list = useQuery({
-    queryKey: ["nba", filter, audience, page],
-    queryFn: () => api(`/nba${query({ status: statuses, target_type: audience, limit: PAGE, offset: page * PAGE })}`),
+    queryKey: ["nba", filter, audience, realOnly, page],
+    queryFn: () =>
+      api(
+        `/nba${query({ status: statuses, target_type: audience, real_only: realOnly ? "true" : "", limit: PAGE, offset: page * PAGE })}`,
+      ),
     placeholderData: (previous) => previous,
   });
+  const attention = useAttention();
+  const careRequests = can(P.PATIENT_CARE_MANAGE) ? attention.care_requests ?? 0 : 0;
+  const realWaiting: number = list.data?.real_waiting ?? 0;
   const seesAll = can(P.NBA_READ_ALL);
   const view = seesAll
     ? "all"
@@ -102,6 +112,7 @@ export default function Queue() {
           </Link>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             {n.target_name && <span className="tabular text-xs text-ink-subtle">{n.target_id}</span>}
+            <OriginBadge origin={n.target_origin} />
             <SegmentBadge value={n.segment} />
           </div>
         </div>
@@ -176,6 +187,30 @@ export default function Queue() {
   return (
     <>
       <PageHeader title={title} subtitle={subtitle} />
+      {(careRequests > 0 || (realWaiting > 0 && !realOnly)) && (
+        <Alert tone="warn" title="Your patients need you" className="mb-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {careRequests > 0 && (
+              <Link to="/care" className="font-semibold text-primary-ink underline">
+                {careRequests} care request{careRequests === 1 ? "" : "s"} to handle
+              </Link>
+            )}
+            {realWaiting > 0 && !realOnly && (
+              <button
+                type="button"
+                className="font-semibold text-primary-ink underline"
+                onClick={() => {
+                  setRealOnly(true);
+                  setFilter("ready_for_review");
+                  setPage(0);
+                }}
+              >
+                {realWaiting} recommendation{realWaiting === 1 ? "" : "s"} for registered patients
+              </button>
+            )}
+          </div>
+        </Alert>
+      )}
 
       <KpiGrid>
         <Stat
@@ -230,6 +265,21 @@ export default function Queue() {
             <option value="PATIENT">Patients only</option>
             <option value="HCP">HCPs only</option>
           </Select>
+        )}
+        {(can(P.NBA_READ_ALL) || can(P.NBA_READ_PATIENT_ASSIGNED)) && (
+          <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              aria-label="Registered patients only"
+              checked={realOnly}
+              onChange={(e) => {
+                setRealOnly(e.target.checked);
+                setPage(0);
+              }}
+            />
+            Registered patients only
+          </label>
         )}
       </Toolbar>
 

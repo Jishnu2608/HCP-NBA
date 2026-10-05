@@ -16,6 +16,7 @@ import {
   Users,
 } from "lucide-react";
 import { useCallback, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
@@ -89,9 +90,12 @@ function MedicationCard({ m, onRefill, refilling }: { m: Json; onRefill?: () => 
       description={m.measure ? `For ${measureLabel(m.measure).toLowerCase()}` : undefined}
       action={confirmed ? <AdherenceBadge therapy={m} /> : <StatusChip status={m.review_status} />}
     >
-      {(m.dose_instructions || m.schedule) && (
-        <p className="mb-4 text-sm text-ink-muted">{[m.dose_instructions, m.schedule].filter(Boolean).join(" · ")}</p>
-      )}
+      <p className="mb-4 text-sm text-ink-muted">
+        {[m.dose_instructions, m.schedule].filter(Boolean).join(" · ")}
+        {m.dose_instructions || m.schedule ? " · " : ""}
+        Since {fmtDate(m.start_date)}
+        {m.end_date ? ` until ${fmtDate(m.end_date)}` : ""}
+      </p>
       {confirmed && m.pdc != null && (
         <div className="mb-5">
           <div className="flex items-baseline justify-between text-[13px] text-ink-subtle">
@@ -126,7 +130,9 @@ function MedicationCard({ m, onRefill, refilling }: { m: Json; onRefill?: () => 
         <p className="text-sm text-ink-subtle">
           {m.review_status === "reported"
             ? "Your care team will review this medication and add the supply details."
-            : `Stopped${m.end_date ? ` on ${fmtDate(m.end_date)}` : ""}.`}
+            : m.review_status === "dismissed"
+              ? "Not added to your medications by your care team. See Your requests for the reason."
+              : `Stopped${m.end_date ? ` on ${fmtDate(m.end_date)}` : ""}.`}
         </p>
       )}
       {onRefill && confirmed && (
@@ -160,6 +166,7 @@ export function MyMedications() {
   const saved = (message: string) => (data: Json) => {
     client.setQueryData(["me", "health"], data);
     void client.invalidateQueries({ queryKey: ["me"] });
+    void client.invalidateQueries({ queryKey: ["attention"] });
     setPanel(null);
     toast(message);
   };
@@ -173,11 +180,11 @@ export function MyMedications() {
   });
   const consult = useMutation({
     mutationFn: (reason: string) => post("/me/care-requests", { reason }),
-    onSuccess: saved("Request sent to your care manager."),
+    onSuccess: saved("Request sent to your care manager. You can follow it under Your requests."),
   });
   const refill = useMutation({
     mutationFn: (id: number) => post(`/me/medications/${id}/refill`, {}),
-    onSuccess: saved("Refill recorded."),
+    onSuccess: saved("Refill recorded. Your days covered are updated."),
   });
 
   if (profile.isLoading || health.isLoading) return <Loading label="Loading your health profile" />;
@@ -310,7 +317,7 @@ export function MyMedications() {
           </Card>
           <Card
             title="Instructions from your care team"
-            description="What your healthcare professional asked you to do, as recorded by your care team."
+            description="Advice from your healthcare professionals and your care team, with the request each one answers."
           >
             <NoteList items={h.notes} />
           </Card>
@@ -354,15 +361,19 @@ export function MyInbox() {
   const client = useQueryClient();
   const toast = useToast();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: () => api<Json[]>("/me/inbox") });
+  const isPatient = can(P.SELF_CONSENT_MANAGE);
+  // A patient who allows no contact method cannot receive anything: say so, not just "empty".
+  const consents = useQuery({ queryKey: ["consents"], queryFn: () => api<Json[]>("/me/consents"), enabled: isPatient });
+  const reachable = (consents.data ?? []).some((c) => c.channel && c.granted && c.in_effect !== false);
   const respond = useMutation({
     mutationFn: (v: { id: number; response: string }) => post(`/me/inbox/${v.id}/respond`, { response: v.response }),
     onSuccess: (_, v) => {
-      if (v.response === "refill") toast("Thank you. Your refill is recorded.");
+      if (v.response === "refill") toast("Thank you. Your refill is recorded and your days covered are updated.");
       void client.invalidateQueries({ queryKey: ["inbox"] });
       void client.invalidateQueries({ queryKey: ["me"] });
+      void client.invalidateQueries({ queryKey: ["attention"] });
     },
   });
-  const isPatient = can(P.SELF_CONSENT_MANAGE);
   if (inbox.isLoading) return <Loading label="Loading messages" rows={4} />;
   if (inbox.error) return <ErrorState error={inbox.error} retry={() => void inbox.refetch()} variant="page" title="Messages could not be loaded" />;
   const unreadCount = inbox.data!.filter((m) => m.status === "pending" || m.status === "no_response").length;
@@ -378,6 +389,21 @@ export function MyInbox() {
         }
       />
       <ErrorNote error={respond.error} className="mb-4" />
+      {isPatient && consents.data && !reachable && (
+        <Alert tone="warn" title="Your care team cannot send you messages yet" className="mb-4">
+          You have not allowed any way of contacting you, so reminders and messages cannot reach you.{" "}
+          <Link to="/consent" className="font-semibold text-primary-ink underline">
+            Choose how you can be contacted
+          </Link>
+          .
+        </Alert>
+      )}
+      {isPatient && (
+        <p className="mb-4 text-[13px] text-ink-subtle">
+          In this demonstration, emails and text messages are not sent outside the app: every message your care team sends
+          is shown here.
+        </p>
+      )}
       {!inbox.data!.length ? (
         <Card>
           <EmptyState title="No messages yet" icon={<InboxIcon className="h-5 w-5" />}>
@@ -401,7 +427,7 @@ export function MyInbox() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-subtle">
                       <ChannelIcon channel={m.channel} className="h-4 w-4" />
-                      <span>{channelName(m.channel)}</span>
+                      <span>{m.channel_note ?? channelName(m.channel)}</span>
                       <span aria-hidden>·</span>
                       <span className="tabular">{fmtDateTime(m.received)}</span>
                       {unread && <Badge tone="accent">New</Badge>}
@@ -452,6 +478,7 @@ export function MyInbox() {
 export function MyConsents() {
   const client = useQueryClient();
   const toast = useToast();
+  const [confirmSharing, setConfirmSharing] = useState(false);
   const consents = useQuery({ queryKey: ["consents"], queryFn: () => api<Json[]>("/me/consents") });
   const change = useMutation({
     mutationFn: (v: { channel: string | null; granted: boolean }) =>
@@ -472,6 +499,7 @@ export function MyConsents() {
     const label = c.channel
       ? `Contact me by ${channelName(c.channel).toLowerCase()}`
       : "Share my adherence summary with my doctors";
+    const sharingOff = !c.channel && c.granted;
     return (
       <li className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
         <div className="flex min-w-0 items-start gap-3">
@@ -489,7 +517,10 @@ export function MyConsents() {
           checked={c.granted}
           label={label}
           disabled={change.isPending}
-          onChange={(granted) => change.mutate({ channel: c.channel, granted })}
+          onChange={(granted) =>
+            // Turning sharing off takes the doctors' view away: confirm first.
+            sharingOff && !granted ? setConfirmSharing(true) : change.mutate({ channel: c.channel, granted })
+          }
         />
       </li>
     );
@@ -517,6 +548,30 @@ export function MyConsents() {
                 <Row key="sharing" c={c} />
               ))}
             </ul>
+            {confirmSharing && (
+              <Alert tone="warn" title="Stop sharing with your doctors?" className="mt-4">
+                <p>
+                  The doctors on your care team will no longer see how you are getting on with your medicines (days
+                  covered, last refill). A consultation you already asked for is not affected. You can switch sharing back
+                  on at any time.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    busy={change.isPending}
+                    onClick={() =>
+                      change.mutate({ channel: null, granted: false }, { onSettled: () => setConfirmSharing(false) })
+                    }
+                  >
+                    Stop sharing
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmSharing(false)}>
+                    Keep sharing
+                  </Button>
+                </div>
+              </Alert>
+            )}
           </Card>
         )}
         <p className="flex items-start gap-2 text-[13px] text-ink-subtle">
@@ -525,6 +580,183 @@ export function MyConsents() {
         </p>
       </div>
     </>
+  );
+}
+
+const CONSULTATION_STATE: Record<string, { tone: "info" | "warn" | "ok" | "neutral"; label: string }> = {
+  awaiting_hcp: { tone: "warn", label: "Waiting for your response" },
+  hcp_responded: { tone: "info", label: "Answered, with the care manager" },
+  closed: { tone: "ok", label: "Closed" },
+  open: { tone: "neutral", label: "Returned to the care manager" },
+  in_progress: { tone: "neutral", label: "With the care manager" },
+};
+
+/** Consultations care managers routed to this HCP: what the patient asked, their condition
+ *  and current medication, and a way to answer or decline. */
+function RoutedConsultations() {
+  const { can } = useAuth();
+  const list = useQuery({
+    queryKey: ["consultations"],
+    queryFn: () => api("/me/consultations"),
+    enabled: can(P.SELF_CONSULTATIONS_MANAGE),
+    refetchInterval: 60_000,
+  });
+  const [answering, setAnswering] = useState<Json | null>(null);
+  const close = useCallback(() => setAnswering(null), []);
+  if (!can(P.SELF_CONSULTATIONS_MANAGE)) return null;
+  if (list.isLoading) return <Loading label="Loading consultations" rows={2} />;
+  if (list.error) return <ErrorState error={list.error} retry={() => void list.refetch()} title="Consultations could not be loaded" />;
+  const items: Json[] = list.data.items;
+  return (
+    <section aria-labelledby="consultations-title" className="mb-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 id="consultations-title" className="text-[17px] font-semibold text-ink">
+          Consultations routed to you
+        </h2>
+        {list.data.waiting > 0 && <Badge tone="warn">{list.data.waiting} waiting</Badge>}
+      </div>
+      {!items.length ? (
+        <Card>
+          <EmptyState title="No consultations yet" icon={<Stethoscope className="h-5 w-5" />} compact>
+            When a care manager routes a patient's consultation to you, it appears here for your response.
+          </EmptyState>
+        </Card>
+      ) : (
+        <ul className="space-y-3">
+          {items.map((c) => {
+            const state = CONSULTATION_STATE[c.status] ?? { tone: "neutral" as const, label: c.status };
+            return (
+              <li key={c.id}>
+                <Card
+                  title={
+                    <span className="flex flex-wrap items-center gap-2">
+                      {c.patient_name}
+                      <span className="text-[13px] font-normal text-ink-subtle">
+                        {c.patient_age} years{c.patient_location ? ` · ${c.patient_location}` : ""}
+                      </span>
+                    </span>
+                  }
+                  action={<Badge tone={state.tone}>{state.label}</Badge>}
+                >
+                  <p className="whitespace-pre-line text-sm text-ink">“{c.reason}”</p>
+                  <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="text-[13px] text-ink-subtle">Conditions</dt>
+                      <dd className="mt-0.5 text-ink">
+                        {c.conditions.length ? c.conditions.map((x: Json) => x.label).join(", ") : "None confirmed"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[13px] text-ink-subtle">Current medication</dt>
+                      <dd className="mt-0.5 text-ink">
+                        {c.medications.length
+                          ? c.medications
+                              .map((m: Json) => `${titleCase(m.drug_name)}${m.pdc != null ? ` (${pct(m.pdc)} of days covered)` : ""}`)
+                              .join(", ")
+                          : "None confirmed"}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="mt-3 text-[13px] text-ink-subtle">
+                    Routed {fmtDate(c.updated_at)} by {c.care_managers.join(", ") || "the care manager"}
+                  </p>
+                  {(c.notes ?? []).length > 0 && (
+                    <div className="mt-3">
+                      <NoteList items={c.notes} staff compact />
+                    </div>
+                  )}
+                  {c.status === "awaiting_hcp" && (
+                    <div className="mt-4 border-t border-line pt-4">
+                      <Button variant="primary" size="sm" onClick={() => setAnswering(c)}>
+                        Respond
+                      </Button>
+                    </div>
+                  )}
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {answering && (
+        <Drawer title={`Respond about ${answering.patient_name}`} onClose={close}>
+          <ConsultationAnswer consultation={answering} onDone={close} />
+        </Drawer>
+      )}
+    </section>
+  );
+}
+
+function ConsultationAnswer({ consultation, onDone }: { consultation: Json; onDone: () => void }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [response, setResponse] = useState<"advice" | "decline">("advice");
+  const [message, setMessage] = useState("");
+  const [note, setNote] = useState("");
+  const [tried, setTried] = useState(false);
+  const missing = response === "advice" ? !message.trim() : !note.trim();
+  const send = useMutation({
+    mutationFn: () =>
+      post(`/me/consultations/${consultation.id}/respond`, {
+        response,
+        message: message.trim() || null,
+        note_to_care_team: note.trim() || null,
+      }),
+    onSuccess: () => {
+      toast(
+        response === "advice"
+          ? "Response sent. The patient sees your advice; the care manager closes the consultation."
+          : "Returned to the care manager to route again.",
+      );
+      void client.invalidateQueries({ queryKey: ["consultations"] });
+      void client.invalidateQueries({ queryKey: ["attention"] });
+      onDone();
+    },
+  });
+  return (
+    <form
+      className="space-y-4"
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        setTried(true);
+        if (!missing) send.mutate();
+      }}
+    >
+      <p className="text-sm text-ink-muted">“{consultation.reason}”</p>
+      <Segmented
+        label="Your response"
+        value={response}
+        onChange={setResponse}
+        options={[
+          { value: "advice", label: "Advice for the patient" },
+          { value: "decline", label: "I can't take this" },
+        ]}
+      />
+      {response === "advice" && (
+        <TextArea
+          label="Advice for the patient"
+          hint="The patient reads this under the consultation they asked for."
+          rows={5}
+          maxLength={1000}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          error={tried && missing ? "Write your advice." : null}
+        />
+      )}
+      <TextArea
+        label={response === "advice" ? "Note for the care manager (optional, not shown to the patient)" : "Reason (for the care manager)"}
+        rows={3}
+        maxLength={1000}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        error={tried && missing && response === "decline" ? "Give the reason." : null}
+      />
+      <ErrorNote error={send.error} />
+      <Button type="submit" variant="primary" busy={send.isPending}>
+        Send response
+      </Button>
+    </form>
   );
 }
 
@@ -559,8 +791,10 @@ export function MyPatients() {
     <>
       <PageHeader
         title="My patients"
-        subtitle="Adherence summary for therapies you prescribed. Only patients who have agreed to share with their provider are listed."
+        subtitle="Consultations routed to you, and the adherence of patients in your care who agreed to share it with their doctors."
       />
+      <RoutedConsultations />
+      <h2 className="mb-3 text-[17px] font-semibold text-ink">Adherence of patients who share it with you</h2>
       <Card flush>
         {!rows.length ? (
           <EmptyState title="No patients have agreed to sharing" icon={<Users className="h-5 w-5" />}>

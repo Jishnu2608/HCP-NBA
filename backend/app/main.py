@@ -23,7 +23,7 @@ from app.api import (
 from app.auth.service import ensure_system_admin
 from app.clinical import activity
 from app.clinical.hcps import separate_real_hcps
-from app.clinical.records import separate_real_patients
+from app.clinical.records import adopt_unassigned, separate_real_patients
 from app.core import http_security
 from app.core.config import REPO_ROOT, get_settings
 from app.core.db import SessionLocal
@@ -46,6 +46,8 @@ async def lifespan(_: FastAPI):
             separate_real_hcps(db)
             # Records that existed before activity was tracked get it from their history.
             activity.backfill(db)
+            # Real patients still waiting for a care manager get one if any is active.
+            adopt_unassigned(db)
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")

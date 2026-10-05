@@ -159,6 +159,9 @@ class AssignmentService:
             db.add_all(
                 CareManagerPatient(care_manager_user_id=user.id, patient_id=pid) for pid in chosen
             )
+            db.flush()
+            # Real patients who were waiting for a care manager get one now.
+            records.adopt_unassigned(db)
         elif kind == HCPS and not self.hcp_ids(db, user):
             ids = list(
                 db.scalars(
@@ -203,12 +206,32 @@ class AssignmentService:
         if kind == PATIENTS:
             wanted = sorted(set(patient_ids or []))
             self._require_existing(db, Patient.patient_id, wanted, "patient")
+            # A real patient always has exactly one responsible care manager: removing one here
+            # would leave them with nobody, so they are moved by assigning them elsewhere.
+            dropped = [pid for pid in records.real_patients_of(db, user) if pid not in set(wanted)]
+            if dropped:
+                raise AuthError(
+                    409,
+                    "would_orphan",
+                    "These real patients would be left without a care manager. Assign them to "
+                    "another care manager first.",
+                    patients=dropped,
+                )
             db.execute(
-                delete(CareManagerPatient).where(CareManagerPatient.care_manager_user_id == user.id)
+                delete(CareManagerPatient).where(
+                    CareManagerPatient.care_manager_user_id == user.id,
+                    CareManagerPatient.patient_id.not_in(
+                        select(Patient.patient_id).where(Patient.origin.in_(records.REAL))
+                    ),
+                )
             )
-            db.add_all(
-                CareManagerPatient(care_manager_user_id=user.id, patient_id=p) for p in wanted
-            )
+            for pid in wanted:
+                patient = db.get(Patient, pid)
+                if records.is_real(patient):
+                    # Moves the patient (and their open follow-ups) from any other care manager.
+                    records.assign_care_manager(db, patient, user)
+                else:
+                    db.add(CareManagerPatient(care_manager_user_id=user.id, patient_id=pid))
         elif kind == HCPS:
             wanted = sorted(set(hcp_ids or []))
             self._require_existing(db, Hcp.hcp_id, wanted, "HCP")

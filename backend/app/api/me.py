@@ -8,33 +8,46 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.api import serializers as out
-from app.api.deps import require_permission
+from app.api.deps import get_current_user, require_permission
 from app.api.people import consent_out
 from app.api.schemas import StrictBody
-from app.clinical import activity, care, vocabulary
+from app.clinical import activity, care, records, vocabulary
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
-from app.engagement import delivery, simulator
+from app.engagement import delivery
 from app.models import (
+    CareRequest,
     Consent,
     Content,
     Hcp,
     Interaction,
     MessageDraft,
     Patient,
+    PatientCondition,
     PatientHcp,
     PatientTherapy,
+    PrivacyRequest,
     SpecialtyChangeRequest,
     User,
 )
-from app.models.enums import Channel, ConsentPurpose, FillSource, Outcome, ReviewStatus, TargetType
+from app.models.enums import (
+    CareRequestStatus,
+    CareRequestType,
+    Channel,
+    ConditionStatus,
+    ConsentPurpose,
+    FillSource,
+    Outcome,
+    ReviewStatus,
+    TargetType,
+)
 
 router = APIRouter(prefix="/api/me", tags=["portal"])
 
@@ -160,12 +173,10 @@ def _change_consent(db: Session, user: User, purpose: str, channel: str | None, 
     existing = _current_consents(db, own_patient_id(user), today).get((purpose, channel))
     if existing and existing.granted == granted:
         return consent_out(existing, today)
-    # Consent history is kept: close the old record and open a new one from today.
+    # Consent history is kept: close the old record and open a new one from today. A record
+    # that began today is closed today too (a zero-length period): it stays in the history.
     if existing:
-        if existing.effective_from == today:
-            db.delete(existing)
-        else:
-            existing.effective_to = today
+        existing.effective_to = today
     record = Consent(
         patient_id=user.patient_id,
         purpose=purpose,
@@ -236,6 +247,17 @@ def my_patients(user: User = Depends(panel_readers), db: Session = Depends(get_d
 
 # Messages a person would actually receive. Calls and visits are not inbox items.
 INBOX_CHANNELS = (Channel.PORTAL, Channel.EMAIL, Channel.SMS)
+# Delivery is simulated in this deployment: an email or text is shown here, never sent out.
+CHANNEL_NOTE = {
+    Channel.EMAIL: "Email (copy shown here; not sent outside this demo)",
+    Channel.SMS: "Text message (copy shown here; not sent outside this demo)",
+    Channel.PORTAL: "Portal message",
+}
+
+
+def _therapy_active(db: Session, therapy_id: int) -> bool:
+    therapy = db.get(PatientTherapy, therapy_id)
+    return therapy is not None and therapy.review_status == ReviewStatus.CONFIRMED
 
 
 class InboxResponse(StrictBody):
@@ -263,7 +285,10 @@ def _inbox_item(db: Session, i: Interaction) -> dict:
         "body": draft.body if draft else (content.body if content else ""),
         "status": i.outcome,
         "responded": i.outcome_ts,
-        "can_refill": i.therapy_id is not None and i.outcome != Outcome.FILLED,
+        "can_refill": i.therapy_id is not None
+        and i.outcome != Outcome.FILLED
+        and _therapy_active(db, i.therapy_id),
+        "channel_note": CHANNEL_NOTE.get(i.channel),
     }
 
 
@@ -307,7 +332,9 @@ def respond(
             raise HTTPException(status.HTTP_409_CONFLICT, "This message has no refill action")
         if i.outcome == Outcome.FILLED:
             raise HTTPException(status.HTTP_409_CONFLICT, "Refill already recorded")
-        simulator.apply_fill(db, db.get(PatientTherapy, i.therapy_id), when, FillSource.PATIENT)
+        # The same checks as "I refilled today": confirmed, active, once per day. A refill
+        # already logged today answers the message without counting the supply twice.
+        care.log_refill(db, user, db.get(PatientTherapy, i.therapy_id), None, FillSource.PATIENT)
         outcome = Outcome.FILLED
     else:
         # A weaker signal never overwrites a stronger one already captured.
@@ -336,6 +363,8 @@ class MedicationReport(StrictBody):
     end_date: str | None = Field(default=None, max_length=10)
     # Explicit: true = still being taken (no end date); false = an end date is required.
     ongoing: bool
+    # When a supply was last collected, if known: the care team confirms it.
+    last_refill_date: str | None = Field(default=None, max_length=10)
 
 
 class RefillReport(StrictBody):
@@ -390,7 +419,7 @@ def log_refill(
     if therapy is None or therapy.patient_id != own_patient_id(user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Medication not found")
     care.require_real(_own_patient(db, user))
-    care.log_refill(db, user, therapy, body.fill_date, FillSource.PATIENT)
+    care.require_new_refill(care.log_refill(db, user, therapy, body.fill_date, FillSource.PATIENT))
     db.commit()
     return _health(db, user)
 
@@ -442,3 +471,179 @@ def request_specialty_change(
     row = hcp_records.submit_request(db, user, body.action, body.specialties, body.notes)
     db.commit()
     return hcp_records.request_out(db, row)
+
+
+# --- Consultations routed to an HCP ------------------------------------------------------
+
+
+consultation_handlers = require_permission(Permission.SELF_CONSULTATIONS_MANAGE)
+
+
+def _consultation_out(db: Session, r: CareRequest) -> dict:
+    """What the routed HCP needs to answer: the patient asked for this consultation, so its
+    details (reason, condition, current medications and adherence) are shared with them while
+    it is open, whatever the ongoing provider-sharing setting."""
+    today = clock.get_today(db)
+    p = db.get(Patient, r.patient_id)
+    therapies = db.scalars(
+        select(PatientTherapy).where(
+            PatientTherapy.patient_id == r.patient_id,
+            PatientTherapy.review_status == ReviewStatus.CONFIRMED,
+        )
+    ).all()
+    managers = [u.display_name for u in records.responsible_care_managers(db, r.patient_id)]
+    return care.request_out(db, r, for_patient=False) | {
+        "patient_age": int((today - p.birth_date).days / 365.25),
+        "patient_location": out.location_label(p),
+        "conditions": [
+            care.condition_out(c)
+            for c in db.scalars(
+                select(PatientCondition).where(
+                    PatientCondition.patient_id == r.patient_id,
+                    PatientCondition.status == ConditionStatus.CONFIRMED,
+                )
+            )
+        ],
+        "medications": [
+            out.therapy_out(db, t, today, with_risk=False) | {"drug_name": t.drug_name}
+            for t in therapies
+        ],
+        "care_managers": managers,
+    }
+
+
+def _routed_to_me(db: Session, user: User, request_id: int) -> CareRequest:
+    r = db.get(CareRequest, request_id)
+    if (
+        r is None
+        or r.type != CareRequestType.CONSULTATION
+        or r.assigned_hcp_id is None
+        or r.assigned_hcp_id != own_hcp_id(user)
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Consultation not found")
+    return r
+
+
+@router.get("/consultations")
+def my_consultations(
+    user: User = Depends(consultation_handlers), db: Session = Depends(get_db)
+) -> dict:
+    """Consultations care managers routed to this HCP: waiting ones first, then answered."""
+    hcp_id = own_hcp_id(user)
+    rows = db.scalars(
+        select(CareRequest)
+        .where(
+            CareRequest.assigned_hcp_id == hcp_id,
+            CareRequest.type == CareRequestType.CONSULTATION,
+        )
+        .order_by(CareRequest.updated_at.desc(), CareRequest.id.desc())
+    ).all()
+    waiting = [r for r in rows if r.status == CareRequestStatus.AWAITING_HCP]
+    others = [r for r in rows if r.status != CareRequestStatus.AWAITING_HCP]
+    return {
+        "waiting": len(waiting),
+        "items": [_consultation_out(db, r) for r in waiting + others],
+    }
+
+
+class ConsultationAnswer(StrictBody):
+    response: Literal["advice", "decline"]
+    # Advice for the patient (shown to them) or, when declining, the reason.
+    message: str | None = Field(default=None, max_length=1000)
+    note_to_care_team: str | None = Field(default=None, max_length=1000)
+
+
+@router.post("/consultations/{request_id}/respond")
+def answer_consultation(
+    request_id: int,
+    body: ConsultationAnswer,
+    user: User = Depends(consultation_handlers),
+    db: Session = Depends(get_db),
+) -> dict:
+    r = _routed_to_me(db, user, request_id)
+    care.respond_consultation(
+        db, user, r, response=body.response, message=body.message,
+        note_to_care_team=body.note_to_care_team,
+    )  # fmt: skip
+    db.commit()
+    return _consultation_out(db, r)
+
+
+NEEDS_CARE_MANAGER = (
+    CareRequestStatus.OPEN,
+    CareRequestStatus.IN_PROGRESS,
+    CareRequestStatus.HCP_RESPONDED,
+)
+
+
+# --- What needs this person's attention ---------------------------------------------------
+
+
+@router.get("/attention")
+def attention(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    """Counts for the menu: work waiting for this account, by what it may do. A role learns
+    that something arrived without having to know which page to open."""
+    from app.core.permissions import can
+
+    counts: dict[str, int] = {}
+    today = clock.get_today(db)
+    if can(user, Permission.PATIENT_CARE_MANAGE):
+        needs_me = or_(
+            CareRequest.status.in_(
+                (
+                    CareRequestStatus.OPEN,
+                    CareRequestStatus.IN_PROGRESS,
+                    CareRequestStatus.HCP_RESPONDED,
+                )
+            ),
+            and_(
+                CareRequest.type == CareRequestType.FOLLOW_UP,
+                CareRequest.status != CareRequestStatus.CLOSED,
+                CareRequest.due_date <= today,
+            ),
+        )
+        mine = rbac.patient_filter(user, CareRequest.patient_id)
+        followups_not_due = and_(
+            CareRequest.type == CareRequestType.FOLLOW_UP, CareRequest.due_date > today
+        )
+        counts["care_requests"] = db.scalar(
+            select(func.count())
+            .select_from(CareRequest)
+            .where(mine, needs_me, not_(followups_not_due))
+        )
+    if can(user, Permission.SELF_CONSULTATIONS_MANAGE) and user.hcp_id:
+        counts["consultations"] = db.scalar(
+            select(func.count())
+            .select_from(CareRequest)
+            .where(
+                CareRequest.assigned_hcp_id == user.hcp_id,
+                CareRequest.status == CareRequestStatus.AWAITING_HCP,
+            )
+        )
+    if can(user, Permission.SELF_INBOX) and (user.patient_id or user.hcp_id):
+        target_type, target_id = _me(user)
+        counts["messages"] = db.scalar(
+            select(func.count())
+            .select_from(Interaction)
+            .where(
+                Interaction.target_type == target_type,
+                Interaction.target_id == target_id,
+                Interaction.source == "nba",
+                Interaction.channel.in_(INBOX_CHANNELS),
+                Interaction.outcome.in_((Outcome.PENDING, Outcome.NO_RESPONSE)),
+            )
+        )
+    if can(user, Permission.PRIVACY_MANAGE):
+        counts["privacy_requests"] = db.scalar(
+            select(func.count())
+            .select_from(PrivacyRequest)
+            .where(PrivacyRequest.status.in_(("submitted", "in_review")))
+        )
+    if can(user, Permission.USER_MANAGE):
+        counts["specialty_requests"] = db.scalar(
+            select(func.count())
+            .select_from(SpecialtyChangeRequest)
+            .where(SpecialtyChangeRequest.status == "pending")
+        )
+        counts["patients_without_care_manager"] = len(records.unassigned_real_patients(db))
+    return counts

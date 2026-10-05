@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
 from conftest import auth
 
@@ -42,6 +42,11 @@ def test_account_and_invitation_ids_are_never_reused(db):
         assert Base.metadata.tables[table].dialect_options["sqlite"]["autoincrement"]
 
 
+def utc_today() -> date:
+    """Today is the UTC date: one time base for stored instants and date rules."""
+    return datetime.now(UTC).date()
+
+
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 
@@ -51,16 +56,16 @@ def test_meta_reports_counts_and_the_real_date(client, db):
     ensure_system_admin(db)
     db.commit()
     body = client.get("/api/meta", headers=auth(client, "admin")).json()
-    assert body["as_of_date"] == date.today().isoformat()
+    assert body["as_of_date"] == utc_today().isoformat()
     assert body["row_counts"]["patient"] == 0
 
 
 def test_today_is_the_real_date_and_nothing_stores_a_demo_date(db):
-    assert clock.get_today(db) == date.today()
+    assert clock.get_today(db) == utc_today()
     with clock.override(date(2031, 1, 2)):
         assert clock.get_today(db) == date(2031, 1, 2)
-    assert clock.get_today(db) == date.today()
+    assert clock.get_today(db) == utc_today()
     assert not hasattr(clock, "set_today") and not hasattr(clock, "advance")
     clock.set_simulated_through(db, date(2026, 9, 30))
     # A processing marker for the simulator, never "today".
-    assert clock.get_today(db) == date.today()
+    assert clock.get_today(db) == utc_today()

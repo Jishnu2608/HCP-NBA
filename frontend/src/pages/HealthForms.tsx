@@ -17,8 +17,9 @@ export interface Vocabulary {
   days_supply: number[];
 }
 
-/** Today's real date as YYYY-MM-DD in the viewer's time zone (the server checks again). */
-export const todayISO = () => new Date().toLocaleDateString("en-CA");
+/** Today as YYYY-MM-DD. The server works on the UTC date, so forms do too (it checks
+ *  again). */
+export const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const addDays = (iso: string, days: number) => {
   const d = new Date(`${iso}T12:00:00`);
@@ -72,14 +73,17 @@ const STATUS: Record<string, { tone: Tone; label: string; icon: ReactNode }> = {
   confirmed: { tone: "ok", label: "Confirmed", icon: <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> },
   stopped: { tone: "neutral", label: "Stopped", icon: null },
   resolved: { tone: "neutral", label: "Resolved", icon: null },
+  dismissed: { tone: "neutral", label: "Not added", icon: null },
   open: { tone: "warn", label: "Open", icon: <Clock3 className="h-3.5 w-3.5" aria-hidden /> },
   in_progress: { tone: "info", label: "In progress", icon: <Clock3 className="h-3.5 w-3.5" aria-hidden /> },
+  awaiting_hcp: { tone: "info", label: "Waiting for HCP", icon: <Stethoscope className="h-3.5 w-3.5" aria-hidden /> },
+  hcp_responded: { tone: "warn", label: "HCP responded", icon: <MessageSquareText className="h-3.5 w-3.5" aria-hidden /> },
   closed: { tone: "ok", label: "Closed", icon: <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> },
 };
 
-export function StatusChip({ status, staff = false }: { status: string; staff?: boolean }) {
+export function StatusChip({ status, staff = false, label: given }: { status: string; staff?: boolean; label?: string }) {
   const s = STATUS[status] ?? { tone: "neutral" as Tone, label: titleCase(status), icon: null };
-  const label = staff && status === "reported" ? "Reported by patient" : s.label;
+  const label = given ?? (staff && status === "reported" ? "Reported by patient" : s.label);
   return (
     <Badge tone={s.tone} icon={s.icon}>
       {label}
@@ -91,6 +95,7 @@ export const REQUEST_LABEL: Record<string, string> = {
   condition_review: "Condition to review",
   medication_review: "Medication to review",
   consultation: "Consultation request",
+  follow_up: "Follow-up",
 };
 
 /* ------------------------------------------------------------------ forms */
@@ -153,6 +158,9 @@ export interface MedicationValues {
   end_date: string | null;
   /** Explicit: still being taken (no end date) or ending on `end_date`. */
   ongoing: boolean;
+  /** When a supply was last collected, if known: so a medication already being taken is
+   *  not mistaken for one that was never filled. */
+  last_refill_date: string | null;
 }
 
 /** A medication. The patient reports what they take; the care team records a course,
@@ -177,7 +185,7 @@ export function MedicationForm({
   const staff = audience === "staff";
   const vocab = useVocabulary();
   const listId = useId();
-  const [v, setV] = useState({ name: "", dose_instructions: "", schedule: "", start_date: "", end_date: "" });
+  const [v, setV] = useState({ name: "", dose_instructions: "", schedule: "", start_date: "", end_date: "", last_refill: "" });
   const [ongoing, setOngoing] = useState(true);
   const [tried, setTried] = useState(false);
   const errors = {
@@ -196,6 +204,10 @@ export function MedicationForm({
         : v.start_date && v.end_date < v.start_date
           ? "The end date is before the start date."
           : null,
+    last_refill:
+      v.last_refill && ((v.start_date && v.last_refill < v.start_date) || v.last_refill > today)
+        ? "Use a date between the start date and today."
+        : null,
   };
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -208,6 +220,7 @@ export function MedicationForm({
       start_date: v.start_date,
       end_date: ongoing ? null : v.end_date || null,
       ongoing,
+      last_refill_date: v.last_refill || null,
     });
   }
   const set = (key: keyof typeof v) => (e: { target: { value: string } }) => setV({ ...v, [key]: e.target.value });
@@ -280,10 +293,30 @@ export function MedicationForm({
         </fieldset>
       ) : (
         <label className="flex items-center gap-2 text-sm text-ink">
-          <input type="checkbox" checked={ongoing} onChange={(e) => setOngoing(e.target.checked)} className="h-4 w-4 accent-[var(--color-primary)]" />
+          <input
+            type="checkbox"
+            aria-label="I am still taking it"
+            checked={ongoing}
+            onChange={(e) => setOngoing(e.target.checked)}
+            className="h-4 w-4 accent-[var(--color-primary)]"
+          />
           I am still taking it
         </label>
       )}
+      <TextField
+        label={staff ? "Last refill date (if already being taken)" : "When did you last collect a supply? (optional)"}
+        type="date"
+        min={v.start_date || undefined}
+        max={today}
+        value={v.last_refill}
+        onChange={set("last_refill")}
+        hint={
+          staff
+            ? "Recorded as the first refill, so adherence starts from what is already on hand."
+            : "If you already take it, this tells your care team how much you have on hand."
+        }
+        error={tried ? errors.last_refill : null}
+      />
       {extra}
       <ErrorNote error={error} />
       <Button type="submit" variant="primary" busy={busy}>
@@ -293,15 +326,26 @@ export function MedicationForm({
   );
 }
 
+/** "$" in the US, "£" in the UK, "€" in the euro area; otherwise none. */
+export function currencyFor(country: string | null | undefined): string {
+  if (country === "US") return "$";
+  if (country === "GB") return "£";
+  const euro = ["AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"];
+  return country && euro.includes(country) ? "€" : "";
+}
+
 /** Supply details only the care team sets (when recording or confirming a medication). */
 export function SupplyFields({
   value,
   onChange,
   knownMeasure,
+  currency = "",
 }: {
   value: { measure: string; days_supply: string; copay: string };
   onChange: (v: { measure: string; days_supply: string; copay: string }) => void;
   knownMeasure?: string | null;
+  /** The patient's currency symbol, when known. */
+  currency?: string;
 }) {
   const vocab = useVocabulary();
   return (
@@ -327,7 +371,7 @@ export function SupplyFields({
         ))}
       </Choice>
       <TextField
-        label="Copay ($)"
+        label={currency ? `Copay (${currency})` : "Copay"}
         type="number"
         min={0}
         step="0.01"
@@ -497,9 +541,16 @@ export function MedicationSummary({ m, staff }: { m: Json; staff?: boolean }) {
 export function CareTeam({ team }: { team: Json }) {
   const hcps: Json[] = team?.hcps ?? [];
   const managers: Json[] = team?.care_managers ?? [];
-  if (!hcps.length && !managers.length) return <p className="text-sm text-ink-subtle">No care team yet.</p>;
   return (
     <ul className="space-y-3">
+      {!managers.length && (
+        <li className="flex items-center gap-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-subtle text-ink-subtle" aria-hidden>
+            <Clock3 className="h-4 w-4" />
+          </span>
+          <div className="text-sm text-ink-muted">A care manager is being assigned.</div>
+        </li>
+      )}
       {managers.map((m) => (
         <li key={`cm-${m.id}`} className="flex items-center gap-3">
           <Avatar name={m.name} size="sm" />
@@ -520,7 +571,11 @@ export function CareTeam({ team }: { team: Json }) {
               <Stethoscope className="h-3.5 w-3.5 shrink-0" aria-hidden /> {specialtyText(h.specialties)}
             </div>
           </div>
-          {h.is_primary && <Badge tone="sage">Primary</Badge>}
+          {h.available === false ? (
+            <Badge tone="neutral">No longer available</Badge>
+          ) : (
+            h.is_primary && <Badge tone="sage">Primary</Badge>
+          )}
         </li>
       ))}
     </ul>
@@ -535,23 +590,47 @@ export function RequestList({ items, staff, actions }: { items: Json[]; staff?: 
         <li key={r.id} className="py-3 first:pt-0 last:pb-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-sm font-semibold text-ink">{REQUEST_LABEL[r.type] ?? titleCase(r.type)}</span>
-            <StatusChip status={r.status} staff={staff} />
+            <span className="flex flex-wrap items-center gap-1.5">
+              {r.overdue && <Badge tone="bad">Overdue</Badge>}
+              {/* Patients read what the status means for them; staff see the workflow state. */}
+              <StatusChip status={r.status} staff={staff} label={staff ? undefined : r.status_label} />
+            </span>
           </div>
           <div className="mt-0.5 text-[13px] leading-5 text-ink-subtle">
             {r.condition?.label ?? r.medication ?? ""}
             {r.condition || r.medication ? " · " : ""}
+            {r.type === "follow_up" && r.due_date ? `Due ${fmtDate(r.due_date)} · ` : ""}
+            {staff && r.owner ? `Owner: ${r.owner} · ` : ""}
             {fmtDate(r.created_at)}
           </div>
-          {r.reason && r.type === "consultation" && (
-            <p className="mt-1 whitespace-pre-line text-sm text-ink-muted">“{r.reason}”</p>
+          {r.reason && (r.type === "consultation" || r.type === "follow_up") && (
+            <p className="mt-1 whitespace-pre-line text-sm text-ink-muted">
+              {r.type === "consultation" ? `“${r.reason}”` : r.reason}
+            </p>
           )}
           {r.assigned_hcp && (
             <p className="mt-1 text-[13px] text-ink-muted">
-              Routed to <span className="font-semibold text-ink">{r.assigned_hcp.name}</span> ({specialtyText(r.assigned_hcp.specialties)})
+              {r.status === "awaiting_hcp" ? "Waiting for " : r.status === "hcp_responded" ? "Answered by " : "Routed to "}
+              <span className="font-semibold text-ink">{r.assigned_hcp.name}</span> ({specialtyText(r.assigned_hcp.specialties)})
+              {staff && r.status === "awaiting_hcp" && (
+                <span className="text-ink-subtle">
+                  {r.assigned_hcp.in_app ? " · answers in the app" : " · does not use the app: record their response"}
+                </span>
+              )}
             </p>
           )}
-          {r.resolution && !(r.assigned_hcp && r.resolution.startsWith("Routed to")) && (
+          {r.resolution && !r.resolution.startsWith("Routed to") && (
             <p className="mt-1 text-[13px] text-ink-muted">{r.resolution}</p>
+          )}
+          {r.status === "awaiting_hcp" && !staff && (
+            <p className="mt-1 text-[13px] text-ink-muted">
+              Your care manager has passed this on. You will see the answer here; there is nothing you need to do now.
+            </p>
+          )}
+          {(r.notes ?? []).length > 0 && (
+            <div className="mt-2">
+              <NoteList items={r.notes} staff={staff} compact />
+            </div>
           )}
           {actions && <div className="mt-2 flex flex-wrap gap-2">{actions(r)}</div>}
         </li>
@@ -560,7 +639,7 @@ export function RequestList({ items, staff, actions }: { items: Json[]; staff?: 
   );
 }
 
-export function NoteList({ items, staff }: { items: Json[]; staff?: boolean }) {
+export function NoteList({ items, staff, compact }: { items: Json[]; staff?: boolean; compact?: boolean }) {
   if (!items.length) return <p className="text-sm text-ink-subtle">No instructions yet.</p>;
   return (
     <ul className="space-y-3">
@@ -569,11 +648,17 @@ export function NoteList({ items, staff }: { items: Json[]; staff?: boolean }) {
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-subtle">
             <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
             <span className="font-semibold text-ink">{n.kind === "hcp_instruction" ? "Instruction" : "Follow-up"}</span>
-            {n.hcp && <span>from {n.hcp}</span>}
+            {n.hcp && <span>from {n.hcp}{n.by_hcp ? "" : staff ? " (recorded by the care team)" : ""}</span>}
             <span aria-hidden>·</span>
-            <span className="tabular">{fmtDateTime(`${n.created_at}Z`)}</span>
+            <span className="tabular">{fmtDateTime(n.created_at)}</span>
             {staff && !n.visible_to_patient && <Badge tone="neutral">Care team only</Badge>}
           </div>
+          {n.request && !compact && (
+            <p className="mt-1 text-[13px] text-ink-subtle">
+              About: {REQUEST_LABEL[n.request.type] ?? titleCase(n.request.type)} of {fmtDate(n.request.created_at)}
+              {n.request.reason ? ` · “${n.request.reason.length > 80 ? `${n.request.reason.slice(0, 80)}…` : n.request.reason}”` : ""}
+            </p>
+          )}
           <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-ink">{n.text}</p>
         </li>
       ))}

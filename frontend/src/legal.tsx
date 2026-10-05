@@ -149,9 +149,12 @@ export function Checkbox({
           onChange={(e) => onChange(e.target.checked)}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : undefined}
+          aria-labelledby={`${id}-text`}
           className="mt-1 h-[18px] w-[18px] shrink-0 cursor-pointer rounded border-line-strong accent-[var(--primary)]"
         />
-        <span className="min-w-0">{children}</span>
+        <span id={`${id}-text`} className="min-w-0">
+          {children}
+        </span>
       </label>
       {error && (
         <p id={`${id}-error`} className="ml-[30px] mt-1 text-[13px] text-bad">

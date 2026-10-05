@@ -24,6 +24,7 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import VerifyOtp from "./pages/VerifyOtp";
 import type { Permission } from "./permissions";
+import { useAttention } from "./attention";
 import { NAV_GROUPS, ROUTES, groupOf } from "./routes";
 import { LegalLinks } from "./legal";
 import { preferences } from "./session";
@@ -39,6 +40,7 @@ const isAppPath = (path: string) => path === "/denied" || ROUTES.some((r) => mat
 /** Menu entries come from the route table, filtered by the account's permissions. */
 function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const { can } = useAuth();
+  const attention = useAttention();
   const items = ROUTES.filter((r) => r.label && can(...r.anyOf));
   return (
     <nav aria-label="Main" className="scroll-quiet flex-1 overflow-y-auto px-3 py-2">
@@ -55,12 +57,13 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
             <ul className="space-y-0.5">
               {entries.map((item) => {
                 const label = item.label!(can);
+                const count = item.badge ? attention[item.badge] ?? 0 : 0;
                 return (
                   <li key={item.path}>
                     <NavLink
                       to={item.path}
                       onClick={onNavigate}
-                      title={collapsed ? label : undefined}
+                      title={collapsed ? (count ? `${label} (${count})` : label) : undefined}
                       className={({ isActive }) =>
                         cx(
                           "group relative flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
@@ -83,6 +86,17 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
                             {item.icon}
                           </span>
                           <span className={cx("truncate", collapsed && "sr-only")}>{label}</span>
+                          {count > 0 && (
+                            <span
+                              className={cx(
+                                "tabular ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-nav-indicator px-1.5 text-[11px] font-semibold leading-5 text-nav",
+                                collapsed && "absolute right-1 top-1 ml-0 min-w-4 px-1 text-[10px] leading-4",
+                              )}
+                            >
+                              {count > 99 ? "99+" : count}
+                              <span className="sr-only"> need attention</span>
+                            </span>
+                          )}
                         </>
                       )}
                     </NavLink>

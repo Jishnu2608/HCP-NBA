@@ -73,12 +73,15 @@ def _patient_variants(r: DraftRequest) -> list[MessageVariant]:
             ),
         ]
     subject = _PATIENT_SUBJECT[r.action].format(drug=drug)
+    lead = _sentence(short.split(", ", 1)[-1])
+    if r.action == ActionType.EDUCATION:
+        # The guide itself travels with the message; a pointer to it alone is not enough.
+        lead = f"Here is a short guide from your care team about your {drug}.\n\n{body}"
     return [
         MessageVariant(subject=subject, body=f"Hello {r.first_name},\n\n{body}\n\nYour care team"),
         MessageVariant(
             subject=f"{r.first_name}, a note from your care team",
-            body=f"Hello {r.first_name},\n\n{_sentence(short.split(', ', 1)[-1])}\n\n"
-            "Your care team",
+            body=f"Hello {r.first_name},\n\n{lead}\n\nYour care team",
         ),
     ]
 

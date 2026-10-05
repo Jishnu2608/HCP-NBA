@@ -85,6 +85,14 @@ def content_out(c: Content, today: date) -> dict:
     }
 
 
+def target_origin(db: Session, nba: Nba) -> str | None:
+    if nba.target_type == "PATIENT":
+        p = db.get(Patient, nba.target_id)
+        return p.origin if p else None
+    h = db.get(Hcp, nba.target_id)
+    return h.origin if h else None
+
+
 def nba_summary(db: Session, nba: Nba, *, with_identity: bool = True) -> dict:
     """`with_identity=False` is the gate-outcome view (Compliance): the recommendation and
     its gate results, without anything that identifies the person concerned."""
@@ -96,6 +104,8 @@ def nba_summary(db: Session, nba: Nba, *, with_identity: bool = True) -> dict:
         "target_type": nba.target_type,
         "target_id": nba.target_id if with_identity else None,
         "target_name": name if with_identity else None,
+        # A real person (self-registered or clinic patient) rather than a demo record.
+        "target_origin": target_origin(db, nba) if with_identity else None,
         "segment": segment if with_identity else None,
         "action": nba.action,
         "action_label": ACTION_LABEL.get(nba.action, nba.action),

@@ -44,6 +44,7 @@ import {
   channelName,
   cx,
   fmtDate,
+  fmtDateTime,
   num,
   pct,
   titleCase,
@@ -370,14 +371,17 @@ export function HistoryList({ items }: { items: Json[] }) {
  * reading order as the recommendation page: action, why, channel and timing, compliance,
  * then the primary action.
  */
-export function OpenNba({ nba }: { nba: Json | null }) {
+export function OpenNba({ nba, lastCycle }: { nba: Json | null; lastCycle?: string | null }) {
   if (!nba) {
     return (
       <div className="rounded-xl border border-dashed border-line-strong bg-surface p-5">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
           <span className="h-2 w-2 rounded-full bg-line-strong" aria-hidden /> Next best action
         </div>
-        <p className="mt-2 text-sm text-ink-muted">No open recommendation. Nothing needs to be sent right now.</p>
+        <p className="mt-2 text-sm text-ink-muted">
+          No open recommendation. Recommendations are prepared at each engine cycle
+          {lastCycle ? ` (last run ${fmtDateTime(lastCycle)})` : ""}; changes since then are considered at the next one.
+        </p>
       </div>
     );
   }
@@ -555,9 +559,9 @@ export function PatientProfile() {
         />
         <Stat
           label="Outreach consent"
-          value={`${granted} of ${outreach.length}`}
+          value={`${p.outreach_channels_granted ?? granted} of ${p.outreach_channels_total ?? outreach.length}`}
           hint="channels granted"
-          tone={granted ? undefined : "warn"}
+          tone={(p.outreach_channels_granted ?? granted) ? undefined : "warn"}
           icon={<ShieldCheck className="h-4 w-4" aria-hidden />}
         />
       </KpiGrid>
@@ -575,7 +579,7 @@ export function PatientProfile() {
           beside the two supporting cards. Phones read top to bottom in the same order. */}
       <BentoGrid>
         <BentoCell span="wide">
-          <OpenNba nba={p.open_nba} />
+          <OpenNba nba={p.open_nba} lastCycle={p.last_cycle_at} />
         </BentoCell>
         <BentoCard span="narrow" icon={<ShieldCheck />} title="Consent on record" description="Only the patient can change consent.">
           <ul className="divide-y divide-line">
@@ -627,8 +631,17 @@ export function PatientProfile() {
           </BentoCard>
         )}
         <BentoCard span="narrow" pairOnTablet={Boolean(p.features)} icon={<Users />} title="Care team">
-          {p.care_team.length ? (
+          {p.care_team.length || (p.care_managers ?? []).length ? (
             <ul className="space-y-3">
+              {(p.care_managers ?? []).map((m: Json) => (
+                <li key={`cm-${m.id}`} className="flex items-center gap-3">
+                  <Avatar name={m.name} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-ink">{m.name}</div>
+                    <div className="truncate text-[13px] text-ink-subtle">Care manager</div>
+                  </div>
+                </li>
+              ))}
               {p.care_team.map((h: Json) => (
                 <li key={h.hcp_id} className="flex items-center gap-3">
                   <Avatar name={h.name} size="sm" />

@@ -5,6 +5,11 @@ analytics all use the actual current date. Synthetic history keeps its own histo
 (anchored to the day it was generated); `simulated_through` only records how far the outcome
 simulator has played the synthetic population forward, it is not "today".
 
+One time base: every stored instant is UTC (`tables.utcnow`), and "today" is the UTC date,
+so an event's timestamp, its ordering and every date-based rule (refill dates, gaps,
+frequency caps, consent periods) refer to the same moment. The browser shows instants in
+the viewer's local time.
+
 Tests may pin the date with `override`; application code never does.
 """
 
@@ -15,6 +20,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.models import EngineConfig
+from app.models.tables import utcnow
 
 SIMULATED_KEY = "simulated_through"
 
@@ -22,7 +28,7 @@ _override: date | None = None
 
 
 def today() -> date:
-    return _override or date.today()
+    return _override or utcnow().date()
 
 
 def get_today(_db: Session | None = None) -> date:

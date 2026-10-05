@@ -55,6 +55,60 @@ def _best_channel(summary: dict) -> str | None:
     return max(tried, key=lambda ch: tried[ch]["rate"]) if tried else None
 
 
+def _patient_adherence(db: Session, pop: Population, pid: str, settings: dict) -> list[float]:
+    """Writes today's adherence snapshot for each confirmed therapy and the patient's risk
+    segment. Returns the days-covered figures."""
+    patient = pop.patients[pid]
+    state = eng.patient_state(pop, pid)
+    worst = RiskSegment.LOW
+    pdcs = []
+    for therapy in pop.therapies.get(pid, []):
+        adherence = compute_adherence(
+            pop.fills.get(therapy.id, []),
+            therapy.start_date,
+            pop.as_of,
+            settings["pdc_window_days"],
+        )
+        risk = score_risk(adherence, state.unresponsive_share(), settings)
+        db.add(
+            AdherenceSnapshot(
+                patient_id=pid,
+                therapy_id=therapy.id,
+                as_of_date=pop.as_of,
+                period_start=adherence.period_start,
+                period_end=adherence.period_end,
+                pdc=adherence.pdc,
+                mpr=adherence.mpr,
+                last_fill_date=adherence.last_fill_date,
+                gap_days=adherence.gap_days,
+                risk_score=risk.score,
+                risk_segment=risk.segment,
+            )
+        )
+        pdcs.append(adherence.pdc)
+        if _RISK_ORDER[risk.segment] > _RISK_ORDER[worst]:
+            worst = risk.segment
+    # A patient with no confirmed medication has no adherence risk to speak of.
+    patient.risk_segment = worst if pop.therapies.get(pid) else None
+    return pdcs
+
+
+def refresh_patient(db: Session, patient_id: str) -> None:
+    """One patient's adherence and risk, now: after a confirmation, refill or stop, the
+    patient, their care manager and their HCP see the same figures straight away, computed
+    exactly as the engine cycle computes them."""
+    pop = load_population(db, patient_id=patient_id)
+    if patient_id not in pop.patients:
+        return
+    db.execute(
+        delete(AdherenceSnapshot).where(
+            AdherenceSnapshot.patient_id == patient_id, AdherenceSnapshot.as_of_date == pop.as_of
+        )
+    )
+    _patient_adherence(db, pop, patient_id, engine_settings(db))
+    db.flush()
+
+
 def refresh_patient_features(db: Session, pop: Population, settings: dict) -> dict:
     as_of = pop.as_of
     db.execute(delete(AdherenceSnapshot).where(AdherenceSnapshot.as_of_date == as_of))
@@ -67,37 +121,9 @@ def refresh_patient_features(db: Session, pop: Population, settings: dict) -> di
     pdcs = []
     for pid, patient in pop.patients.items():
         state = eng.patient_state(pop, pid)
-        worst = RiskSegment.LOW
-        for therapy in pop.therapies.get(pid, []):
-            adherence = compute_adherence(
-                pop.fills.get(therapy.id, []),
-                therapy.start_date,
-                as_of,
-                settings["pdc_window_days"],
-            )
-            risk = score_risk(adherence, state.unresponsive_share(), settings)
-            db.add(
-                AdherenceSnapshot(
-                    patient_id=pid,
-                    therapy_id=therapy.id,
-                    as_of_date=as_of,
-                    period_start=adherence.period_start,
-                    period_end=adherence.period_end,
-                    pdc=adherence.pdc,
-                    mpr=adherence.mpr,
-                    last_fill_date=adherence.last_fill_date,
-                    gap_days=adherence.gap_days,
-                    risk_score=risk.score,
-                    risk_segment=risk.segment,
-                )
-            )
-            pdcs.append(adherence.pdc)
-            if _RISK_ORDER[risk.segment] > _RISK_ORDER[worst]:
-                worst = risk.segment
-        # A patient with no confirmed medication has no adherence risk to speak of.
-        patient.risk_segment = worst if pop.therapies.get(pid) else None
+        pdcs.extend(_patient_adherence(db, pop, pid, settings))
         if patient.risk_segment:
-            segments[worst] += 1
+            segments[patient.risk_segment] += 1
 
         channels = _channel_summary(state, PATIENT_CHANNELS, eng.PATIENT_ENGAGE_PRIOR)
         db.add(

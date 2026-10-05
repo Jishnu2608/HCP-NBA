@@ -249,7 +249,7 @@ export default function Invite() {
               <div className="mt-1 text-[13px] leading-5 text-ink-muted">
                 Invited by <span className="font-semibold text-ink">{info.inviter_name}</span> ({info.inviter_role_label}).
                 {isPatient && " Your account opens the record your care team has already prepared for you."} This
-                invitation can be used once and expires {fmtDateTime(`${info.expires_at}Z`)}.
+                invitation can be used once and expires {fmtDateTime(info.expires_at)}.
               </div>
             </div>
           </div>

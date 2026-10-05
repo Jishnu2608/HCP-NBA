@@ -14,6 +14,8 @@ from app.models.enums import ConsentPurpose, MlrStatus, TargetType
 
 MLR_PREFIX = "mlr_"
 CONSENT_MISSING = "consent_missing"
+# A recommendation about a medication the care team has since stopped or not confirmed.
+THERAPY_INACTIVE = "therapy_inactive"
 FREQUENCY_CODES = frozenset({"frequency_cap", "min_gap"})
 
 GATE_TEXT = {
@@ -26,6 +28,7 @@ GATE_TEXT = {
     CONSENT_MISSING: "Patient has not consented to outreach on this channel",
     "frequency_cap": "Contact frequency cap reached",
     "min_gap": "Too soon after the previous contact",
+    THERAPY_INACTIVE: "The medication is no longer active (stopped or not confirmed)",
 }
 
 

@@ -1619,15 +1619,36 @@ export function num(value: number | null | undefined, digits = 0) {
     : value.toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
+/** A value from the API as a Date. Date-only values ("2026-10-05") are calendar days;
+ *  timestamps are UTC instants (the API sends them without an offset) and are shown in the
+ *  viewer's local time. */
+export function toDate(value: string): Date {
+  if (value.length === 10) return new Date(`${value}T00:00:00`);
+  const hasZone = /(Z|[+-]\d\d:?\d\d)$/.test(value);
+  return new Date(hasZone ? value : `${value.replace(" ", "T")}Z`);
+}
+
 export function fmtDate(value: string | null | undefined) {
   if (!value) return "—";
-  const d = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  const d = toDate(value);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** An email address that wraps only after the @ on narrow screens, never mid-word. */
+export function EmailText({ email, className }: { email: string; className?: string }) {
+  const at = email.indexOf("@");
+  if (at < 0) return <span className={className}>{email}</span>;
+  return (
+    <span className={cx(className, "[overflow-wrap:anywhere]")}>
+      {email.slice(0, at)}
+      <wbr />@{email.slice(at + 1)}
+    </span>
+  );
 }
 
 export function fmtDateTime(value: string | null | undefined) {
   if (!value) return "—";
-  return new Date(value).toLocaleString("en-US", {
+  return toDate(value).toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
