@@ -36,7 +36,9 @@ Unify → Segment → Predict NBA → Personalize → Orchestrate → Engage →
 
 | Area | Detail |
 |---|---|
-| Patient 360 | Therapies, days covered (PDC), gaps, a fill-coverage timeline, consent, outreach history |
+| Patient 360 | Therapies, days covered (PDC), gaps, a fill-coverage timeline, consent, outreach history; for real patients, their conditions, reported and confirmed medications, care requests and instructions |
+| Patient health profile | A patient's own conditions and medications, care team (care manager and HCPs), instructions from the care team, and a "Consult a HCP" request. New patients start empty and build it themselves |
+| Care management | Care managers work a queue of care requests: confirm what patients reported (only confirmed medications count for adherence), record medications, refills and instructions, route patients to an HCP by the condition's specialty, and set up and invite clinic patients |
 | HCP 360 | Segment and value, topics and channels the HCP engages with, interaction history |
 | Adherence risk | Rule-based 0-100 score with named drivers: days covered, current gap, widening gaps, non-response, never filled |
 | Propensity models | Chance of a response and of a fill, per action and channel. Logistic regression, compared against a boosted-tree challenger and a no-model baseline |
@@ -179,7 +181,8 @@ If PowerShell refuses to run the scripts, allow local scripts for your user once
 - **Administrator:** the email in `NBA_ADMIN_EMAIL` (default shown in [.env.example](.env.example)) with the password that `setup.ps1` generated in your `.env` as `NBA_ADMIN_PASSWORD`. Choose your own by editing `.env`, then run `python -m app.auth.rotate` from `backend` and restart.
 - **Demo accounts** for the other roles are created with the synthetic data and share `NBA_DEMO_PASSWORD`. An administrator can see their emails on the Users and assignments page.
 - **A professional account of your own:** sign in as the administrator, open **Invitations**, invite your email with a role, and open the link from the email (or, without email configured, from the development box).
-- **A patient account:** use **Patient sign-up**. Without email configured, the verification code is shown on screen in development mode.
+- **A patient account:** use **Patient sign-up**. Without email configured, the verification code is shown on screen in development mode. The new patient starts with an empty health profile and is given a care manager; sign in as that care manager (shown under "Your care team") to see the requests on **Care requests**.
+- **A clinic patient:** sign in as a care manager, open **Care requests** → **New clinic patient**, record their care on the patient page, then **Invite to portal**.
 
 `NBA_PUBLIC_BASE_URL` sets the start of links in emails; set it to the address people will open (for example your LAN address when testing on a phone).
 
@@ -228,7 +231,7 @@ The server listens only on this computer by default. To open it from a phone on 
 
 ### Resetting the data
 
-The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, invitations and the security audit trail, and signs everyone out. Account and invitation ids are never reused, not even after a deletion or a reset, so the audit history of one account can never appear under another; demo and administrator accounts get new, higher ids after each reset. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
+The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, real patients with everything recorded for them, invitations and the security audit trail, and signs everyone out. Account and invitation ids are never reused, not even after a deletion or a reset, so the audit history of one account can never appear under another; demo and administrator accounts get new, higher ids after each reset. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
 
 ## Secrets and accounts
 
@@ -295,7 +298,9 @@ One process and one deployable unit: the API also serves the built web applicati
 
 ```
 backend/app/core        configuration, database, permissions, data scope, demo clock
-backend/app/auth        accounts, one-time codes, sessions, assignments
+backend/app/auth        accounts, one-time codes, sessions, invitations, assignments, patient deletion
+backend/app/clinical    real patient records, care management, condition and medication vocabulary
+backend/app/legal       legal documents, consent records, privacy requests, data export
 backend/app/models      tables and enums
 backend/app/datagen     synthetic generator and validation
 backend/app/features    adherence arithmetic, engagement features
@@ -323,8 +328,10 @@ scripts/                setup and run
 8. The simulator's hidden behaviour traits are never readable by the engine, features or models.
 9. Model features are computed as they stood before each historical touch; no look-ahead.
 10. No secret in the repository.
-11. The audit trail is append-only, and account and invitation ids are never reused, so every entry keeps pointing at the account it was written for.
+11. The audit trail is append-only, and account, invitation and patient ids are never reused, so every entry keeps pointing at the account it was written for. The one exception: deleting a patient account replaces that person's identifiers in the audit rows with a neutral label.
 12. Nothing tells an outsider whether an email is registered: sign-up and failed sign-in answer the same way either way, and rate limits are enforced on the server, never in the browser.
+13. A real patient's data is their own. Sign-up never attaches synthetic demo data; clinical information enters only through the patient or their care team, and only synthetic people are simulated.
+14. Care managers route patients to HCPs; nothing is diagnosed or assigned automatically.
 
 ## Path to production
 
