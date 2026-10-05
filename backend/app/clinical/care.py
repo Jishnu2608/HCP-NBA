@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.api import serializers as out
 from app.auth.errors import AuthError
+from app.clinical import activity, records, vocabulary
 from app.clinical import hcps as hcp_records
-from app.clinical import records, vocabulary
 from app.core import age, clock, jurisdiction
 from app.engagement import simulator
 from app.models import (
@@ -47,6 +47,7 @@ PATIENT_REPORTED, CARE_MANAGER = TherapyOrigin.PATIENT_REPORTED, TherapyOrigin.C
 
 
 def _audit(db: Session, actor: User, action: str, patient_id: str, **detail) -> None:
+    activity.touch(db, patient_id)
     audit.record(
         db, action, "patient", patient_id, actor=actor.username, actor_role=actor.role,
         detail=detail or None,

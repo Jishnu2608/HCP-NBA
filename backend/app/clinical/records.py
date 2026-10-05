@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.clinical import activity
 from app.core.permissions import Permission as P
 from app.core.permissions import can
 from app.models import (
@@ -148,6 +149,7 @@ def sync_location(db: Session, user: User) -> None:
     patient = db.get(Patient, user.patient_id) if user.patient_id else None
     if is_real(patient):
         patient.country, patient.region = user.country, user.region
+        activity.touch(db, patient.patient_id)
 
 
 # --- Accounts registered before records were separated ---------------------------------

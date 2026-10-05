@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 from app.auth.provisioning import assignments
 from app.auth.service import ensure_system_admin
 from app.auth.sessions import sessions
+from app.clinical import activity, records
 from app.clinical import hcps as hcps_module
-from app.clinical import records
 from app.core import clock
 from app.core.config import get_settings
 from app.core.db import Base
@@ -785,6 +785,9 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
         db.add_all(assign_reps(reps, hcps))
         db.add_all(assign_care_managers(cms, patients))
         db.flush()
+    db.flush()
+    # Synthetic people's activity comes from their generated history, not the generation time.
+    activity.backfill(db, only_missing=False, synthetic_only=True)
     hcps_module.restore(db, registered.get("real_hcps", {}))
     records.restore(db, registered.get("real_patients", {}))
     assignments.restore(db, registered)

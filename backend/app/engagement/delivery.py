@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.clinical import activity
 from app.core import clock
 from app.models import Interaction, MedicationFill, MessageDraft, Nba, PatientTherapy, User
 from app.models.enums import Channel, NbaStatus, Outcome, TargetType
@@ -112,6 +113,8 @@ def send(db: Session, nba: Nba, user: User) -> Interaction:
         actor_user_id=user.id,
     )
     db.add(interaction)
+    if nba.target_type == TargetType.PATIENT:
+        activity.touch(db, nba.target_id, interaction.int_ts)
     nba.status = NbaStatus.SENT
     audit.record(
         db,
@@ -148,6 +151,7 @@ def record_fill(
         source=source,
     )
     db.add(fill)
+    activity.touch(db, therapy.patient_id, when)
     return fill
 
 
@@ -163,6 +167,8 @@ def capture_response(
 ) -> Interaction:
     """Records how a sent recommendation landed. The signal the next cycle learns from."""
     interaction.outcome, interaction.outcome_ts = outcome, when
+    if interaction.target_type == TargetType.PATIENT:
+        activity.touch(db, interaction.target_id, when)
     if interaction.nba_id:
         nba = db.get(Nba, interaction.nba_id)
         if outcome in ENGAGED_OUTCOMES:

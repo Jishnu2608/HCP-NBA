@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
-from app.clinical import care
+from app.clinical import activity, care
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
@@ -89,7 +89,12 @@ def list_patients(
         ).all()
     )
     rows = db.scalars(
-        select(Patient).where(*where).order_by(Patient.patient_id).limit(limit).offset(offset)
+        # Latest activity first (the system-wide order for patient lists), then patient id.
+        select(Patient)
+        .where(*where)
+        .order_by(*activity.patient_order())
+        .limit(limit)
+        .offset(offset)
     ).all()
     return {
         "total": total,
@@ -101,6 +106,7 @@ def list_patients(
                 "risk_segment": p.risk_segment,
                 "plan_type": p.plan_type,
                 "preferred_channel": p.preferred_channel,
+                "last_activity_at": p.last_activity_at,
                 **out.patient_brief(p),
             }
             for p in rows

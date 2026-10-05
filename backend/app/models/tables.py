@@ -126,6 +126,12 @@ class Patient(Base):
     # The care manager who created a clinic patient. A plain id, not a foreign key: `user`
     # already points at `patient`, and a cycle would break table ordering.
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    # When the record was created and last changed, and the latest activity for the patient
+    # (any change, entry, refill, message, consent or sign-in). Patient lists everywhere are
+    # ordered by activity, newest first (clinical/records.patient_order).
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, index=True)
 
 
 class PatientNumber(Base):

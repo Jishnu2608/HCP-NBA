@@ -535,14 +535,15 @@ def test_changing_assignments_changes_scope_but_never_role_or_verification(env):
     )
     assert changed.status_code == 200, changed.text
     after = changed.json()
-    assert [p["patient_id"] for p in after["patients"]] == new_panel
+    # Patient lists are ordered by latest activity, so compare membership.
+    assert sorted(p["patient_id"] for p in after["patients"]) == new_panel
     assert (after["role"], after["permissions"]) == (before["role"], before["permissions"])
     assert after["permissions"] == sorted(ROLE_PERMISSIONS["care_manager"])
     assert after["professionally_verified"] and after["lineage"] == before["lineage"]
 
     session = signed_in(login(client, "new.cm@example.org"))
     listed = client.get("/api/patients", headers=as_user(session)).json()
-    assert [p["patient_id"] for p in listed["items"]] == new_panel
+    assert sorted(p["patient_id"] for p in listed["items"]) == new_panel
     assert session["user"]["role"] == "care_manager"
     log = db.scalar(select(AuditLog).where(AuditLog.action == "assignments_changed"))
     assert log.actor == "admin" and log.detail["after"]["count"] == 3
@@ -631,7 +632,11 @@ def test_registered_accounts_survive_a_demo_reset(env):
     assert back.status_code == 200
     listed = client.get("/api/patients", headers=as_user(signed_in(back))).json()
     ids = [p["patient_id"] for p in listed["items"]]
-    assert [i for i in ids if not i.startswith("PAT_R")] == ["PAT_00001", "PAT_00002", "PAT_00003"]
+    assert sorted(i for i in ids if not i.startswith("PAT_R")) == [
+        "PAT_00001",
+        "PAT_00002",
+        "PAT_00003",
+    ]
     # Real patients the care manager looks after are not demo data: they survive the reset.
     real = [p for p in listed["items"] if p["origin"] != "synthetic"]
     assert all(p["patient_id"].startswith("PAT_R") for p in real)

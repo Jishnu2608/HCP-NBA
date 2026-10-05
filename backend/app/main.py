@@ -21,6 +21,7 @@ from app.api import (
     users,
 )
 from app.auth.service import ensure_system_admin
+from app.clinical import activity
 from app.clinical.hcps import separate_real_hcps
 from app.clinical.records import separate_real_patients
 from app.core import http_security
@@ -43,6 +44,8 @@ async def lifespan(_: FastAPI):
             # population get their own empty record (idempotent).
             separate_real_patients(db)
             separate_real_hcps(db)
+            # Records that existed before activity was tracked get it from their history.
+            activity.backfill(db)
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")

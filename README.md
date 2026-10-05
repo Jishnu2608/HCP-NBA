@@ -37,6 +37,7 @@ Unify → Segment → Predict NBA → Personalize → Orchestrate → Engage →
 | Area | Detail |
 |---|---|
 | Patient 360 | Therapies, days covered (PDC), gaps, a fill-coverage timeline, consent, outreach history; for real patients, their conditions, reported and confirmed medications, care requests and instructions |
+| Patient lists | Every list of patients is ordered on the server by latest activity, newest first (sign-ups, changes, entries, refills, messages, consent changes, sign-ins), with a "Last activity" column; ties are broken by patient ID |
 | Patient health profile | A patient's own conditions and medications, care team (care manager and HCPs), instructions from the care team, and a "Consult a HCP" request. New patients start empty and build it themselves |
 | Care management | Care managers work a queue of care requests: confirm what patients reported (only confirmed medications count for adherence), record medications, refills and instructions, route patients to an HCP by the condition's specialty, and set up and invite clinic patients |
 | HCP 360 | Segment and value, topics and channels the HCP engages with, interaction history |
@@ -97,6 +98,7 @@ Everyone:       Log in with email and password → the account's own dashboard
 - **Date of birth** is required at sign-up and acceptance, checked on the server, and never shown to other users. Professionals must be at least 18 (configurable); patients under that age may register and are marked as minors for administrators.
 - **A patient's data is their own.** A patient who signs up gets a new, empty record and a care manager; nothing from the synthetic demo population is attached. They can add conditions and medications and ask to consult a healthcare professional; each entry goes to their care manager, who confirms it, adds supply details and routes the patient to an HCP whose specialty suits the condition. Only confirmed medications count for adherence and recommendations. Location is the country (and US state) the person chose.
 - **HCP specialties:** an invited HCP starts with a blank record and only the specialties the inviting administrator chose (several allowed; none shows "Specialty not configured"). The HCP can ask for a change from their profile; an administrator approves or rejects it in **Requests**. Care managers route patients using every specialty an HCP holds.
+- **Patient lists** (Patients, a care manager's panel, an HCP's patients, assignment lists, search) always show the most recently active patient first: new sign-ups, changes, entries, refills, messages, consent changes and sign-ins all count. The order is set on the server; there is no sort control. The recommendation queue stays ranked by priority.
 - **Clinic patients:** a care manager can set up a record for someone seen at the clinic, record conditions, medications and the doctor's instructions, and invite the patient by email; the invitation is bound to that record and the care manager stays responsible.
 - On confirmation a professional account receives starting data from the synthetic pool: one own record for an HCP, a panel of demo patients for a care manager, a set of HCPs for a medical representative.
 - **Deleting a patient account:** an administrator can delete a patient account permanently (typing its email to confirm), also straight from the patient's deletion request. The account and the patient's own data go; the audit log keeps what happened without naming them; the same email can sign up again as a new, empty patient. Professional accounts are disabled, not deleted.
@@ -333,6 +335,7 @@ scripts/                setup and run
 12. Nothing tells an outsider whether an email is registered: sign-up and failed sign-in answer the same way either way, and rate limits are enforced on the server, never in the browser.
 13. A real patient's data is their own. Sign-up never attaches synthetic demo data; clinical information enters only through the patient or their care team, and only synthetic people are simulated.
 14. Care managers route patients to HCPs; nothing is diagnosed or assigned automatically.
+15. Patient lists have one server-side order, latest activity first; the recommendation queue keeps its priority ranking.
 
 ## Path to production
 

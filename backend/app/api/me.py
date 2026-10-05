@@ -16,7 +16,7 @@ from app.api import serializers as out
 from app.api.deps import require_permission
 from app.api.people import consent_out
 from app.api.schemas import StrictBody
-from app.clinical import care, vocabulary
+from app.clinical import activity, care, vocabulary
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
@@ -175,6 +175,7 @@ def _change_consent(db: Session, user: User, purpose: str, channel: str | None, 
         source="patient_portal",
     )
     db.add(record)
+    activity.touch(db, user.patient_id)
     audit.record(
         db,
         "consent_granted" if granted else "consent_withdrawn",

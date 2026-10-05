@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.errors import AuthError
-from app.clinical import hcps, records
+from app.clinical import activity, hcps, records
 from app.core.config import get_settings
 from app.core.permissions import Permission as P
 from app.core.permissions import can
@@ -86,8 +86,9 @@ class AssignmentService:
         return list(
             db.scalars(
                 select(CareManagerPatient.patient_id)
+                .join(Patient, Patient.patient_id == CareManagerPatient.patient_id)
                 .where(CareManagerPatient.care_manager_user_id == user.id)
-                .order_by(CareManagerPatient.patient_id)
+                .order_by(*activity.patient_order())
             )
         )
 

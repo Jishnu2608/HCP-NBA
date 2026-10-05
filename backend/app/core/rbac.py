@@ -16,9 +16,10 @@ from sqlalchemy import and_, false, or_, select, true
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.clinical import activity
 from app.core.permissions import Permission as P
 from app.core.permissions import can, can_any
-from app.models import CareManagerPatient, Consent, Nba, PatientHcp, RepHcp, User
+from app.models import CareManagerPatient, Consent, Nba, Patient, PatientHcp, RepHcp, User
 from app.models.enums import ConsentPurpose, NbaStatus, TargetType
 
 
@@ -91,7 +92,8 @@ def shared_patient_ids(db: Session, hcp_id: str, day: date) -> list[str]:
     return list(
         db.scalars(
             select(PatientHcp.patient_id)
+            .join(Patient, Patient.patient_id == PatientHcp.patient_id)
             .where(PatientHcp.hcp_id == hcp_id, PatientHcp.patient_id.in_(consented))
-            .order_by(PatientHcp.patient_id)
+            .order_by(*activity.patient_order())
         )
     )

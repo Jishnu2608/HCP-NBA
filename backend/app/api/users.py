@@ -20,6 +20,7 @@ from app.auth import erasure, invitations
 from app.auth.errors import AuthError
 from app.auth.provisioning import HCPS, OWN_HCP, OWN_PATIENT, PATIENTS, assignments
 from app.auth.sessions import sessions
+from app.clinical import activity
 from app.clinical import hcps as hcp_records
 from app.core import age, jurisdiction
 from app.core.db import get_db
@@ -103,7 +104,15 @@ def _detail(db: Session, user: User) -> dict:
     kind = result["assignment"]["kind"]
     if kind == PATIENTS:
         ids = assignments.patient_ids(db, user)
-        rows = db.scalars(select(Patient).where(Patient.patient_id.in_(ids))) if ids else []
+        rows = (
+            db.scalars(
+                select(Patient)
+                .where(Patient.patient_id.in_(ids))
+                .order_by(*activity.patient_order())
+            )
+            if ids
+            else []
+        )
         result["patients"] = [
             {
                 "patient_id": p.patient_id,

@@ -102,6 +102,13 @@ export function PatientList() {
     { key: "risk", header: "Adherence risk", hideOnMobile: true, cell: (p) => <SegmentBadge value={p.risk_segment} /> },
     { key: "plan", header: "Plan", cell: (p) => <span className="text-ink-muted">{p.plan_type ?? "—"}</span> },
     {
+      // The list is ordered by this on the server: latest activity first.
+      key: "activity",
+      header: "Last activity",
+      hideOnMobile: true,
+      cell: (p) => <span className="tabular text-ink-muted">{p.last_activity_at ? fmtDate(p.last_activity_at) : "—"}</span>,
+    },
+    {
       key: "location",
       header: "Location",
       // Exactly what is on record: a demo record's city, or the country a real patient chose.

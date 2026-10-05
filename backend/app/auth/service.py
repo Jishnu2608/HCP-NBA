@@ -23,6 +23,7 @@ from app.auth.otp import Issued, get_sender, otp_service
 from app.auth.provisioning import assignments
 from app.auth.repository import SqlUserRepository, normalize_email
 from app.auth.sessions import Decoy, sessions
+from app.clinical import activity
 from app.core import age, jurisdiction, ratelimit
 from app.core.config import get_settings
 from app.core.permissions import PUBLIC_SIGNUP_ROLE, ROLE_HOME, permissions_for
@@ -422,6 +423,7 @@ def login(
             **extra,
         )
     repo.record_login(user)
+    activity.touch(db, user.patient_id)
     audit.record(db, "login_succeeded", "user", user.id, actor=user.username, actor_role=user.role)
     # A successful sign-in clears this email + address's failure count (not the address's).
     ratelimit.clear(db, "login_fail_account", login_keys(email, ip)[0])
