@@ -427,7 +427,11 @@ def test_duplicates_are_explained_and_can_be_dismissed(env, reon):
     assert request["status"] == "closed" and request["resolution"].startswith("Not added")
     # The open consultation from above, closed for the next tests.
     for r in requests_of(client, cm, pid):
-        client.patch(f"/api/care/requests/{r['id']}", json={"status": "closed"}, headers=cm)
+        client.patch(
+            f"/api/care/requests/{r['id']}",
+            json={"status": "closed", "resolution": "Closed for the next tests."},
+            headers=cm,
+        )
 
 
 # --- B13: a stopped medication stops its outreach ---------------------------------------------

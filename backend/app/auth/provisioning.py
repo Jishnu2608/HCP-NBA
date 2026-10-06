@@ -71,11 +71,16 @@ def _ready_targets(target_type: str):
 
 
 def _peers(db: Session, user: User) -> int:
-    """How many other registered accounts share this role (used to vary what each gets)."""
+    """How many earlier accounts share this role (used to vary what each gets): invited,
+    registered and seeded alike, so successive staff accounts start on different records."""
     return db.scalar(
         select(func.count())
         .select_from(User)
-        .where(User.role == user.role, User.source == AccountSource.SIGNUP, User.id != user.id)
+        .where(
+            User.role == user.role,
+            User.source.in_((AccountSource.SIGNUP, AccountSource.INVITATION, AccountSource.SEED)),
+            User.id < user.id,
+        )
     )
 
 
@@ -187,6 +192,7 @@ class AssignmentService:
         patient_id: str | None = None,
         hcp_id: str | None = None,
         fields_set: set[str],
+        actor: User | None = None,
     ) -> dict:
         """Replaces the account's assignments. The fields sent must match the account's kind."""
         kind = assignment_kind(user)
@@ -229,7 +235,11 @@ class AssignmentService:
                 patient = db.get(Patient, pid)
                 if records.is_real(patient):
                     # Moves the patient (and their open follow-ups) from any other care manager.
-                    records.assign_care_manager(db, patient, user)
+                    records.assign_care_manager(
+                        db, patient, user,
+                        actor=actor.username if actor else "system",
+                        actor_role=actor.role if actor else "system",
+                    )  # fmt: skip
                 else:
                     db.add(CareManagerPatient(care_manager_user_id=user.id, patient_id=pid))
         elif kind == HCPS:

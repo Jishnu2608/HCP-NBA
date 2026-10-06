@@ -309,7 +309,7 @@ def test_approval_rechecks_consent_withdrawn_after_generation(env):
     )
     assert off.status_code == 200
     response = call(env, "cm", "POST", f"/api/nba/{nba.id}/approve", json={})
-    assert response.status_code == 409 and "not consented" in response.json()["detail"]
+    assert response.status_code == 409 and "not consented" in response.json()["detail"]["message"]
     db.refresh(nba)
     assert nba.status == NbaStatus.BLOCKED
     log = db.scalar(

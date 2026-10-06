@@ -28,6 +28,7 @@ from app.core import http_security
 from app.core.config import REPO_ROOT, get_settings
 from app.core.db import SessionLocal
 from app.maintenance import purge_expired
+from app.pipeline import refresh_real_patients
 
 settings = get_settings()
 
@@ -48,6 +49,8 @@ async def lifespan(_: FastAPI):
             activity.backfill(db)
             # Real patients still waiting for a care manager get one if any is active.
             adopt_unassigned(db)
+            # Real patients' adherence is as of today, never a stale or future-dated figure.
+            refresh_real_patients(db)
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")

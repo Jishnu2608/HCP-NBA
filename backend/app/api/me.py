@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import Field
-from sqlalchemy import and_, func, not_, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -16,7 +16,7 @@ from app.api import serializers as out
 from app.api.deps import get_current_user, require_permission
 from app.api.people import consent_out
 from app.api.schemas import StrictBody
-from app.clinical import activity, care, records, vocabulary
+from app.clinical import activity, care, records, vocabulary, workload
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
@@ -569,13 +569,6 @@ def answer_consultation(
     return _consultation_out(db, r)
 
 
-NEEDS_CARE_MANAGER = (
-    CareRequestStatus.OPEN,
-    CareRequestStatus.IN_PROGRESS,
-    CareRequestStatus.HCP_RESPONDED,
-)
-
-
 # --- What needs this person's attention ---------------------------------------------------
 
 
@@ -586,31 +579,10 @@ def attention(user: User = Depends(get_current_user), db: Session = Depends(get_
     from app.core.permissions import can
 
     counts: dict[str, int] = {}
-    today = clock.get_today(db)
     if can(user, Permission.PATIENT_CARE_MANAGE):
-        needs_me = or_(
-            CareRequest.status.in_(
-                (
-                    CareRequestStatus.OPEN,
-                    CareRequestStatus.IN_PROGRESS,
-                    CareRequestStatus.HCP_RESPONDED,
-                )
-            ),
-            and_(
-                CareRequest.type == CareRequestType.FOLLOW_UP,
-                CareRequest.status != CareRequestStatus.CLOSED,
-                CareRequest.due_date <= today,
-            ),
-        )
-        mine = rbac.patient_filter(user, CareRequest.patient_id)
-        followups_not_due = and_(
-            CareRequest.type == CareRequestType.FOLLOW_UP, CareRequest.due_date > today
-        )
-        counts["care_requests"] = db.scalar(
-            select(func.count())
-            .select_from(CareRequest)
-            .where(mine, needs_me, not_(followups_not_due))
-        )
+        # The same definitions the Care requests page and the queue show (clinical.workload).
+        counts["care_requests"] = workload.care_requests(db, user)["needs_you"]
+        counts["outreach"] = sum(workload.outreach(db, user).values())
     if can(user, Permission.SELF_CONSULTATIONS_MANAGE) and user.hcp_id:
         counts["consultations"] = db.scalar(
             select(func.count())

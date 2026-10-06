@@ -6,7 +6,7 @@ schedule. The engine sees none of this directly, only the interactions and fills
 """
 
 from collections import Counter
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from random import Random
 
 from sqlalchemy import select
@@ -102,7 +102,7 @@ def _resolve_patient(db: Session, i: Interaction, today: date, stats: Counter) -
     ):
         fill_day = i.int_ts.date() + timedelta(days=rng.randint(1, 4))
     if fill_day and fill_day <= today:
-        when = datetime.combine(fill_day, time(12, 0))
+        when = clock.day_instant(fill_day)
         apply_fill(db, therapy, when)
         capture_response(db, i, Outcome.FILLED, when, actor=ACTOR, actor_role=ACTOR_ROLE)
         stats["patient_filled"] += 1
@@ -155,7 +155,7 @@ def _natural_fills(db: Session, after: date, until: date, stats: Counter) -> Non
                 due = latent.traits["therapies"][therapy_id]["next_fill"]
                 if due is None or not after < date.fromisoformat(due) <= until:
                     break
-                when = datetime.combine(date.fromisoformat(due), time(12, 0))
+                when = clock.day_instant(date.fromisoformat(due))
                 apply_fill(db, therapies[int(therapy_id)], when)
                 stats["natural_fills"] += 1
 

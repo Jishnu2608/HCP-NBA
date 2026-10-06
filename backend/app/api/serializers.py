@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import pipeline
 from app.core import jurisdiction
 from app.models import (
     AdherenceSnapshot,
@@ -21,7 +22,7 @@ from app.models import (
     Patient,
     PatientTherapy,
 )
-from app.models.enums import TargetType
+from app.models.enums import NbaStatus, TargetType
 from app.nba import gates
 from app.nba.rationale import ACTION_LABEL, CHANNEL_LABEL
 
@@ -122,7 +123,20 @@ def nba_summary(db: Session, nba: Nba, *, with_identity: bool = True) -> dict:
         "has_withheld": nba.withheld is not None,
         "block_reason": nba.block_reason,
         "as_of_date": nba.as_of_date,
+        # The safeguards as they stand now, not as they stood when it was generated: a
+        # consent withdrawn or an approval lapsed since then shows before anyone acts.
+        "gate_now": gate_now(db, nba),
+        "response_reviewed_ts": nba.response_reviewed_ts,
     }
+
+
+def gate_now(db: Session, nba: Nba) -> dict | None:
+    if nba.status not in (NbaStatus.READY_FOR_REVIEW, NbaStatus.APPROVED):
+        return None
+    from app.nba.revalidate import current_failures
+
+    failures = current_failures(db, nba, include_frequency=False)
+    return {"ok": not failures, "codes": failures, "reason": gates.describe(failures) or None}
 
 
 def draft_out(d: MessageDraft) -> dict:
@@ -255,16 +269,36 @@ def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True
             )
         ],
         reviewed_ts=nba.reviewed_ts,
+        response=response_out(db, nba),
     )
     return out
 
 
-def therapy_out(db: Session, t: PatientTherapy, today: date, *, with_risk: bool) -> dict:
-    snap = db.scalar(
-        select(AdherenceSnapshot)
-        .where(AdherenceSnapshot.therapy_id == t.id, AdherenceSnapshot.as_of_date <= today)
-        .order_by(AdherenceSnapshot.as_of_date.desc())
+def response_out(db: Session, nba: Nba) -> dict | None:
+    """How the person answered what was sent, if they did."""
+    i = db.scalar(
+        select(Interaction).where(Interaction.nba_id == nba.id).order_by(Interaction.id.desc())
     )
+    if i is None:
+        return None
+    return {"outcome": i.outcome, "at": i.outcome_ts, "sent_at": i.int_ts, "channel": i.channel}
+
+
+def _latest_snapshot(db: Session, therapy_id: int, today: date) -> AdherenceSnapshot | None:
+    return db.scalar(
+        select(AdherenceSnapshot)
+        .where(AdherenceSnapshot.therapy_id == therapy_id, AdherenceSnapshot.as_of_date <= today)
+        .order_by(AdherenceSnapshot.as_of_date.desc(), AdherenceSnapshot.id.desc())
+    )
+
+
+def therapy_out(db: Session, t: PatientTherapy, today: date, *, with_risk: bool) -> dict:
+    snap = _latest_snapshot(db, t.id, today)
+    if pipeline.needs_refresh(db, t, snap, today):
+        # A real patient's figures are always as of today: days pass without any event, and
+        # the patient, their care manager and their HCP must all read the same current state.
+        pipeline.refresh_patient(db, t.patient_id)
+        snap = _latest_snapshot(db, t.id, today)
     out = {
         "therapy_id": t.id,
         "measure": t.measure,

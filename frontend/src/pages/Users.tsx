@@ -100,6 +100,8 @@ function assignmentText(a: Json) {
 /** "patient:read:assigned" becomes "Patient · read · assigned". */
 const permissionLabel = (p: string) => p.split(":").map((part, i) => (i === 0 ? titleCase(part) : part.replace(/_/g, " "))).join(" · ");
 
+type Picked = { id: string; name: string; from?: string };
+
 /** Search box that adds a patient or an HCP to a selection. */
 function RecordPicker({
   kind,
@@ -108,7 +110,7 @@ function RecordPicker({
 }: {
   kind: "patient" | "hcp";
   exclude: string[];
-  onPick: (record: { id: string; name: string }) => void;
+  onPick: (record: Picked) => void;
 }) {
   const [q, setQ] = useState("");
   const search = useQuery({
@@ -134,8 +136,22 @@ function RecordPicker({
             <li key={r[idKey]} className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm">
               <span className="min-w-0 truncate">
                 {r.name} <span className="tabular text-xs text-ink-subtle">{r[idKey]}</span>
+                {r.care_managers?.length ? (
+                  <span className="block text-xs text-warn">Care manager now: {r.care_managers.map((m: Json) => m.name).join(", ")}</span>
+                ) : null}
               </span>
-              <Button size="sm" variant="ghost" onClick={() => onPick({ id: r[idKey], name: r.name })}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  onPick({
+                    id: r[idKey],
+                    name: r.name,
+                    // A real patient belongs to exactly one care manager: adding them here moves them.
+                    from: (r.care_managers ?? []).map((m: Json) => m.name).join(", ") || undefined,
+                  })
+                }
+              >
                 <Plus className="h-3.5 w-3.5" aria-hidden /> Add
               </Button>
             </li>
@@ -154,7 +170,7 @@ function AssignmentEditor({ account }: { account: Json }) {
   const recordKind = kind === "patients" || kind === "patient" ? "patient" : "hcp";
   const idKey = recordKind === "patient" ? "patient_id" : "hcp_id";
 
-  const initial: Array<{ id: string; name: string }> = isPanel
+  const initial: Picked[] = isPanel
     ? (account[kind!] ?? []).map((r: Json) => ({ id: r[idKey], name: r.name }))
     : account[recordKind]
       ? [{ id: account[recordKind][idKey], name: account[recordKind].name }]
@@ -180,6 +196,7 @@ function AssignmentEditor({ account }: { account: Json }) {
     return <p className="text-sm text-ink-subtle">This role works without assigned records.</p>;
   }
   const changed = JSON.stringify(selected.map((s) => s.id)) !== JSON.stringify(initial.map((s) => s.id));
+  const moving = selected.filter((s) => s.from && !initial.some((i) => i.id === s.id));
 
   return (
     <div className="space-y-3">
@@ -198,6 +215,7 @@ function AssignmentEditor({ account }: { account: Json }) {
             >
               <span className="truncate">{s.name}</span>
               <span className="tabular shrink-0 text-ink-subtle">{s.id}</span>
+              {s.from && <span className="shrink-0 text-warn">moves from {s.from}</span>}
               <button
                 type="button"
                 aria-label={`Remove ${s.name}`}
@@ -217,10 +235,16 @@ function AssignmentEditor({ account }: { account: Json }) {
         exclude={selected.map((s) => s.id)}
         onPick={(record) => setSelected(isPanel ? [...selected, record] : [record])}
       />
+      {moving.length > 0 && (
+        <Alert tone="warn" title={`Saving moves ${moving.length} patient${moving.length === 1 ? "" : "s"} from another care manager`}>
+          {moving.map((m) => `${m.name} moves from ${m.from}`).join("; ")}. Their open requests and follow-ups move too,
+          and the change is recorded in the audit log.
+        </Alert>
+      )}
       <ErrorNote error={save.error} />
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Button variant="primary" disabled={!changed} busy={save.isPending} onClick={() => save.mutate()}>
-          Save assignments
+          {moving.length ? "Save and move" : "Save assignments"}
         </Button>
         {changed && (
           <Button variant="ghost" onClick={() => setSelected(initial)}>

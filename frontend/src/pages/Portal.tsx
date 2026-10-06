@@ -131,7 +131,7 @@ function MedicationCard({ m, onRefill, refilling }: { m: Json; onRefill?: () => 
           {m.review_status === "reported"
             ? "Your care team will review this medication and add the supply details."
             : m.review_status === "dismissed"
-              ? "Not added to your medications by your care team. See Your requests for the reason."
+              ? `Not added to your medications by your care team${m.dismissed_reason ? `: ${m.dismissed_reason}` : "."}`
               : `Stopped${m.end_date ? ` on ${fmtDate(m.end_date)}` : ""}.`}
         </p>
       )}
@@ -624,7 +624,11 @@ function RoutedConsultations() {
       ) : (
         <ul className="space-y-3">
           {items.map((c) => {
-            const state = CONSULTATION_STATE[c.status] ?? { tone: "neutral" as const, label: c.status };
+            // A care manager who takes a consultation back says so; it never just disappears.
+            const withdrawn = c.status_label === "Withdrawn by the care manager";
+            const state = withdrawn
+              ? { tone: "neutral" as const, label: c.status_label }
+              : CONSULTATION_STATE[c.status] ?? { tone: "neutral" as const, label: c.status };
             return (
               <li key={c.id}>
                 <Card
@@ -639,6 +643,7 @@ function RoutedConsultations() {
                   action={<Badge tone={state.tone}>{state.label}</Badge>}
                 >
                   <p className="whitespace-pre-line text-sm text-ink">“{c.reason}”</p>
+                  {withdrawn && c.resolution && <p className="mt-2 text-sm text-ink-muted">{c.resolution}</p>}
                   <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
                     <div>
                       <dt className="text-[13px] text-ink-subtle">Conditions</dt>

@@ -501,6 +501,9 @@ export function ConditionList({ items, staff, actions }: { items: Json[]; staff?
                 {c.origin === "patient_reported" ? "Added by the patient" : "Recorded by the care team"} ·{" "}
                 {fmtDate(c.reported_at)}
               </div>
+              {c.status === "dismissed" && c.dismissed_reason && (
+                <div className="mt-0.5 text-[13px] text-ink-muted">Not added: {c.dismissed_reason}</div>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -526,6 +529,7 @@ export function MedicationSummary({ m, staff }: { m: Json; staff?: boolean }) {
         </div>
         <div className="mt-0.5 text-[13px] leading-5 text-ink-subtle">
           {[m.dose_instructions, m.schedule].filter(Boolean).join(" · ") || "No dose recorded"}
+          {m.review_status === "dismissed" && m.dismissed_reason ? ` · Not added: ${m.dismissed_reason}` : ""}
         </div>
         <div className="text-[13px] leading-5 text-ink-subtle">
           Since {fmtDate(m.start_date)}
@@ -647,7 +651,9 @@ export function NoteList({ items, staff, compact }: { items: Json[]; staff?: boo
         <li key={n.id} className={cx("rounded-lg border border-line p-3", n.kind === "hcp_instruction" && "bg-primary-soft/40")}>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-subtle">
             <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
-            <span className="font-semibold text-ink">{n.kind === "hcp_instruction" ? "Instruction" : "Follow-up"}</span>
+            {/* Follow-ups are tracked as requests with a due date; a follow-up note is an older,
+                untracked note kept for the record and is not open work. */}
+            <span className="font-semibold text-ink">{n.kind === "hcp_instruction" ? "Instruction" : "Note (earlier follow-up, not tracked)"}</span>
             {n.hcp && <span>from {n.hcp}{n.by_hcp ? "" : staff ? " (recorded by the care team)" : ""}</span>}
             <span aria-hidden>·</span>
             <span className="tabular">{fmtDateTime(n.created_at)}</span>

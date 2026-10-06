@@ -18,7 +18,7 @@ from app.api.deps import get_current_user, not_found, require_permission
 from app.api.schemas import StrictBody
 from app.auth import invitations
 from app.auth.errors import AuthError
-from app.clinical import care, vocabulary
+from app.clinical import care, vocabulary, workload
 from app.core import rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can_any
@@ -171,7 +171,13 @@ def list_requests(
     counts: dict[str, int] = {}
     for r in every:
         counts[r.status] = counts.get(r.status, 0) + 1
-    return {"counts": counts, "items": [care.request_out(db, r) for r in rows]}
+    return {
+        "counts": counts,
+        # The same figures as the menu count (clinical.workload): what needs the care manager
+        # now, follow-ups scheduled for later, consultations with the HCP.
+        "work": workload.care_requests(db, user),
+        "items": [care.request_out(db, r) for r in rows],
+    }
 
 
 @router.patch("/requests/{request_id}")

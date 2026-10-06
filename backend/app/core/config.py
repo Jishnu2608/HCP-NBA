@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # Invitations for professional roles.
     invitation_ttl_hours: int = 72
     # Base of links in emails (set to a LAN address to open them on a phone).
-    public_base_url: str = "http://127.0.0.1:8000"
+    public_base_url: str = "http://localhost:8000"
     # Shown in emails as the contact for questions; falls back to the sender address.
     support_email: str | None = None
 

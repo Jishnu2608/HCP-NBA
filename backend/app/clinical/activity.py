@@ -56,7 +56,8 @@ def touch(db: Session, patient_id: str | None, when: datetime | date | None = No
     patient = db.get(Patient, patient_id)
     if patient is None:
         return
-    moment = _as_datetime(when) or utcnow()
+    # Never in the future: an event known only by its date must not sort above now.
+    moment = min(_as_datetime(when) or utcnow(), utcnow())
     if patient.last_activity_at is None or moment > patient.last_activity_at:
         patient.last_activity_at = moment
 

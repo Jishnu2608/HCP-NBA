@@ -9,6 +9,7 @@ from app import audit
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.api.schemas import StrictBody
+from app.clinical import workload
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
@@ -72,11 +73,29 @@ def _reviewable(db: Session, user: User, nba_id: int) -> Nba:
     return nba
 
 
+STATUS_WORDS = {
+    NbaStatus.READY_FOR_REVIEW: "waiting for review",
+    NbaStatus.APPROVED: "approved and not yet sent",
+    NbaStatus.SENT: "already sent",
+    NbaStatus.RESPONDED: "already answered by the person",
+    NbaStatus.REJECTED: "rejected",
+    NbaStatus.BLOCKED: "blocked by a safeguard",
+    NbaStatus.EXPIRED: "replaced by a newer recommendation",
+}
+
+
+def _conflict(code: str, message: str, **extra) -> HTTPException:
+    """Errors in the application's shape: a code the page can act on and a plain message."""
+    return HTTPException(status.HTTP_409_CONFLICT, {"code": code, "message": message, **extra})
+
+
 def _require_status(nba: Nba, *allowed: str) -> None:
     if nba.status not in allowed:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Recommendation is {nba.status}, expected {' or '.join(allowed)}",
+        words = STATUS_WORDS.get(nba.status, nba.status)
+        raise _conflict(
+            "invalid_state",
+            f"This recommendation is {words}, so this action is no longer possible.",
+            status=nba.status,
         )
 
 
@@ -85,19 +104,24 @@ def list_recommendations(
     status_in: list[str] | None = Query(None, alias="status"),
     target_type: str | None = None,
     real_only: bool = False,
+    responses: bool = False,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(readers),
     db: Session = Depends(get_db),
 ) -> dict:
     """The work queue: recommendations this user may see, highest priority first."""
-    where = [rbac.nba_filter(user), Nba.status.in_(status_in or OPEN)]
+    statuses = status_in or ([NbaStatus.RESPONDED] if responses else OPEN)
+    where = [rbac.nba_filter(user), Nba.status.in_(statuses)]
     if target_type:
         where.append(Nba.target_type == target_type)
     # Real people (self-registered and clinic patients), as opposed to the demo population.
     real = and_(Nba.target_type == TargetType.PATIENT, Nba.target_id.in_(REAL_PATIENTS))
     if real_only:
         where.append(real)
+    if responses:
+        # Real patients' responses nobody on the care team has looked at yet.
+        where.append(workload.responses_filter())
     total = db.scalar(select(func.count()).select_from(Nba).where(*where))
     real_waiting = db.scalar(
         select(func.count())
@@ -119,6 +143,11 @@ def list_recommendations(
         "total": total,
         "counts": by_status,
         "real_waiting": real_waiting if rbac.can_see_target_profile(user) else None,
+        # What waits for this care manager (the same figures as the menu count).
+        "work": workload.outreach(db, user)
+        if rbac.can_review(user, Nba(target_type=TargetType.PATIENT))
+        and rbac.can_see_target_profile(user)
+        else None,
         "items": [out.nba_summary(db, n, with_identity=identity) for n in rows],
     }
 
@@ -163,7 +192,7 @@ def approve(
             detail={"gate_failures": failures},
         )
         db.commit()
-        raise HTTPException(status.HTTP_409_CONFLICT, f"No longer eligible: {nba.block_reason}")
+        raise _conflict("blocked", f"No longer eligible: {nba.block_reason}")
 
     drafts = db.scalars(select(MessageDraft).where(MessageDraft.nba_id == nba.id)).all()
     if body.draft_id is not None:
@@ -278,7 +307,7 @@ def send(nba_id: int, user: User = Depends(readers), db: Session = Depends(get_d
         delivery.send(db, nba, user)
     except delivery.SendBlocked as exc:
         db.commit()
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Not sent: {exc.reason}") from exc
+        raise _conflict("blocked", f"Not sent: {exc.reason}") from exc
     db.commit()
     return out.nba_detail(db, nba, clock.get_today(db))
 
@@ -294,16 +323,14 @@ def log_outcome(
     nba = _reviewable(db, user, nba_id)
     _require_status(nba, NbaStatus.SENT)
     if nba.channel not in (Channel.PHONE, Channel.REP_VISIT):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Outcomes are logged by staff only for calls and visits"
-        )
+        raise _conflict("not_a_call", "Outcomes are logged by staff only for calls and visits.")
     interaction = db.scalar(
         select(Interaction).where(
             Interaction.nba_id == nba.id, Interaction.outcome == Outcome.PENDING
         )
     )
     if interaction is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Outcome already recorded")
+        raise _conflict("outcome_recorded", "The outcome is already recorded.")
     delivery.capture_response(
         db,
         interaction,
@@ -313,5 +340,24 @@ def log_outcome(
         actor_role=user.role,
         note=body.note,
     )
+    # The care team recorded this outcome themselves: nothing left for them to look at.
+    nba.response_reviewed_ts = utcnow()
     db.commit()
+    return out.nba_detail(db, nba, clock.get_today(db))
+
+
+@router.post("/{nba_id}/response-reviewed")
+def response_reviewed(
+    nba_id: int, user: User = Depends(readers), db: Session = Depends(get_db)
+) -> dict:
+    """The care team has looked at a real patient's response; it leaves their counts."""
+    nba = _reviewable(db, user, nba_id)
+    _require_status(nba, NbaStatus.RESPONDED)
+    if nba.response_reviewed_ts is None:
+        nba.response_reviewed_ts = utcnow()
+        audit.record(
+            db, "nba_response_reviewed", "nba", nba.id, nba_id=nba.id, actor=user.username,
+            actor_role=user.role,
+        )  # fmt: skip
+        db.commit()
     return out.nba_detail(db, nba, clock.get_today(db))

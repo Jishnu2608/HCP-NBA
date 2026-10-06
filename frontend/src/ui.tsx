@@ -402,9 +402,12 @@ export function AnimatedNumber({ value }: { value: ReactNode }) {
   }, [target]);
 
   if (!match || Number.isNaN(target)) return <>{value}</>;
+  // Before the first frame (the value was "—" while loading) there is no figure yet: start
+  // from where the count starts, never from NaN.
+  const current = Number.isFinite(shown) ? shown : from.current;
   const number = grouped
-    ? shown.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-    : shown.toFixed(decimals);
+    ? current.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+    : current.toFixed(decimals);
   return (
     <>
       {/* Screen readers get the final value once, not every frame. */}

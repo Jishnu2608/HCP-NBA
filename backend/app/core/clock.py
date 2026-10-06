@@ -15,7 +15,7 @@ Tests may pin the date with `override`; application code never does.
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, time
 
 from sqlalchemy.orm import Session
 
@@ -59,3 +59,11 @@ def set_simulated_through(db: Session, value: date) -> None:
     else:
         db.add(EngineConfig(key=SIMULATED_KEY, value=value.isoformat()))
     db.flush()
+
+
+def day_instant(day: date) -> datetime:
+    """The instant stored for an event known only by its date (a refill): midday of that
+    day, but never later than now, so an event recorded this morning is not in the future."""
+    noon = datetime.combine(day, time(12, 0))
+    now = utcnow()
+    return now if day == now.date() and noon > now else noon

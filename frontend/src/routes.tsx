@@ -112,6 +112,9 @@ export const ROUTES: AppRoute[] = [
     path: "/queue",
     anyOf: NBA_READ,
     element: <Queue />,
+    // Care managers: recommendations to review or send, call outcomes to record and patient
+    // responses to look at (the same figures as the queue banner).
+    badge: "outreach",
     label: (can) =>
       can(P.NBA_READ_ALL)
         ? "All recommendations"

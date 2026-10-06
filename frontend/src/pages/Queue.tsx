@@ -45,12 +45,14 @@ const TITLE: Record<string, [string, string]> = {
   all: ["All recommendations", "Every recommendation across patients and HCPs, ranked by priority."],
 };
 
-type FilterKey = "open" | "ready_for_review" | "approved" | "sent" | "blocked" | "closed";
+type FilterKey = "open" | "ready_for_review" | "approved" | "sent" | "responses" | "blocked" | "closed";
 const FILTERS: Array<{ key: FilterKey; label: string; statuses: string[] }> = [
   { key: "open", label: "Open", statuses: ["ready_for_review", "approved", "blocked"] },
   { key: "ready_for_review", label: "Pending review", statuses: ["ready_for_review"] },
   { key: "approved", label: "Approved", statuses: ["approved"] },
   { key: "sent", label: "Sent", statuses: ["sent", "responded"] },
+  // Registered patients answered and nobody on the care team has looked yet.
+  { key: "responses", label: "Responses to review", statuses: ["responded"] },
   { key: "blocked", label: "Blocked", statuses: ["blocked"] },
   { key: "closed", label: "Rejected or superseded", statuses: ["rejected", "expired"] },
 ];
@@ -69,13 +71,21 @@ export default function Queue() {
     queryKey: ["nba", filter, audience, realOnly, page],
     queryFn: () =>
       api(
-        `/nba${query({ status: statuses, target_type: audience, real_only: realOnly ? "true" : "", limit: PAGE, offset: page * PAGE })}`,
+        `/nba${query({ status: statuses, target_type: audience, real_only: realOnly ? "true" : "", responses: filter === "responses" ? "true" : "", limit: PAGE, offset: page * PAGE })}`,
       ),
     placeholderData: (previous) => previous,
   });
   const attention = useAttention();
   const careRequests = can(P.PATIENT_CARE_MANAGE) ? attention.care_requests ?? 0 : 0;
   const realWaiting: number = list.data?.real_waiting ?? 0;
+  const work: Record<string, number> | null = list.data?.work ?? null;
+  const responses = work?.responses ?? 0;
+  const callOutcomes = work?.call_outcomes ?? 0;
+  const pick = (key: FilterKey) => {
+    setFilter(key);
+    setRealOnly(false);
+    setPage(0);
+  };
   const seesAll = can(P.NBA_READ_ALL);
   const view = seesAll
     ? "all"
@@ -153,6 +163,17 @@ export default function Queue() {
               {n.rationale_summary ?? n.timing_note}
             </span>
           )}
+          {n.gate_now && !n.gate_now.ok && (
+            <div className="mt-1.5 flex items-start gap-1.5 text-[13px] leading-5 text-bad">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              Safeguard fails now: {n.gate_now.reason}
+            </div>
+          )}
+          {n.status === "responded" && n.target_origin && n.target_origin !== "synthetic" && !n.response_reviewed_ts && (
+            <div className="mt-1.5">
+              <Badge tone="info">Response to review</Badge>
+            </div>
+          )}
           {n.has_withheld && n.status !== "blocked" && (
             <div className="mt-1.5">
               <Badge tone="warn" icon={<ShieldAlert className="h-3.5 w-3.5" aria-hidden />}>
@@ -187,13 +208,26 @@ export default function Queue() {
   return (
     <>
       <PageHeader title={title} subtitle={subtitle} />
-      {(careRequests > 0 || (realWaiting > 0 && !realOnly)) && (
+      {(careRequests > 0 ||
+        (responses > 0 && filter !== "responses") ||
+        (callOutcomes > 0 && filter !== "sent") ||
+        (realWaiting > 0 && !realOnly)) && (
         <Alert tone="warn" title="Your patients need you" className="mb-6">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             {careRequests > 0 && (
               <Link to="/care" className="font-semibold text-primary-ink underline">
                 {careRequests} care request{careRequests === 1 ? "" : "s"} to handle
               </Link>
+            )}
+            {responses > 0 && filter !== "responses" && (
+              <button type="button" className="font-semibold text-primary-ink underline" onClick={() => pick("responses")}>
+                {responses} patient response{responses === 1 ? "" : "s"} to review
+              </button>
+            )}
+            {callOutcomes > 0 && filter !== "sent" && (
+              <button type="button" className="font-semibold text-primary-ink underline" onClick={() => pick("sent")}>
+                {callOutcomes} call outcome{callOutcomes === 1 ? "" : "s"} to record
+              </button>
             )}
             {realWaiting > 0 && !realOnly && (
               <button
@@ -249,7 +283,11 @@ export default function Queue() {
             setFilter(v);
             setPage(0);
           }}
-          options={FILTERS.map((f) => ({ value: f.key, label: f.label, count: countFor(f.statuses) }))}
+          options={FILTERS.filter((f) => f.key !== "responses" || work).map((f) => ({
+            value: f.key,
+            label: f.label,
+            count: f.key === "responses" ? responses : countFor(f.statuses),
+          }))}
         />
         {seesAll && (
           <Select

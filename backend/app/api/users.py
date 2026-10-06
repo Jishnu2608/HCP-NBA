@@ -292,7 +292,7 @@ def set_assignments(
     user = _get(db, user_id)
     before = assignments.summary(db, user)
     after = assignments.replace(
-        db, user, **body.model_dump(), fields_set=set(body.model_fields_set)
+        db, user, **body.model_dump(), fields_set=set(body.model_fields_set), actor=admin
     )
     audit.record(
         db,

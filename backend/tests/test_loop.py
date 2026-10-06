@@ -185,7 +185,7 @@ def test_send_is_blocked_if_consent_is_withdrawn_after_approval(env):
     )
     assert off.status_code == 200
     blocked = call(env, "cm01", "POST", f"/api/nba/{nba.id}/send")
-    assert blocked.status_code == 409 and "not consented" in blocked.json()["detail"]
+    assert blocked.status_code == 409 and "not consented" in blocked.json()["detail"]["message"]
     db.refresh(nba)
     assert nba.status == NbaStatus.BLOCKED
     assert db.scalar(select(Interaction).where(Interaction.nba_id == nba.id)) is None

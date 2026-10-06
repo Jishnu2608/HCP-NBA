@@ -26,6 +26,7 @@ Workflow_Context.md
 TODO.md
 ROLE_CAPABILITIES.md
 PATIENT_JOURNEY_BREAKPOINTS.md
+CARE_MANAGER_JOURNEY_BREAKPOINTS.md
 
 # Locally installed agent skills (per developer, not part of the application)
 .agents/

@@ -82,12 +82,18 @@ class GenConfig:
     demo_password: str | None = None
 
 
+def _past(moment: datetime) -> datetime:
+    """Generated history never lies in the future: an event drawn for later today is stamped
+    at the start of today (a fixed bound, so generation stays deterministic)."""
+    return min(moment, datetime.combine(clock.today(), time(0, 0)))
+
+
 def _rng(cfg: GenConfig, *parts) -> Random:
     return Random(":".join(str(p) for p in (cfg.seed, *parts)))
 
 
 def _at(day: date, rng: Random) -> datetime:
-    return datetime.combine(day, time(rng.randint(9, 17), rng.randint(0, 59)))
+    return _past(datetime.combine(day, time(rng.randint(9, 17), rng.randint(0, 59))))
 
 
 def hcp_key(i: int) -> str:
@@ -173,7 +179,7 @@ def build_hcp_history(
                     if channel == Channel.REP_VISIT
                     else behavior.weighted_choice(rng, DIGITAL_OUTCOMES)
                 )
-                outcome_ts = ts + timedelta(hours=rng.randint(0, 30))
+                outcome_ts = _past(ts + timedelta(hours=rng.randint(0, 30)))
             else:
                 outcome = Outcome.DECLINED if channel == Channel.REP_VISIT else Outcome.NO_RESPONSE
                 outcome_ts = None
@@ -209,7 +215,7 @@ def build_hcp_history(
                     int_ts=ts,
                     type=content.action_type,
                     outcome=outcome,
-                    outcome_ts=None if quiet else ts + timedelta(hours=3),
+                    outcome_ts=None if quiet else _past(ts + timedelta(hours=3)),
                     content_id=content.content_id,
                 )
             )
@@ -458,14 +464,14 @@ def simulate_therapy(
             if rng.random() < behavior.patient_fill_prob(traits, action, discontinued):
                 fill_day = day + timedelta(days=rng.randint(1, 4))
             if fill_day and fill_day <= as_of:
-                outcome, outcome_ts = Outcome.FILLED, datetime.combine(fill_day, time(12, 0))
+                outcome, outcome_ts = Outcome.FILLED, _past(datetime.combine(fill_day, time(12, 0)))
             else:
                 outcome = (
                     Outcome.COMPLETED
                     if channel == Channel.PHONE
                     else behavior.weighted_choice(rng, DIGITAL_OUTCOMES)
                 )
-                outcome_ts = ts + timedelta(hours=rng.randint(0, 6))
+                outcome_ts = _past(ts + timedelta(hours=rng.randint(0, 6)))
         interactions.append(
             Interaction(
                 target_type=TargetType.PATIENT,
@@ -756,7 +762,7 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
                     int_ts=ts,
                     type=action,
                     outcome=outcome,
-                    outcome_ts=ts + timedelta(hours=2) if engaged else None,
+                    outcome_ts=_past(ts + timedelta(hours=2)) if engaged else None,
                     therapy_id=first_therapy[b.patient.patient_id],
                 )
             )

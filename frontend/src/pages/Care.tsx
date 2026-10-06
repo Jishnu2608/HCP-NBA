@@ -74,6 +74,9 @@ export function OriginBadge({ origin }: { origin: string | null | undefined }) {
   return <Badge tone="info">{ORIGIN_LABEL[origin] ?? origin}</Badge>;
 }
 
+/** A review request whose condition or medication still waits for confirm or dismiss. */
+const reviewPending = (q: Json) => Boolean(q.entry_pending);
+
 /* ------------------------------------------------------------------ request queue */
 
 type StatusFilter = "active" | "awaiting_hcp" | "hcp_responded" | "closed" | "";
@@ -90,8 +93,12 @@ export default function CareRequestsPage() {
   });
   const counts: Record<string, number> = list.data?.counts ?? {};
   const shown = (n: number) => (list.data ? num(n) : "—");
-  const needsYou = (counts.open ?? 0) + (counts.in_progress ?? 0) + (counts.hcp_responded ?? 0);
-  const active = needsYou + (counts.awaiting_hcp ?? 0);
+  // The server's own figures (the same ones as the menu count): what needs you now, follow-
+  // ups you scheduled for later, consultations with an HCP.
+  const work: Record<string, number> = list.data?.work ?? {};
+  const needsYou = work.needs_you ?? 0;
+  const scheduled = work.scheduled ?? 0;
+  const active = needsYou + scheduled + (work.with_hcp ?? 0);
   const columns: Column<Json>[] = [
     {
       key: "patient",
@@ -156,8 +163,14 @@ export default function CareRequestsPage() {
         }
       />
       <KpiGrid>
-        <Stat label="Need you" value={shown(needsYou)} tone={needsYou ? "warn" : undefined} icon={<ClipboardList className="h-4 w-4" aria-hidden />} />
-        <Stat label="Waiting for an HCP" value={shown(counts.awaiting_hcp ?? 0)} icon={<RefreshCcw className="h-4 w-4" aria-hidden />} />
+        <Stat
+          label="Need you now"
+          value={shown(needsYou)}
+          hint={scheduled ? `${num(scheduled)} follow-up${scheduled === 1 ? "" : "s"} scheduled for later` : "Nothing scheduled for later"}
+          tone={needsYou ? "warn" : undefined}
+          icon={<ClipboardList className="h-4 w-4" aria-hidden />}
+        />
+        <Stat label="Waiting for an HCP" value={shown(work.with_hcp ?? 0)} icon={<RefreshCcw className="h-4 w-4" aria-hidden />} />
         <Stat label="Closed" value={shown(counts.closed ?? 0)} tone="ok" icon={<Check className="h-4 w-4" aria-hidden />} />
       </KpiGrid>
       <div className="mb-4">
@@ -460,9 +473,15 @@ export function CarePanel({ patientId }: { patientId: string }) {
                       Start
                     </Button>
                   )}
-                  <Button size="sm" variant={q.status === "hcp_responded" ? "primary" : "ghost"} onClick={() => setSheet({ kind: "close", r: q })}>
-                    {q.status === "hcp_responded" ? "Close with outcome" : "Close"}
-                  </Button>
+                  {/* A review request closes when its entry is confirmed or dismissed above;
+                      closing it on its own would hide an entry nobody has reviewed. */}
+                  {reviewPending(q) ? (
+                    <span className="text-xs text-ink-subtle">Confirm or dismiss the entry above to close this.</span>
+                  ) : (
+                    <Button size="sm" variant={q.status === "hcp_responded" ? "primary" : "ghost"} onClick={() => setSheet({ kind: "close", r: q })}>
+                      {q.status === "hcp_responded" ? "Close with outcome" : q.status === "awaiting_hcp" ? "Withdraw from HCP" : "Close"}
+                    </Button>
+                  )}
                 </>
               )
             }
@@ -497,7 +516,7 @@ export function CarePanel({ patientId }: { patientId: string }) {
           {sheet.kind === "hcp" && (
             <HcpPicker
               patientId={patientId}
-              conditions={r.conditions.filter((c: Json) => c.status !== "resolved")}
+              conditions={r.conditions.filter((c: Json) => c.status !== "resolved" && c.status !== "dismissed")}
               conditionId={sheet.conditionId}
               requestId={sheet.requestId}
               run={run}
@@ -819,12 +838,20 @@ function RecordHcpResponse({ r, run, busy, error }: { r: Json; run: Run; busy: b
 
 function CloseRequest({ r, run, busy, error }: { r: Json; run: Run; busy: boolean; error: unknown }) {
   const [resolution, setResolution] = useState("");
+  const withdrawing = r.status === "awaiting_hcp";
+  const empty = !resolution.trim();
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-muted">{REQUEST_LABEL[r.type]} · received {fmtDate(r.created_at)}</p>
+      {withdrawing && (
+        <Alert tone="warn" title={`${r.assigned_hcp?.name ?? "The healthcare professional"} has not answered yet`}>
+          Withdrawing takes the consultation back. They and the patient see that you withdrew it, with your reason.
+        </Alert>
+      )}
       <TextArea
-        label="What was done"
-        hint="The patient reads this as the outcome of their request."
+        label={withdrawing ? "Why you are withdrawing it" : "What was done"}
+        hint="Required. The patient reads this as the outcome of their request."
+        required
         rows={4}
         maxLength={500}
         value={resolution}
@@ -834,9 +861,10 @@ function CloseRequest({ r, run, busy, error }: { r: Json; run: Run; busy: boolea
       <Button
         variant="primary"
         busy={busy}
-        onClick={() => run("patch", `/care/requests/${r.id}`, { status: "closed", resolution: resolution.trim() || null }, "Request closed.")}
+        disabled={empty}
+        onClick={() => run("patch", `/care/requests/${r.id}`, { status: "closed", resolution: resolution.trim() }, withdrawing ? "Consultation withdrawn." : "Request closed.")}
       >
-        Close request
+        {withdrawing ? "Withdraw consultation" : "Close request"}
       </Button>
     </div>
   );

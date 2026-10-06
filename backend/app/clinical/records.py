@@ -109,9 +109,17 @@ def pick_care_manager(db: Session, *, excluding: int | None = None) -> User | No
     return min(managers, key=lambda u: (loads.get(u.id, 0), u.id))
 
 
-def assign_care_manager(db: Session, patient: Patient, manager: User | None) -> None:
+def assign_care_manager(
+    db: Session,
+    patient: Patient,
+    manager: User | None,
+    *,
+    actor: str = "system",
+    actor_role: str = "system",
+) -> None:
     """Makes `manager` the care manager responsible for the patient. A real patient has
-    exactly one: any other link is moved, with the open work it owns."""
+    exactly one: any other link is moved, with the open work it owns, and each move is
+    audited on the patient (from, to, by whom)."""
     if manager is None:
         return
     if is_real(patient):
@@ -121,24 +129,37 @@ def assign_care_manager(db: Session, patient: Patient, manager: User | None) -> 
                 CareManagerPatient.care_manager_user_id != manager.id,
             )
         ).all():
-            _move_owned_work(db, patient.patient_id, link.care_manager_user_id, manager.id)
+            previous = link.care_manager_user_id
+            moved = _move_open_work(db, patient.patient_id, previous, manager.id)
             db.delete(link)
+            audit.record(
+                db, "care_manager_reassigned", "patient", patient.patient_id, actor=actor,
+                actor_role=actor_role,
+                detail={"from": previous, "to": manager.id, "open_requests_moved": moved},
+            )  # fmt: skip
     exists = db.get(CareManagerPatient, (manager.id, patient.patient_id))
     if exists is None:
         db.add(CareManagerPatient(care_manager_user_id=manager.id, patient_id=patient.patient_id))
     db.flush()
 
 
-def _move_owned_work(db: Session, patient_id: str, from_id: int, to_id: int) -> None:
-    """Follow-ups the previous care manager owned for this patient move with the patient."""
+def _move_open_work(db: Session, patient_id: str, from_id: int, to_id: int) -> int:
+    """The patient's open work moves with them: follow-ups the previous care manager owned,
+    and every open request someone else was handling, so the HCP and the patient see who is
+    responsible now. Closed requests keep their history."""
+    moved = 0
     for r in db.scalars(
         select(CareRequest).where(
-            CareRequest.patient_id == patient_id,
-            CareRequest.owner_user_id == from_id,
-            CareRequest.status != "closed",
+            CareRequest.patient_id == patient_id, CareRequest.status != "closed"
         )
     ):
-        r.owner_user_id = to_id
+        changed = False
+        if r.owner_user_id == from_id:
+            r.owner_user_id, changed = to_id, True
+        if r.handled_by_user_id is not None and r.handled_by_user_id != to_id:
+            r.handled_by_user_id, changed = to_id, True
+        moved += changed
+    return moved
 
 
 def responsible_care_managers(
@@ -218,11 +239,9 @@ def transfer_patients(db: Session, manager: User, actor: User) -> int:
         target = pick_care_manager(db, excluding=manager.id)
         if target is None:
             break
-        assign_care_manager(db, db.get(Patient, pid), target)
-        audit.record(
-            db, "care_manager_reassigned", "patient", pid, actor=actor.username,
-            actor_role=actor.role, detail={"from": manager.id, "to": target.id},
-        )  # fmt: skip
+        assign_care_manager(
+            db, db.get(Patient, pid), target, actor=actor.username, actor_role=actor.role
+        )
         moved += 1
     return moved
 

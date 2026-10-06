@@ -11,7 +11,7 @@ from app.clinical import activity, care, records
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
-from app.core.permissions import Permission
+from app.core.permissions import Permission, can
 from app.models import (
     Consent,
     Content,
@@ -110,6 +110,14 @@ def list_patients(
                 "plan_type": p.plan_type,
                 "preferred_channel": p.preferred_channel,
                 "last_activity_at": p.last_activity_at,
+                # A real patient's responsible care manager: an administrator adding them to
+                # another panel sees whom they move from before saving.
+                "care_managers": [
+                    {"id": u.id, "name": u.display_name}
+                    for u in records.responsible_care_managers(db, p.patient_id)
+                ]
+                if records.is_real(p) and can(user, Permission.USER_MANAGE)
+                else None,
                 **out.patient_brief(p),
             }
             for p in rows

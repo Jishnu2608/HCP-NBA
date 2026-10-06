@@ -366,6 +366,8 @@ class PatientTherapy(Base):
     # When the patient says they last collected a supply (their own report). The care
     # manager confirms it; it becomes a fill only then.
     reported_last_fill: Mapped[date | None] = mapped_column(Date)
+    # Why the care manager did not add a reported medication (the patient reads it).
+    dismissed_reason: Mapped[str | None] = mapped_column(String(300))
 
 
 class MedicationFill(Base):
@@ -396,6 +398,8 @@ class PatientCondition(Base):
     reported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Why the care manager did not add a reported condition (the patient reads it).
+    dismissed_reason: Mapped[str | None] = mapped_column(String(300))
 
 
 class CareRequest(Base):
@@ -551,6 +555,9 @@ class Nba(Base):
     created_ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     reviewed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     reviewed_ts: Mapped[datetime | None] = mapped_column(DateTime)
+    # When the care team looked at a real patient's response to what was sent; until then
+    # the response counts as work in the care manager's menu.
+    response_reviewed_ts: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class NbaCandidate(Base):

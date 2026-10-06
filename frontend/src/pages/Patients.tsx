@@ -53,7 +53,7 @@ import type { Column } from "../ui";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
 import { CarePanel, HealthSummary, OriginBadge } from "./Care";
-import { specialtyText } from "./HealthForms";
+import { currencyFor, specialtyText } from "./HealthForms";
 
 const DAY = 86_400_000;
 const WINDOW_DAYS = 365;
@@ -441,7 +441,7 @@ export function OpenNba({ nba, lastCycle }: { nba: Json | null; lastCycle?: stri
   );
 }
 
-function TherapyCard({ t, fills, asOf }: { t: Json; fills: Json[]; asOf: string }) {
+function TherapyCard({ t, fills, asOf, country }: { t: Json; fills: Json[]; asOf: string; country?: string | null }) {
   const below = t.pdc !== null && t.pdc < 0.8;
   return (
     <BentoCard
@@ -488,7 +488,10 @@ function TherapyCard({ t, fills, asOf }: { t: Json; fills: Json[]; asOf: string 
             {t.risk_score?.toFixed(0) ?? "—"}
             <span className="text-sm font-normal text-ink-subtle"> / 100</span>
           </dd>
-          <dd className="tabular text-xs text-ink-subtle">Copay ${t.copay?.toFixed(0)}</dd>
+          <dd className="tabular text-xs text-ink-subtle">
+            Copay {currencyFor(country) || "$"}
+            {t.copay?.toFixed(0)}
+          </dd>
         </div>
       </dl>
       <div className="mt-6">
@@ -613,6 +616,7 @@ export function PatientProfile() {
             t={t}
             fills={p.fills.filter((f: Json) => f.therapy_id === t.therapy_id)}
             asOf={p.as_of_date}
+            country={p.country}
           />
         ))}
 

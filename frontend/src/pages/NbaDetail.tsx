@@ -123,6 +123,8 @@ export default function NbaDetail() {
   const refresh = () => {
     void client.invalidateQueries({ queryKey: ["nba-detail", id] });
     void client.invalidateQueries({ queryKey: ["nba"] });
+    // Approving, sending, recording an outcome or reviewing a response changes the menu count.
+    void client.invalidateQueries({ queryKey: ["attention"] });
   };
   const act = useMutation({
     mutationFn: (v: { fn: () => Promise<unknown>; done: string }) => v.fn(),
@@ -141,6 +143,11 @@ export default function NbaDetail() {
   const dirty = draft && (body !== draft.body || subject !== (draft.subject ?? ""));
   const reviewing = n.can_review && n.status === "ready_for_review";
   const blocked = n.status === "blocked";
+  // The safeguards as they stand now (consent, content approval and dates, the medication):
+  // shown before anyone acts, not discovered at the approve button.
+  const failingNow = Boolean(n.gate_now && !n.gate_now.ok);
+  const responseToReview =
+    n.status === "responded" && n.can_review && n.target_origin && n.target_origin !== "synthetic" && !n.response_reviewed_ts;
   const humanChannel = n.channel === "phone" || n.channel === "rep_visit";
   const isPatient = n.target_type === "PATIENT";
   const profileLink = n.target_name && (isPatient ? `/patients/${n.target_id}` : `/hcps/${n.target_id}`);
@@ -244,10 +251,26 @@ export default function NbaDetail() {
       {n.status === "sent" && !humanChannel && (
         <p className="text-sm text-ink-muted">Sent. The response is captured automatically when the recipient reacts.</p>
       )}
-      {["responded", "rejected", "expired", "blocked"].includes(n.status) && (
+      {n.status === "responded" && n.response && (
+        <p className="mb-3 text-sm text-ink-muted">
+          {n.target_name ?? "The person"} responded: <span className="font-semibold text-ink">{titleCase(n.response.outcome)}</span>
+          {n.response.at ? ` · ${fmtDateTime(n.response.at)}` : ""}
+        </p>
+      )}
+      {responseToReview && (
+        <Button variant="primary" busy={act.isPending} onClick={() => run(() => post(`/nba/${id}/response-reviewed`), "Response marked as reviewed")}>
+          Mark response reviewed
+        </Button>
+      )}
+      {["responded", "rejected", "expired", "blocked"].includes(n.status) && !responseToReview && (
         <p className="flex items-center gap-2 text-sm text-ink-muted">
           <StatusBadge status={n.status} /> No further action.
         </p>
+      )}
+      {failingNow && reviewing && (
+        <Alert tone="bad" title="A safeguard fails now" className="mt-3">
+          {n.gate_now.reason}. Approving will block this recommendation; it cannot be sent.
+        </Alert>
       )}
       <ErrorNote error={act.error} className="mt-3" />
       <p className="mt-4 flex gap-2 border-t border-line pt-3 text-[13px] leading-5 text-ink-subtle">
@@ -349,12 +372,14 @@ export default function NbaDetail() {
                 />
                 <Fact icon={<CalendarClock className="h-3.5 w-3.5" aria-hidden />} label="Timing" value={n.timing_note} />
                 <Fact
-                  icon={blocked ? <Ban className="h-3.5 w-3.5" aria-hidden /> : <ShieldCheck className="h-3.5 w-3.5" aria-hidden />}
+                  icon={blocked || failingNow ? <Ban className="h-3.5 w-3.5" aria-hidden /> : <ShieldCheck className="h-3.5 w-3.5" aria-hidden />}
                   label="Compliance"
                   value={
-                    <span className={blocked ? "text-bad" : "text-ok"}>{blocked ? "Blocked by a safeguard" : "All safeguards passed"}</span>
+                    <span className={blocked || failingNow ? "text-bad" : "text-ok"}>
+                      {blocked ? "Blocked by a safeguard" : failingNow ? "Fails a safeguard now" : n.gate_now ? "All safeguards pass now" : "All safeguards passed"}
+                    </span>
                   }
-                  hint={n.content.is_expired ? "Content approval expired" : `MLR ${n.content.mlr_status}`}
+                  hint={failingNow ? n.gate_now.reason : n.content.is_expired ? "Content approval expired" : `MLR ${n.content.mlr_status}`}
                 />
                 {isPatient ? (
                   <Fact

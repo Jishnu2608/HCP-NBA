@@ -6,7 +6,7 @@ for the engine only once the care team confirms it, and an HCP is linked only wh
 manager chooses one. Synthetic demo records are read-only here; their history is generated.
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
@@ -108,6 +108,7 @@ def condition_out(c: PatientCondition) -> dict:
         "specialties": vocabulary.specialties_for(c.condition),
         "origin": c.origin,
         "status": c.status,
+        "dismissed_reason": c.dismissed_reason,
         "reported_at": c.reported_at,
         "confirmed_at": c.confirmed_at,
     }
@@ -132,6 +133,7 @@ def medication_out(db: Session, t: PatientTherapy, today: date, *, with_risk: bo
         "origin": t.origin,
         "review_status": t.review_status,
         "reported_last_fill": t.reported_last_fill,
+        "dismissed_reason": t.dismissed_reason,
         "prescriber": out.hcp_name(prescriber) if prescriber else None,
     }
 
@@ -184,6 +186,8 @@ def _status_label(r: CareRequest, hcp: Hcp | None) -> str:
         return "Your care manager is working on it"
     if r.status == CareRequestStatus.OPEN:
         return "With your care manager"
+    if (r.resolution or "").startswith(WITHDRAWN):
+        return "Withdrawn by the care manager"
     return "Closed"
 
 
@@ -211,6 +215,8 @@ def request_out(db: Session, r: CareRequest, *, for_patient: bool = False) -> di
         "due_date": r.due_date,
         "overdue": bool(r.due_date and r.status != CareRequestStatus.CLOSED and r.due_date < today),
         "notes": [note_out(db, n) for n in notes],
+        # A review request whose entry still waits for confirm or dismiss (it closes then).
+        "entry_pending": entry_unresolved(db, r) if r.status != CareRequestStatus.CLOSED else False,
         "created_at": r.created_at,
         "updated_at": r.updated_at,
     }
@@ -325,26 +331,42 @@ def _open_request(
     return request
 
 
+def _same_condition(
+    db: Session,
+    patient_id: str,
+    code: str,
+    other_text: str | None,
+    statuses=(ConditionStatus.REPORTED, ConditionStatus.CONFIRMED),
+    *,
+    excluding: int | None = None,
+) -> PatientCondition | None:
+    """The patient's existing entry for the same condition ("Other" entries compare their
+    text), whoever recorded it."""
+    for existing in db.scalars(
+        select(PatientCondition).where(
+            PatientCondition.patient_id == patient_id,
+            PatientCondition.condition == code,
+            PatientCondition.status.in_(statuses),
+        )
+    ):
+        same_other = (existing.other_text or "").casefold() == (other_text or "").casefold()
+        if existing.id != excluding and (code != vocabulary.OTHER or same_other):
+            return existing
+    return None
+
+
 def report_condition(
     db: Session, user: User, patient: Patient, code: str, other_text: str | None
 ) -> PatientCondition:
     require_real(patient)
     code, other_text = _condition_code(code, other_text)
-    for existing in db.scalars(
-        select(PatientCondition).where(
-            PatientCondition.patient_id == patient.patient_id,
-            PatientCondition.condition == code,
-            PatientCondition.status.in_((ConditionStatus.REPORTED, ConditionStatus.CONFIRMED)),
+    if _same_condition(db, patient.patient_id, code, other_text):
+        label = vocabulary.condition_label(code, other_text)
+        raise AuthError(
+            409,
+            "duplicate_condition",
+            f"{label} is already on your profile, so your care team already has it.",
         )
-    ):
-        same_other = (existing.other_text or "").casefold() == (other_text or "").casefold()
-        if code != vocabulary.OTHER or same_other:
-            label = vocabulary.condition_label(code, other_text)
-            raise AuthError(
-                409,
-                "duplicate_condition",
-                f"{label} is already on your profile, so your care team already has it.",
-            )
     condition = PatientCondition(
         patient_id=patient.patient_id,
         condition=code,
@@ -539,7 +561,7 @@ def log_refill(
         )
     ):
         return False
-    simulator.apply_fill(db, therapy, datetime.combine(day, time(12, 0)), source)
+    simulator.apply_fill(db, therapy, clock.day_instant(day), source)
     _audit(db, actor, "refill_logged", therapy.patient_id, therapy=therapy.id, source=source)
     expire_recommendations(db, actor, therapy, "Patient refilled", SUPPLY_ACTIONS)
     refresh_adherence(db, therapy.patient_id)
@@ -585,6 +607,17 @@ def add_condition(
 ) -> PatientCondition:
     require_real(patient)
     code, other_text = _condition_code(code, other_text)
+    existing = _same_condition(db, patient.patient_id, code, other_text)
+    if existing is not None:
+        label = vocabulary.condition_label(code, other_text)
+        hint = (
+            "Confirm or dismiss the patient's report instead."
+            if existing.status == ConditionStatus.REPORTED
+            else "It is already confirmed."
+        )
+        raise AuthError(
+            409, "duplicate_condition", f"{label} is already on this patient's record. {hint}"
+        )
     now = utcnow()
     condition = PatientCondition(
         patient_id=patient.patient_id, condition=code, other_text=other_text,
@@ -622,10 +655,19 @@ def set_condition_status(
         if condition.status != ConditionStatus.REPORTED:
             raise AuthError(409, "not_reported", "Only a reported condition can be dismissed.")
         why = _text(reason, "reason", 300, required=True)
-        condition.status = status
+        condition.status, condition.dismissed_reason = status, why
         _close_linked(db, cm, condition_id=condition.id, note=f"Not added: {why}")
         _audit(db, cm, "condition_dismissed", patient.patient_id, condition=condition.id)
         return
+    if status == ConditionStatus.CONFIRMED and _same_condition(
+        db, patient.patient_id, condition.condition, condition.other_text,
+        (ConditionStatus.CONFIRMED,), excluding=condition.id,
+    ):  # fmt: skip
+        raise AuthError(
+            409,
+            "duplicate_condition",
+            "This condition is already confirmed on the record. Dismiss this report instead.",
+        )
     condition.status = status
     if status == ConditionStatus.CONFIRMED:
         condition.confirmed_by_user_id, condition.confirmed_at = cm.id, utcnow()
@@ -729,6 +771,7 @@ def dismiss_medication(db: Session, cm: User, therapy: PatientTherapy, reason: s
         raise AuthError(409, "not_reported", "Only a reported medication can be dismissed.")
     why = _text(reason, "reason", 300, required=True)
     therapy.review_status, therapy.status = ReviewStatus.DISMISSED, "dismissed"
+    therapy.dismissed_reason = why
     _close_linked(db, cm, therapy_id=therapy.id, note=f"Not added: {why}")
     expire_recommendations(db, cm, therapy, "Medication dismissed")
     _audit(db, cm, "medication_dismissed", patient.patient_id, therapy=therapy.id)
@@ -884,6 +927,8 @@ def assign_hcp(
             raise AuthError(404, "not_found", "Not found.")
     if request is not None and request.status == CareRequestStatus.CLOSED:
         raise AuthError(409, "request_closed", "This request is already closed.")
+    if condition is not None and condition.status == ConditionStatus.DISMISSED:
+        raise AuthError(409, "condition_not_added", "This condition was not added to the record.")
     held = set(hcp_records.specialties_of(db, hcp.hcp_id))
     if condition is not None and not held & set(vocabulary.specialties_for(condition.condition)):
         raise AuthError(
@@ -917,7 +962,8 @@ def assign_hcp(
             # the care manager has closed it.
             request.status = CareRequestStatus.AWAITING_HCP
             request.resolution = f"Routed to {out.hcp_name(hcp)}."
-        else:
+        elif not entry_unresolved(db, request):
+            # A review request closes only once its entry is confirmed or dismissed.
             request.status = CareRequestStatus.CLOSED
             request.resolution = request.resolution or f"Routed to {out.hcp_name(hcp)}."
     db.flush()
@@ -1005,6 +1051,21 @@ def return_consultations(db: Session, actor: User, hcp_id: str) -> int:
 MANUAL_STATUSES = (CareRequestStatus.OPEN, CareRequestStatus.IN_PROGRESS, CareRequestStatus.CLOSED)
 
 
+def entry_unresolved(db: Session, request: CareRequest) -> bool:
+    """A review request whose condition or medication is still only reported: closing it
+    would leave the entry outside every queue."""
+    if request.type == CareRequestType.CONDITION_REVIEW and request.condition_id:
+        entry = db.get(PatientCondition, request.condition_id)
+        return entry is not None and entry.status == ConditionStatus.REPORTED
+    if request.type == CareRequestType.MEDICATION_REVIEW and request.therapy_id:
+        entry = db.get(PatientTherapy, request.therapy_id)
+        return entry is not None and entry.review_status == ReviewStatus.REPORTED
+    return False
+
+
+WITHDRAWN = "Withdrawn by the care manager: "
+
+
 def update_request(
     db: Session, cm: User, request: CareRequest, status: str, resolution: str | None
 ) -> None:
@@ -1016,10 +1077,32 @@ def update_request(
         raise AuthError(
             409, "awaiting_hcp", "This consultation is with the healthcare professional."
         )
+    if status == CareRequestStatus.CLOSED:
+        if entry_unresolved(db, request):
+            what = "condition" if request.type == CareRequestType.CONDITION_REVIEW else "medication"
+            raise AuthError(
+                409,
+                "entry_unresolved",
+                f"The reported {what} is still waiting for review. Confirm or dismiss it; "
+                "that closes this request.",
+            )
+        # Closing always says what was done: the patient reads it as the outcome.
+        outcome = _text(resolution, "outcome", 500, required=True)
+        if request.status == CareRequestStatus.AWAITING_HCP:
+            # Taken back from the HCP before they answered: said plainly to the HCP and the
+            # patient, never a silent disappearance.
+            request.resolution = WITHDRAWN + outcome
+            _audit(
+                db, cm, "consultation_withdrawn", request.patient_id, request=request.id,
+                hcp=request.assigned_hcp_id,
+            )  # fmt: skip
+        else:
+            request.resolution = outcome
+    elif resolution is not None:
+        request.resolution = _text(resolution, "resolution", 500)
     request.status = status
     request.handled_by_user_id = cm.id
-    if resolution is not None:
-        request.resolution = _text(resolution, "resolution", 500)
+    request.updated_at = utcnow()
     _audit(db, cm, "care_request_updated", request.patient_id, request=request.id, status=status)
 
 

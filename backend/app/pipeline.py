@@ -109,6 +109,37 @@ def refresh_patient(db: Session, patient_id: str) -> None:
     db.flush()
 
 
+def needs_refresh(db: Session, therapy, snapshot, today) -> bool:
+    """A real patient's confirmed medication whose figures are not as of today."""
+    from app.clinical import records
+    from app.models import Patient
+    from app.models.enums import ReviewStatus
+
+    if therapy.review_status != ReviewStatus.CONFIRMED or not therapy.days_supply:
+        return False
+    if snapshot is not None and snapshot.as_of_date >= today:
+        return False
+    return records.is_real(db.get(Patient, therapy.patient_id))
+
+
+def refresh_real_patients(db: Session) -> int:
+    """Start-up repair: no snapshot dated after today can be read as current, and every real
+    patient's adherence is recomputed as of today with the cycle's own code."""
+    from sqlalchemy import select
+
+    from app.core import clock
+    from app.models import Patient
+    from app.models.enums import PatientOrigin
+
+    db.execute(delete(AdherenceSnapshot).where(AdherenceSnapshot.as_of_date > clock.today()))
+    ids = db.scalars(
+        select(Patient.patient_id).where(Patient.origin != PatientOrigin.SYNTHETIC)
+    ).all()
+    for pid in ids:
+        refresh_patient(db, pid)
+    return len(ids)
+
+
 def refresh_patient_features(db: Session, pop: Population, settings: dict) -> dict:
     as_of = pop.as_of
     db.execute(delete(AdherenceSnapshot).where(AdherenceSnapshot.as_of_date == as_of))
