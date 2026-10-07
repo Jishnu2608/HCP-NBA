@@ -29,6 +29,9 @@ import type { Column } from "../ui";
 import { BentoCard, BentoCell, BentoGrid } from "../layout";
 import { ChannelTable, HistoryList, OpenNba } from "./Patients";
 import { specialtyText } from "./HealthForms";
+import { EngagePanel } from "./HcpWork";
+import { useAuth } from "../auth";
+import { P } from "../permissions";
 
 export function HcpList() {
   const navigate = useNavigate();
@@ -165,6 +168,9 @@ function RateList({ title, rates }: { title: string; rates: Record<string, numbe
 
 export function HcpProfile() {
   const { id } = useParams();
+  const { can } = useAuth();
+  // A representative works the HCP from here: propose contact, plan meetings and follow-ups.
+  const canEngage = can(P.NBA_REVIEW_HCP) && can(P.HCP_READ_ASSIGNED);
   const profile = useQuery({ queryKey: ["hcp", id], queryFn: () => api(`/hcps/${id}`) });
   if (profile.isLoading) return <Loading label="Loading HCP" />;
   if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="This HCP could not be loaded" />;
@@ -192,9 +198,9 @@ export function HcpProfile() {
                 <Building2 className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden /> <span className="break-words">{h.organization}</span>
               </span>
             )}
-            {h.city && (
+            {h.location && (
               <span className="inline-flex items-center gap-1.5">
-                <MapPin className="h-4 w-4 text-ink-subtle" aria-hidden /> {h.city}, {h.state}
+                <MapPin className="h-4 w-4 text-ink-subtle" aria-hidden /> {h.location}
               </span>
             )}
           </span>
@@ -203,7 +209,12 @@ export function HcpProfile() {
 
       <KpiGrid>
         <Stat label="Value score" value={`${h.value_score?.toFixed(0) ?? "—"} / 100`} hint="prescribing volume and engagement" icon={<Award className="h-4 w-4" aria-hidden />} tone="brand" />
-        <Stat label="Prescriptions per year" value={num(h.rx_volume_annual)} hint={`NPI ${h.npi} (synthetic)`} icon={<FileText className="h-4 w-4" aria-hidden />} />
+        <Stat
+          label="Prescriptions per year"
+          value={h.origin === "invited" ? "Not recorded" : num(h.rx_volume_annual)}
+          hint={h.npi ? `NPI ${h.npi} (synthetic)` : "Registered HCP: no prescribing data"}
+          icon={<FileText className="h-4 w-4" aria-hidden />}
+        />
         <Stat
           label="Best channel"
           value={<span className="text-lg">{channelName(h.channel_affinity)}</span>}
@@ -216,6 +227,12 @@ export function HcpProfile() {
           icon={<MessagesSquare className="h-4 w-4" aria-hidden />}
         />
       </KpiGrid>
+
+      {canEngage && (
+        <div className="mb-6">
+          <EngagePanel hcp={h} />
+        </div>
+      )}
 
       {/* Bento: recommendation beside the profile; what the HCP engages with beside the
           channel response; the engagement timeline across the full width. */}
@@ -244,7 +261,7 @@ export function HcpProfile() {
             <div className="col-span-2 min-w-0">
               <dt className="text-[13px] text-ink-subtle">Organization</dt>
               <dd className="break-words font-medium text-ink">
-                {[h.organization, h.city, h.state].filter(Boolean).join(", ") || "Not recorded"}
+                {[h.organization, h.location].filter(Boolean).join(", ") || "Not recorded"}
               </dd>
             </div>
           </dl>

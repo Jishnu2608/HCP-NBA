@@ -249,8 +249,14 @@ class AssignmentService:
         elif kind == HCPS:
             wanted = sorted(set(hcp_ids or []))
             self._require_existing(db, Hcp.hcp_id, wanted, "HCP")
+            before = list(db.scalars(select(RepHcp.hcp_id).where(RepHcp.rep_user_id == user.id)))
             db.execute(delete(RepHcp).where(RepHcp.rep_user_id == user.id))
             db.add_all(RepHcp(rep_user_id=user.id, hcp_id=h) for h in wanted)
+            db.flush()
+            # Open HCP requests, follow-ups and meetings follow the assignment.
+            from app.commercial import tasks as hcp_tasks
+
+            hcp_tasks.reassign_open_work(db, sorted(set(before) | set(wanted)))
         elif kind == OWN_PATIENT:
             if patient_id is not None:
                 self._require_existing(db, Patient.patient_id, [patient_id], "patient")

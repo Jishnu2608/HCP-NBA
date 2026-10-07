@@ -174,6 +174,12 @@ export default function Queue() {
               <Badge tone="info">Response to review</Badge>
             </div>
           )}
+          {(n.sent_by || n.origin === "rep") && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {n.origin === "rep" && <Badge tone="sage">Proposed from HCP 360</Badge>}
+              {n.sent_by && <Badge tone={n.sent_by === "You" ? "neutral" : "warn"}>Sent by {n.sent_by === "You" ? "you" : n.sent_by}</Badge>}
+            </div>
+          )}
           {n.has_withheld && n.status !== "blocked" && (
             <div className="mt-1.5">
               <Badge tone="warn" icon={<ShieldAlert className="h-3.5 w-3.5" aria-hidden />}>
@@ -274,9 +280,9 @@ export default function Queue() {
           tone={countFor(["blocked"]) ? "bad" : undefined}
         />
         <Stat
-          label="Sent"
+          label={view === "hcps" ? "Sent by you" : "Sent"}
           value={shown(countFor(["sent", "responded"]))}
-          hint={`${(counts.responded ?? 0).toLocaleString()} responded`}
+          hint={`${(counts.responded ?? 0).toLocaleString()} responded${counts.inherited ? ` · ${counts.inherited} by a previous representative` : ""}`}
           icon={<Send className="h-4 w-4" aria-hidden />}
         />
       </KpiGrid>

@@ -36,6 +36,18 @@ class Population:
     consents: dict[str, list[Consent]] = field(default_factory=dict)
     # Every specialty each HCP holds (`hcp_specialty`).
     hcp_specialties: dict[str, set[str]] = field(default_factory=dict)
+    # Open commercial work per HCP (their request, a follow-up, a meeting): while any is open
+    # the representative owes that next step, so the engine proposes no other outreach.
+    hcp_open_work: dict[str, list] = field(default_factory=dict)
+
+
+def _hcp_open_work(db: Session) -> dict[str, list]:
+    from app.models import HcpTask
+
+    out: dict[str, list] = defaultdict(list)
+    for t in db.scalars(select(HcpTask).where(HcpTask.status.in_(("open", "scheduled")))):
+        out[t.hcp_id].append(t)
+    return dict(out)
 
 
 def _engine_hcps(db: Session) -> dict:
@@ -101,6 +113,7 @@ def load_population(db: Session, *, patient_id: str | None = None) -> Population
         # active. An invited HCP has no history; the same gates, models and review apply.
         hcps=({} if patient_id else _engine_hcps(db)),
         hcp_specialties=({} if patient_id else _hcp_specialties(db)),
+        hcp_open_work=({} if patient_id else _hcp_open_work(db)),
         contents={} if patient_id else {c.content_id: c for c in db.scalars(select(Content))},
         therapies=therapies,
         fills=fills,

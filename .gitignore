@@ -29,6 +29,7 @@ PATIENT_JOURNEY_BREAKPOINTS.md
 CARE_MANAGER_JOURNEY_BREAKPOINTS.md
 HCP_JOURNEY_BREAKPOINTS.md
 MLR_JOURNEY_BREAKPOINTS.md
+MR_JOURNEY_BREAKPOINTS.md
 
 # Locally installed agent skills (per developer, not part of the application)
 .agents/

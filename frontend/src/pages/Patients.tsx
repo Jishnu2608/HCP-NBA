@@ -323,6 +323,22 @@ const OUTCOME_TONE = (outcome: string) =>
         : "info";
 
 /** Outreach history as a timeline: newest first, the first few shown. */
+const INTENT_LABEL: Record<string, string> = {
+  interested: "interested",
+  request_meeting: "asked for a meeting",
+  need_info: "needs more information",
+  need_evidence: "needs evidence",
+  not_now: "not now",
+  decline: "not interested",
+};
+const REASON_LABEL: Record<string, string> = {
+  interested: "Interested",
+  need_info: "Needs more information",
+  another_meeting: "Wants another meeting",
+  follow_up: "Follow-up required",
+  not_now: "Not now",
+};
+
 export function HistoryList({ items }: { items: Json[] }) {
   const [all, setAll] = useState(false);
   if (!items.length) {
@@ -350,9 +366,23 @@ export function HistoryList({ items }: { items: Json[] }) {
               </div>
               <div className="mt-0.5 flex flex-wrap gap-x-2 text-[13px] text-ink-subtle">
                 <span className="tabular">{fmtDate(i.ts)}</span>
-                {i.content_title && <span className="truncate">· {i.content_title}</span>}
-                <span>· {i.source === "nba" ? "Engine recommendation" : "Earlier outreach"}</span>
+                {i.content_title && (
+                  <span className="truncate">
+                    · {i.product ? `${i.product}: ` : ""}
+                    {i.content_title}
+                    {i.content_version ? ` (v${i.content_version})` : ""}
+                  </span>
+                )}
+                <span>· {i.source === "nba" ? "Recommendation" : i.source === "rep" ? "Meeting or call" : "Earlier outreach"}</span>
+                {i.sent_by && <span>· by {i.sent_by}</span>}
               </div>
+              {(i.intent || i.outcome_reason || i.note) && (
+                <div className="mt-0.5 text-[13px] text-ink">
+                  {i.intent && <Badge tone="accent">HCP: {INTENT_LABEL[i.intent] ?? i.intent}</Badge>}{" "}
+                  {i.outcome_reason && <Badge tone="sage">{REASON_LABEL[i.outcome_reason] ?? i.outcome_reason}</Badge>}{" "}
+                  {i.note && <span className="text-ink-muted">“{i.note}”</span>}
+                </div>
+              )}
             </div>
           </li>
         ))}

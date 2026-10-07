@@ -68,6 +68,7 @@ const FIELD_LABEL: Record<string, string> = {
   specialty: "Specialty",
   measure: "Therapy area",
   action_type: "Kind of material",
+  product: "Product or medicine",
 };
 const OUTCOME_LABEL: Record<string, string> = {
   pending: "Delivered, no response yet",
@@ -90,6 +91,7 @@ function show(value: unknown): string {
 /* ------------------------------------------------------------------ proposal form */
 
 type Form = {
+  product: string;
   title: string;
   body: string;
   action_type: string;
@@ -105,6 +107,7 @@ type Form = {
 
 function toForm(c?: Json): Form {
   return {
+    product: c?.product ?? "",
     title: c?.title ?? "",
     body: c?.body ?? "",
     action_type: c?.action_type ?? "hcp_education",
@@ -139,6 +142,7 @@ function ContentForm({ initial, library, onSave, saving, onCancel }: {
         e.preventDefault();
         onSave({
           ...f,
+          product: f.product || null,
           measure: f.measure || null,
           specialty: f.specialty || null,
           jurisdictions: f.jurisdictions.length ? f.jurisdictions : null,
@@ -150,6 +154,13 @@ function ContentForm({ initial, library, onSave, saving, onCancel }: {
       }}
     >
       <TextField label="Title" required value={f.title} onChange={(e) => set("title", e.target.value)} maxLength={200} />
+      <TextField
+        label="Product or medicine (optional)"
+        hint="What the material is about, as named in the approved labelling."
+        value={f.product}
+        onChange={(e) => set("product", e.target.value)}
+        maxLength={120}
+      />
       <TextArea
         label="HCP-facing wording"
         hint="Exactly what the HCP will read. After approval nobody can change it; a change is a new version reviewed again. No links or placeholders."
@@ -720,6 +731,10 @@ export default function ContentDetail() {
                     <span className="text-bad">No claims recorded</span>
                   )}
                 </dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-ink">Product or medicine</dt>
+                <dd className="text-ink-muted">{c.product ?? "General material (no product named)"}</dd>
               </div>
               <div>
                 <dt className="font-semibold text-ink">Indication</dt>

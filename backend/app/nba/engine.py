@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from app import audit, pipeline
@@ -137,18 +137,76 @@ def patient_candidates(
     return out
 
 
+SIGNAL_DAYS = 180
+INTENT_LABEL = {
+    "interested": "said they are interested",
+    "request_meeting": "asked for a meeting",
+    "need_info": "asked for more information",
+    "need_evidence": "asked for supporting evidence",
+    "not_now": "said not now",
+    "decline": "declined",
+}
+# Material that answers a request for information or evidence.
+EVIDENCE_ACTIONS = (ActionType.SHARE_STUDY, ActionType.HCP_EDUCATION)
+
+
+def _recent(pop: Population, hcp_id: str) -> list:
+    since = pop.as_of - timedelta(days=SIGNAL_DAYS)
+    return [
+        i for i in pop.interactions.get((TargetType.HCP, hcp_id), []) if i.int_ts.date() >= since
+    ]
+
+
+def declined_lineages(pop: Population, hcp_id: str) -> set[str]:
+    """Material the HCP turned down recently: no version of it is proposed again."""
+    out = set()
+    for i in _recent(pop, hcp_id):
+        if i.intent == "decline" or i.outcome == "declined":
+            content = pop.contents.get(i.content_id)
+            if content is not None:
+                out.add(content.lineage_id or content.content_id)
+    return out
+
+
+def wants_evidence(pop: Population, hcp_id: str) -> bool:
+    return any(
+        i.intent in ("need_info", "need_evidence") or i.outcome_reason == "need_info"
+        for i in _recent(pop, hcp_id)
+    )
+
+
+def intent_reasons(pop: Population, hcp_id: str) -> list[dict]:
+    """What the HCP last told us, as a line of the rationale."""
+    said = [i for i in _recent(pop, hcp_id) if i.intent]
+    if not said:
+        return []
+    last = max(said, key=lambda i: i.int_ts)
+    content = pop.contents.get(last.content_id)
+    title = f" about {content.title}" if content else ""
+    when = last.outcome_ts or last.int_ts
+    return [
+        rationale._reason(
+            "who",
+            "hcp_intent",
+            f"The HCP {INTENT_LABEL.get(last.intent, last.intent)}{title} (on {when:%d %b})",
+        )
+    ]
+
+
 def hcp_candidates(
     pop: Population, hcp_id: str, state: eng.EngagementState, settings: dict
 ) -> list[Candidate]:
     hcp = pop.hcps[hcp_id]
     history = pop.interactions.get((TargetType.HCP, hcp_id), [])
     already_engaged = {i.content_id for i in history if eng.is_engaged(i.outcome)}
+    declined = declined_lineages(pop, hcp_id)
     out = []
     for content in pop.contents.values():
         if (
             content.audience != TargetType.HCP
             or content.content_id in already_engaged
             or content.mlr_status not in IN_PLAY
+            or (content.lineage_id or content.content_id) in declined
         ):
             continue
         # Content for a specialty goes only to HCPs who hold it (an HCP may hold several).
@@ -223,7 +281,10 @@ def score_hcp_candidates(
     cost = settings["nba_channel_cost"]
     repeat_after = pop.as_of - timedelta(days=settings["nba_repeat_content_days"])
     recently_sent: dict[str, set] = {}
+    evidence: dict[str, bool] = {}
     for c, pe in zip(candidates, p_engage, strict=True):
+        if c.target_id not in evidence:
+            evidence[c.target_id] = wants_evidence(pop, c.target_id)
         if c.target_id not in recently_sent:
             recently_sent[c.target_id] = {
                 i.content_id
@@ -234,6 +295,10 @@ def score_hcp_candidates(
         score = 100 * c.p_engage - cost.get(c.channel, 0)
         if c.content.content_id in recently_sent[c.target_id]:
             score *= 0.5
+        # An HCP who asked for more information or evidence: answer with study or education
+        # material first.
+        if evidence[c.target_id] and c.content.action_type in EVIDENCE_ACTIONS:
+            score *= 1.15
         c.score = round(score, 2)
 
 
@@ -301,6 +366,7 @@ def _persist(
     priority: float,
     therapy_id: int | None,
     as_of: date,
+    origin: str = "engine",
 ) -> Nba:
     c = decision.chosen
     blocked = decision.status == NbaStatus.BLOCKED
@@ -324,6 +390,7 @@ def _persist(
         status=decision.status,
         block_reason=block_reason,
         as_of_date=as_of,
+        origin=origin,
     )
     db.add(nba)
     db.flush()
@@ -367,10 +434,28 @@ def _persist(
 
 
 def _expire_superseded(db: Session) -> int:
+    """Earlier cycles' open recommendations make way for this cycle's. A representative's own
+    proposal stays until they act on it (its gates are re-checked at approval and send)."""
     result = db.execute(
-        update(Nba).where(Nba.status.in_(SUPERSEDED)).values(status=NbaStatus.EXPIRED)
+        update(Nba)
+        .where(Nba.status.in_(SUPERSEDED), Nba.origin != "rep")
+        .values(status=NbaStatus.EXPIRED)
     )
     return result.rowcount or 0
+
+
+def open_hcp_recommendation(db: Session, hcp_id: str) -> int | None:
+    """An open recommendation a representative proposed or already approved for this HCP."""
+    return db.scalar(
+        select(Nba.id).where(
+            Nba.target_type == TargetType.HCP,
+            Nba.target_id == hcp_id,
+            or_(
+                Nba.status == NbaStatus.APPROVED,
+                and_(Nba.status == NbaStatus.READY_FOR_REVIEW, Nba.origin == "rep"),
+            ),
+        )
+    )
 
 
 def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
@@ -387,7 +472,12 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
     in_flight = {
         (t, i)
         for t, i in db.execute(
-            select(Nba.target_type, Nba.target_id).where(Nba.status.in_(IN_FLIGHT))
+            select(Nba.target_type, Nba.target_id).where(
+                or_(
+                    Nba.status.in_(IN_FLIGHT),
+                    and_(Nba.status == NbaStatus.READY_FOR_REVIEW, Nba.origin == "rep"),
+                )
+            )
         )
     }
 
@@ -458,6 +548,11 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
         if (TargetType.HCP, hcp_id) in in_flight:
             stats["hcp_in_flight"] += 1
             continue
+        if pop.hcp_open_work.get(hcp_id):
+            # The representative owes this HCP a requested reply, a follow-up or a meeting:
+            # that is the next action, so no other outreach is proposed meanwhile.
+            stats["hcp_followup_pending"] += 1
+            continue
         by_hcp[hcp_id] = hcp_candidates(pop, hcp_id, states[hcp_id], settings)
     score_hcp_candidates(db, pop, [c for cs in by_hcp.values() for c in cs], settings)
 
@@ -481,7 +576,7 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
             timing_note=timing_note,
             withheld=decision.withheld,
             eligible=c.eligible,
-        )
+        ) + intent_reasons(pop, hcp_id)
         # An unrated (invited) HCP counts as mid-value: neither favoured nor buried.
         value = hcp.value_score if hcp.value_score is not None else 50.0
         priority = value * max(c.p_engage, 0.01)

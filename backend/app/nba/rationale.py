@@ -222,6 +222,10 @@ def hcp_reasons(
     return reasons + _withheld_reason(withheld)
 
 
+def proposal_reason(rep_name: str) -> dict:
+    return _reason("who", "rep_proposed", f"Proposed by {rep_name} from HCP 360")
+
+
 def to_text(reasons: list[dict]) -> str:
     """One readable paragraph, ordered: who, action, channel, timing, compliance, withheld."""
     return ". ".join(r["text"] for r in reasons) + "."
@@ -238,5 +242,5 @@ def patient_timing(adherence: Adherence, today: date, runout: date | None) -> tu
 
 def hcp_timing(state: EngagementState, today: date) -> tuple[date, str]:
     if not state.days:
-        return today, "Send now: no contact on record"
-    return today, f"Send now: {state.days_since_last(today)} days since the last contact"
+        return today, "Contact now: no contact on record"
+    return today, f"Contact now: {state.days_since_last(today)} days since the last contact"

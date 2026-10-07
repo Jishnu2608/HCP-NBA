@@ -22,6 +22,15 @@ import { Link, useParams } from "react-router-dom";
 import { api, post } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
+import { TaskForm } from "./HcpWork";
+
+const LEARNED: Record<string, string> = {
+  interested: "Interested",
+  need_info: "Needs more information",
+  another_meeting: "Wants another meeting",
+  follow_up: "Follow-up required",
+  not_now: "Not now",
+};
 import { P } from "../permissions";
 import { useToast } from "../toast";
 import {
@@ -104,6 +113,9 @@ export default function NbaDetail() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [rejecting, setRejecting] = useState(false);
+  const [learned, setLearned] = useState("");
+  const [visitNote, setVisitNote] = useState("");
+  const [planNext, setPlanNext] = useState(false);
   const [reason, setReason] = useState("");
 
   const n: Json = detail.data;
@@ -152,6 +164,7 @@ export default function NbaDetail() {
   const responseToReview =
     n.status === "responded" && n.can_review && n.target_origin && n.target_origin !== "synthetic" && !n.response_reviewed_ts;
   const humanChannel = n.channel === "phone" || n.channel === "rep_visit";
+  const visitWord = n.channel === "phone" ? "call" : "visit";
   const isPatient = n.target_type === "PATIENT";
   const profileLink = n.target_name && (isPatient ? `/patients/${n.target_id}` : `/hcps/${n.target_id}`);
   const grouped = KIND_ORDER.map((kind) => ({
@@ -181,11 +194,11 @@ export default function NbaDetail() {
             busy={act.isPending}
             onClick={() => run(() => approve(true), "Recommendation approved and sent")}
           >
-            <Send className="h-4 w-4" aria-hidden /> Approve and send
+            <Send className="h-4 w-4" aria-hidden /> {humanChannel ? `Approve and log ${visitWord} now` : "Approve and send"}
           </Button>
           <div className="grid grid-cols-2 gap-2">
             <Button busy={act.isPending} onClick={() => run(() => approve(false), "Recommendation approved")}>
-              <CheckCircle2 className="h-4 w-4" aria-hidden /> Approve only
+              <CheckCircle2 className="h-4 w-4" aria-hidden /> {humanChannel ? `Approve, ${visitWord} later` : "Approve only"}
             </Button>
             <Button variant="quiet-danger" onClick={() => setRejecting(true)}>
               <XCircle className="h-4 w-4" aria-hidden /> Reject
@@ -220,8 +233,8 @@ export default function NbaDetail() {
       )}
       {n.status === "approved" && (
         <div className="flex flex-col gap-2">
-          <Button variant="primary" size="lg" busy={act.isPending} onClick={() => run(() => post(`/nba/${id}/send`), "Message sent")}>
-            <Send className="h-4 w-4" aria-hidden /> Send now
+          <Button variant="primary" size="lg" busy={act.isPending} onClick={() => run(() => post(`/nba/${id}/send`), humanChannel ? "Logged" : "Message sent")}>
+            <Send className="h-4 w-4" aria-hidden /> {humanChannel ? `Log ${visitWord}` : "Send now"}
           </Button>
           <Button
             variant="quiet-danger"
@@ -235,17 +248,44 @@ export default function NbaDetail() {
       {n.status === "sent" && humanChannel && (
         <div>
           <p className="mb-3 text-sm text-ink-muted">How did the {n.channel_label} go?</p>
+          {!isPatient && (
+            <div className="mb-3 space-y-2">
+              <label className="block text-sm font-medium text-ink">
+                What you learned
+                <select className="mt-1.5 h-11 w-full rounded-lg border border-line bg-surface px-3 text-sm" value={learned} onChange={(e) => setLearned(e.target.value)}>
+                  <option value="">Nothing further</option>
+                  {Object.entries(LEARNED).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <TextArea label="Note (optional)" rows={2} value={visitNote} maxLength={500} onChange={(e) => setVisitNote(e.target.value)} />
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
             {["completed", "no_response", "declined"].map((outcome) => (
               <Button
                 key={outcome}
                 busy={act.isPending}
-                onClick={() => run(() => post(`/nba/${id}/outcome`, { outcome }), "Outcome recorded")}
+                onClick={() =>
+                  run(async () => {
+                    await post(`/nba/${id}/outcome`, { outcome, reason: learned || null, note: visitNote || null });
+                    if (!isPatient && learned) setPlanNext(true);
+                  }, "Outcome recorded")
+                }
               >
                 {titleCase(outcome)}
               </Button>
             ))}
           </div>
+        </div>
+      )}
+      {planNext && n.target_type === "HCP" && (
+        <div className="mt-3">
+          <p className="mb-2 text-sm text-ink">Plan the next step with this HCP:</p>
+          <TaskForm hcpId={n.target_id} contentId={n.content_id} onDone={() => setPlanNext(false)} onCancel={() => setPlanNext(false)} />
         </div>
       )}
       {n.status === "sent" && !humanChannel && (

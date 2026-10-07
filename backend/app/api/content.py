@@ -17,7 +17,7 @@ from app.api.deps import not_found, require_permission
 from app.api.schemas import StrictBody
 from app.clinical import vocabulary
 from app.content import governance as gov
-from app.core import clock
+from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.jurisdiction import COUNTRIES
 from app.core.permissions import Permission, can
@@ -64,6 +64,7 @@ class ProposalBody(StrictBody):
     indication: str | None = Field(default=None, max_length=2000)
     safety_info: str | None = Field(default=None, max_length=2000)
     labelling_note: str | None = Field(default=None, max_length=2000)
+    product: str | None = Field(default=None, max_length=120)
     jurisdictions: list[str] | None = Field(default=None, max_length=40)
 
 
@@ -142,10 +143,14 @@ def _readable(db: Session, user: User, c: Content, today) -> bool:
 
 
 def _delivered_by(db: Session, user: User, c: Content) -> bool:
+    """Delivered to an HCP currently assigned to this representative (by them or whoever had
+    the HCP before): the conversation and context come with the HCP."""
     return (
         db.scalar(
             select(Interaction.id).where(
-                Interaction.content_id == c.content_id, Interaction.actor_user_id == user.id
+                Interaction.content_id == c.content_id,
+                Interaction.target_type == TargetType.HCP,
+                Interaction.target_id.in_(rbac.assigned_hcp_ids(user)),
             )
         )
         is not None
@@ -255,7 +260,7 @@ def _get(db: Session, user: User, content_id: str) -> Content:
 
 FIELDS = (
     "title", "body", "claims", "indication", "safety_info", "labelling_note", "jurisdictions",
-    "channels", "specialty", "measure", "action_type",
+    "channels", "specialty", "measure", "action_type", "product",
 )  # fmt: skip
 
 
@@ -541,7 +546,7 @@ def post_message(
         delivery is None
         or started is None
         or delivery.target_type != TargetType.HCP
-        or not (reviewer or delivery.actor_user_id == user.id)
+        or not (reviewer or delivery.target_id in set(db.scalars(rbac.assigned_hcp_ids(user))))
     ):
         raise not_found("Conversation not found")
     gov.post_message(db, user, c, body.body, hcp_id=delivery.target_id, interaction_id=delivery.id)

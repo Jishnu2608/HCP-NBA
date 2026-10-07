@@ -43,6 +43,7 @@ import {
   Segmented,
   Switch,
   TextArea,
+  TextField,
   channelName,
   cx,
   fmtDate,
@@ -357,6 +358,56 @@ export function MyMedications() {
   );
 }
 
+const INTENTS: Array<[string, string]> = [
+  ["interested", "Interested"],
+  ["request_meeting", "Request a meeting"],
+  ["need_info", "Need more information"],
+  ["need_evidence", "Need evidence"],
+  ["not_now", "Not now"],
+  ["decline", "Not interested"],
+];
+
+/** The HCP's answer to material they received: it reaches the representative assigned to
+ * them as work (a meeting request, a follow-up), and tells the engine what to offer next. */
+function ContentIntent({ item }: { item: Json }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [note, setNote] = useState("");
+  const [choosing, setChoosing] = useState(false);
+  const answer = useMutation({
+    mutationFn: (intent: string) => post(`/me/inbox/${item.id}/intent`, { intent, note: note || null }),
+    onSuccess: (_d, intent) => {
+      toast(intent === "decline" ? "Noted. You will not be offered this material again." : "Sent to your representative.");
+      setChoosing(false);
+      void client.invalidateQueries({ queryKey: ["inbox"] });
+    },
+  });
+  const chosen = INTENTS.find(([k]) => k === item.intent)?.[1];
+  if (chosen && !choosing)
+    return (
+      <p className="mt-3 text-[13px] text-ink-subtle">
+        Your answer: <span className="font-semibold text-ink">{chosen}</span>{" "}
+        <button type="button" className="font-semibold text-primary-ink underline" onClick={() => setChoosing(true)}>
+          Change
+        </button>
+      </p>
+    );
+  return (
+    <div className="mt-3">
+      <p className="text-[13px] font-semibold text-ink">Your answer to your representative</p>
+      <ErrorNote error={answer.error} />
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {INTENTS.map(([k, label]) => (
+          <Button key={k} size="sm" variant={k === "decline" ? "ghost" : "secondary"} busy={answer.isPending && answer.variables === k} onClick={() => answer.mutate(k)}>
+            {label}
+          </Button>
+        ))}
+      </div>
+      <TextField label="Add a note (optional)" className="mt-2" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
+    </div>
+  );
+}
+
 /** An HCP's question or concern about material they received: it reaches the medical,
  * legal and regulatory reviewers and the representative who sent it; replies show here. */
 function ContentQuestion({ item }: { item: Json }) {
@@ -526,6 +577,7 @@ export function MyInbox() {
                       </Alert>
                     )}
                     <p className="mt-1.5 max-w-3xl whitespace-pre-line text-sm leading-6 text-ink-muted">{m.body}</p>
+                    {!isPatient && <ContentIntent item={m} />}
                     {!isPatient && <ContentQuestion item={m} />}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2 md:flex-col md:items-stretch">

@@ -132,30 +132,31 @@ function RecordPicker({
         <ul className="mt-1.5 max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line bg-surface shadow-raised">
           {search.isLoading && <li className="px-3 py-2.5 text-sm text-ink-subtle">Searching</li>}
           {!search.isLoading && !results.length && <li className="px-3 py-2.5 text-sm text-ink-subtle">No matches</li>}
-          {results.map((r) => (
+          {results.map((r) => {
+            // Choosing a result adds it at once (the list is saved with Save assignments).
+            const pick = () => {
+              onPick({
+                id: r[idKey],
+                name: r.name,
+                // A real patient belongs to exactly one care manager: adding them here moves them.
+                from: (r.care_managers ?? []).map((m: Json) => m.name).join(", ") || undefined,
+              });
+              setQ("");
+            };
+            return (
             <li key={r[idKey]} className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm">
-              <span className="min-w-0 truncate">
+              <button type="button" className="min-w-0 flex-1 truncate text-left hover:text-primary-ink" onClick={pick}>
                 {r.name} <span className="tabular text-xs text-ink-subtle">{r[idKey]}</span>
                 {r.care_managers?.length ? (
                   <span className="block text-xs text-warn">Care manager now: {r.care_managers.map((m: Json) => m.name).join(", ")}</span>
                 ) : null}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() =>
-                  onPick({
-                    id: r[idKey],
-                    name: r.name,
-                    // A real patient belongs to exactly one care manager: adding them here moves them.
-                    from: (r.care_managers ?? []).map((m: Json) => m.name).join(", ") || undefined,
-                  })
-                }
-              >
+              </button>
+              <Button size="sm" variant="ghost" onClick={pick}>
                 <Plus className="h-3.5 w-3.5" aria-hidden /> Add
               </Button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>
@@ -246,6 +247,7 @@ function AssignmentEditor({ account }: { account: Json }) {
         <Button variant="primary" disabled={!changed} busy={save.isPending} onClick={() => save.mutate()}>
           {moving.length ? "Save and move" : "Save assignments"}
         </Button>
+        {changed && <span className="text-[13px] font-medium text-warn">Unsaved changes</span>}
         {changed && (
           <Button variant="ghost" onClick={() => setSelected(initial)}>
             Discard changes

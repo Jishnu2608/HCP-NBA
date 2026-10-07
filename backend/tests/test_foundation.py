@@ -10,7 +10,7 @@ EXPECTED_TABLES = {
     "hcp", "patient", "patient_hcp", "user", "rep_hcp", "care_manager_patient",
     "patient_therapy", "medication_fill", "adherence_snapshot", "consent",
     "content", "content_review",
-    "content_message", "content_message_read", "engine_cycle", "nba", "nba_candidate",
+    "content_message", "content_message_read", "hcp_task", "engine_cycle", "nba", "nba_candidate",
     "message_draft",
     "interaction", "feature_snapshot", "audit_log", "model_version", "engine_config",
     "sim_latent", "otp_challenge", "user_session", "invitation", "rate_limit_hit",

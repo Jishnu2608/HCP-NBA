@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.clinical import vocabulary
-from app.core import clock
+from app.core import clock, rbac
 from app.core.jurisdiction import COUNTRIES
 from app.core.permissions import Permission, can
 from app.llm.validator import CONTENT_ID, URL
@@ -68,6 +68,15 @@ STATUS_LABEL = {
     MlrStatus.REJECTED: "Rejected",
     MlrStatus.WITHDRAWN: "Withdrawn",
     MlrStatus.SUPERSEDED: "Superseded by a newer version",
+}
+# How a version that can no longer be edited is described to its author.
+NOT_EDITABLE = {
+    MlrStatus.PENDING: "submitted and waiting for MLR review",
+    MlrStatus.CHANGES_REQUESTED: "back with you: MLR requested changes",
+    MlrStatus.APPROVED: "approved",
+    MlrStatus.REJECTED: "rejected",
+    MlrStatus.WITHDRAWN: "withdrawn",
+    MlrStatus.SUPERSEDED: "superseded by a newer version",
 }
 DECISION_STATUS = {
     "approve": MlrStatus.APPROVED,
@@ -206,6 +215,7 @@ def clean_fields(body: dict) -> dict:
         "specialty": specialty,
         "channels": channels,
         "claims": claims,
+        "product": _text(body, "product", 120),
         "indication": _text(body, "indication", 2000),
         "safety_info": _text(body, "safety_info", 2000),
         "labelling_note": _text(body, "labelling_note", 2000),
@@ -264,8 +274,8 @@ def update_draft(db: Session, user: User, c: Content, body: dict) -> Content:
     if c.mlr_status != MlrStatus.DRAFT:
         raise error(
             "not_editable",
-            f"{label(c)} is {STATUS_LABEL[c.mlr_status].lower()} and no longer changes. "
-            "Open a new version to change it.",
+            f"{label(c)} is {NOT_EDITABLE.get(c.mlr_status, 'decided')}, so it no longer "
+            "changes. Open a new version to change it.",
         )
     fields = clean_fields(body)
     if c.origin == "library":
@@ -333,7 +343,7 @@ def revise(db: Session, user: User, c: Content) -> Content:
             for k in (
                 "title", "body", "audience", "action_type", "topic", "measure", "specialty",
                 "channels", "claims", "indication", "safety_info", "labelling_note",
-                "jurisdictions",
+                "jurisdictions", "product",
             )
         },
     )  # fmt: skip
@@ -596,7 +606,8 @@ def visible_messages(db: Session, user: User) -> Select:
     if can(user, Permission.CONTENT_PROPOSE):
         authored = select(Content.lineage_id).where(Content.author_user_id == user.id)
         rules.append(and_(ContentMessage.hcp_id.is_(None), ContentMessage.lineage_id.in_(authored)))
-        rules.append(ContentMessage.interaction_id.in_(_sent_by(db, user)))
+        # HCP threads belong to whoever is assigned to the HCP now, not to who sent the item.
+        rules.append(ContentMessage.hcp_id.in_(rbac.assigned_hcp_ids(user)))
     if user.hcp_id:
         rules.append(ContentMessage.hcp_id == user.hcp_id)
     return query.where(or_(*rules)) if rules else query.where(False)

@@ -46,6 +46,11 @@ class RejectBody(StrictBody):
 
 class OutcomeBody(StrictBody):
     outcome: Literal["completed", "declined", "no_response"]
+    # What the representative learned (interested, needs information, ...): kept with the
+    # interaction for the next action and the engine.
+    reason: Literal["interested", "need_info", "another_meeting", "follow_up", "not_now"] | None = (
+        None
+    )
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -137,6 +142,40 @@ def list_recommendations(
         select(Nba).where(*where).order_by(Nba.priority.desc(), Nba.id).limit(limit).offset(offset)
     ).all()
     identity = rbac.can_see_target_profile(user)
+    if can(user, Permission.HCP_READ_ASSIGNED):
+        # A representative's "sent" and "responded" are their own; what a previous
+        # representative of the same HCPs sent is counted apart and labelled on each item.
+        done = (NbaStatus.SENT, NbaStatus.RESPONDED)
+        own = dict(
+            db.execute(
+                select(Nba.status, func.count())
+                .where(
+                    rbac.nba_filter(user),
+                    Nba.status.in_(done),
+                    Nba.reviewed_by_user_id == user.id,
+                )
+                .group_by(Nba.status)
+            ).all()
+        )
+        inherited = sum(by_status.get(st, 0) for st in done) - sum(own.values())
+        by_status = {**by_status, **{st: own.get(st, 0) for st in done}, "inherited": inherited}
+    items = []
+    for n in rows:
+        item = out.nba_summary(db, n, with_identity=identity)
+        hcp_sent = n.target_type == TargetType.HCP and n.status in (
+            NbaStatus.SENT,
+            NbaStatus.RESPONDED,
+        )
+        if hcp_sent and n.reviewed_by_user_id:
+            reviewer = db.get(User, n.reviewed_by_user_id)
+            item["sent_by"] = (
+                "You" if n.reviewed_by_user_id == user.id
+                else (reviewer.display_name if reviewer else "A previous representative")
+            )  # fmt: skip
+        elif hcp_sent:
+            item["sent_by"] = "A previous representative"
+        item["origin"] = n.origin
+        items.append(item)
     return {
         "total": total,
         "counts": by_status,
@@ -146,7 +185,7 @@ def list_recommendations(
         if rbac.can_review(user, Nba(target_type=TargetType.PATIENT))
         and rbac.can_see_target_profile(user)
         else None,
-        "items": [out.nba_summary(db, n, with_identity=identity) for n in rows],
+        "items": items,
     }
 
 
@@ -318,6 +357,7 @@ def log_outcome(
     )
     if interaction is None:
         raise _conflict("outcome_recorded", "The outcome is already recorded.")
+    interaction.outcome_reason, interaction.note = body.reason, body.note
     delivery.capture_response(
         db,
         interaction,

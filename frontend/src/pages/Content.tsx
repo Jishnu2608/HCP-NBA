@@ -90,7 +90,8 @@ function ContentRow({ c, reviewer }: { c: Json; reviewer: boolean }) {
               {c.unread} new message{c.unread === 1 ? "" : "s"}
             </Badge>
           )}
-          {c.delivered_by_you && !c.mine && <Badge>Sent by you</Badge>}
+          {c.delivered_by_you && !c.mine && <Badge>Delivered to your HCPs</Badge>}
+          {c.product && <Badge tone="info">{c.product}</Badge>}
         </div>
         <p className="mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-ink-muted">{c.body}</p>
         {last && last.decision !== "approve" && last.feedback && (
@@ -137,7 +138,7 @@ export default function ContentLibrary() {
   if (governance) rows = all.filter(REVIEW_VIEWS.find((v) => v.key === view)!.test);
   else if (proposer && repView === "mine") rows = all.filter((c) => c.mine);
   else if (proposer && repView === "delivered") rows = all.filter((c) => c.delivered_by_you);
-  else rows = all.filter((c) => c.usable && !c.mine);
+  else rows = all.filter((c) => c.usable);
   const waiting = all.reduce((n, c) => n + (c.recommendations_waiting ?? 0), 0);
   const newDecisions = all.filter((c) => c.mine && (c.last_decision?.new || c.unread > 0)).length;
   const deliveredUnread = all.filter((c) => c.delivered_by_you && !c.mine && c.unread > 0).length;
@@ -194,11 +195,11 @@ export default function ContentLibrary() {
             value={repView}
             onChange={setRepView}
             options={[
-              { value: "approved", label: "Approved for use", count: all.filter((c) => c.usable && !c.mine).length },
+              { value: "approved", label: "Approved for use", count: all.filter((c) => c.usable).length },
               { value: "mine", label: newDecisions ? `My proposals · ${newDecisions} new` : "My proposals", count: all.filter((c) => c.mine).length },
               {
                 value: "delivered",
-                label: deliveredUnread ? `Sent by me · ${deliveredUnread} new` : "Sent by me",
+                label: deliveredUnread ? `Delivered to my HCPs · ${deliveredUnread} new` : "Delivered to my HCPs",
                 count: all.filter((c) => c.delivered_by_you).length,
               },
             ]}

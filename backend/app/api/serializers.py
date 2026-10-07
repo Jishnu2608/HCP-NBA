@@ -92,6 +92,7 @@ def content_out(c: Content, today: date) -> dict:
         "expiry_date": c.expiry_date,
         "is_expired": expired,
         "usable": c.mlr_status == "approved" and not expired and c.effective_date is not None,
+        "product": c.product,
     }
 
 
@@ -224,8 +225,14 @@ def interaction_out(i: Interaction, contents: dict[str, Content] | None = None) 
         "outcome_ts": i.outcome_ts,
         "content_id": i.content_id,
         "content_title": content.title if content else None,
+        "content_version": content.version if content else None,
+        "product": content.product if content else None,
         "source": i.source,
         "nba_id": i.nba_id,
+        # What the HCP said, and the representative's reading of a visit or call.
+        "intent": i.intent,
+        "outcome_reason": i.outcome_reason,
+        "note": i.note,
     }
 
 

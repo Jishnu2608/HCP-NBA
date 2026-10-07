@@ -176,7 +176,11 @@ export default function VerifyOtp() {
         </Link>
       }
     >
-      {failed ? (
+      {busy === "resend" ? (
+        <Alert tone="info" icon={<MailCheck className="h-5 w-5" aria-hidden />} className="mb-6" title="Sending a new code">
+          Sending a new code to <EmailText email={challenge.email} className="font-semibold" />. This can take a few seconds.
+        </Alert>
+      ) : failed ? (
         <Alert tone="bad" icon={<MailX className="h-5 w-5" aria-hidden />} title="We couldn't send the verification email" className="mb-6">
           <span className="text-bad">
             The code could not be delivered to <EmailText email={challenge.email} className="font-semibold" />. Your
@@ -218,7 +222,9 @@ export default function VerifyOtp() {
         />
         <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-subtle" aria-live="polite">
           <span className={cx("tabular", expiresIn === 0 && !failed && "font-medium text-bad")}>
-            {failed
+            {busy === "resend"
+              ? "Sending…"
+              : failed
               ? "No code has been sent yet."
               : expiresIn > 0
                 ? `Code expires in ${clock(expiresIn)}`

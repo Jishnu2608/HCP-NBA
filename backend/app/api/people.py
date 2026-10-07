@@ -9,6 +9,7 @@ from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.clinical import activity, care, records
 from app.clinical import hcps as hcp_records
+from app.commercial import contact, tasks
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can
@@ -18,6 +19,7 @@ from app.models import (
     EngineCycle,
     Hcp,
     HcpSpecialty,
+    HcpTask,
     Interaction,
     MedicationFill,
     Nba,
@@ -37,7 +39,23 @@ hcp_staff = require_permission(Permission.HCP_READ_ALL, Permission.HCP_READ_ASSI
 LIVE = (NbaStatus.READY_FOR_REVIEW, NbaStatus.APPROVED, NbaStatus.BLOCKED)
 
 
-def _history(db: Session, target_type: str, target_id: str, limit: int = 40) -> list[dict]:
+def _sent_by(db: Session, user: User, actor_user_id: int | None, source: str) -> str | None:
+    """Who carried out an engine or representative touch, as the reader should see it. Work
+    done by someone no longer responsible for the HCP is labelled, never shown as the
+    reader's own."""
+    if source not in ("nba", "rep"):
+        return None
+    if actor_user_id == user.id:
+        return "You"
+    actor = db.get(User, actor_user_id) if actor_user_id else None
+    if actor is None or not can(actor, Permission.HCP_READ_ASSIGNED):
+        return "A previous representative" if actor is None else actor.display_name
+    return actor.display_name
+
+
+def _history(
+    db: Session, target_type: str, target_id: str, limit: int = 40, user: User | None = None
+) -> list[dict]:
     rows = db.scalars(
         select(Interaction)
         .where(Interaction.target_type == target_type, Interaction.target_id == target_id)
@@ -50,7 +68,11 @@ def _history(db: Session, target_type: str, target_id: str, limit: int = 40) -> 
             select(Content).where(Content.content_id.in_({r.content_id for r in rows}))
         )
     }
-    return [out.interaction_out(r, contents) for r in rows]
+    items = [out.interaction_out(r, contents) for r in rows]
+    if user is not None and target_type == TargetType.HCP:
+        for item, r in zip(items, rows, strict=True):
+            item["sent_by"] = _sent_by(db, user, r.actor_user_id, r.source)
+    return items
 
 
 def _open_nba(db: Session, target_type: str, target_id: str) -> dict | None:
@@ -300,12 +322,25 @@ def hcp_360(hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(
         "organization": h.organization,
         "city": h.city,
         "state": h.state,
+        "country": h.country,
+        # City, state and country as known (an invited HCP: the country they gave).
+        "location": out.hcp_location_label(h),
         "rx_volume_annual": h.rx_volume_annual,
         "segment": h.segment,
         "value_score": h.value_score,
         "channel_affinity": h.channel_affinity,
         "as_of_date": today,
         "features": out.features_out(db, TargetType.HCP, hcp_id, today),
-        "interactions": _history(db, TargetType.HCP, hcp_id),
+        "interactions": _history(db, TargetType.HCP, hcp_id, user=user),
         "open_nba": _open_nba(db, TargetType.HCP, hcp_id),
+        # When the contact limits allow the next touch, and the open commercial work.
+        "contact_window": contact.contact_window(db, h),
+        "open_work": [
+            tasks.task_out(db, user, t)
+            for t in db.scalars(
+                select(HcpTask)
+                .where(HcpTask.hcp_id == hcp_id, HcpTask.status.in_(tasks.OPEN))
+                .order_by(HcpTask.due_date, HcpTask.id)
+            )
+        ],
     }

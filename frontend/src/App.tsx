@@ -194,6 +194,7 @@ function AccountMenu() {
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={`Account menu for ${user.name}`}
         onClick={() => setOpen((v) => !v)}
         className="flex min-h-10 items-center gap-2.5 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-subtle"
       >

@@ -523,6 +523,8 @@ class Content(Base):
     review_owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     withdrawn_reason: Mapped[str | None] = mapped_column(Text)
+    # The product or medicine the material is about (free text in the POC).
+    product: Mapped[str | None] = mapped_column(String(120))
 
 
 class ContentReview(Base):
@@ -621,6 +623,8 @@ class Nba(Base):
     # When the care team looked at a real patient's response to what was sent; until then
     # the response counts as work in the care manager's menu.
     response_reviewed_ts: Mapped[datetime | None] = mapped_column(DateTime)
+    # "engine" = a cycle chose it; "rep" = a representative proposed it from HCP 360 (same gates).
+    origin: Mapped[str] = mapped_column(String(12), default="engine", server_default="engine")
 
 
 class NbaCandidate(Base):
@@ -683,6 +687,44 @@ class Interaction(Base):
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     # The exact wording delivered (engine sends): ties the delivery to the approved version.
     draft_id: Mapped[int | None] = mapped_column(ForeignKey("message_draft.id"))
+    # What the HCP said about it (interested, request a meeting, need evidence, ...), and the
+    # representative's richer reading of a visit or call, with a short note.
+    intent: Mapped[str | None] = mapped_column(String(24))
+    outcome_reason: Mapped[str | None] = mapped_column(String(24))
+    note: Mapped[str | None] = mapped_column(String(500))
+
+
+class HcpTask(Base):
+    """Commercial work a representative owes an HCP: the HCP's own request, a follow-up or a
+    meeting. Visible to every representative currently assigned to the HCP; `owner_user_id`
+    is the one responsible and follows the assignment."""
+
+    __tablename__ = "hcp_task"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hcp_id: Mapped[str] = mapped_column(ForeignKey("hcp.hcp_id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    intent: Mapped[str | None] = mapped_column(String(24))
+    reason: Mapped[str | None] = mapped_column(String(500))
+    note: Mapped[str | None] = mapped_column(String(500))
+    content_id: Mapped[str | None] = mapped_column(ForeignKey("content.content_id"))
+    interaction_id: Mapped[int | None] = mapped_column(ForeignKey("interaction.id"))
+    nba_id: Mapped[int | None] = mapped_column(ForeignKey("nba.id"))
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    created_by_role: Mapped[str | None] = mapped_column(String(32))
+    due_date: Mapped[date | None] = mapped_column(Date)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    timezone: Mapped[str | None] = mapped_column(String(64))
+    mode: Mapped[str | None] = mapped_column(String(16))
+    requested_by_hcp: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    outcome: Mapped[str | None] = mapped_column(String(16))
+    outcome_reason: Mapped[str | None] = mapped_column(String(24))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class FeatureSnapshot(Base):

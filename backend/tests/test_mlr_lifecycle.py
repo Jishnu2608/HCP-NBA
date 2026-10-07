@@ -202,9 +202,11 @@ def test_new_version_supersedes_old_and_engine_stops_using_it(env):
     db.refresh(nba)
     assert old.mlr_status == MlrStatus.SUPERSEDED
     assert nba.status == NbaStatus.EXPIRED and "superseded" in nba.block_reason
-    assert old.content_id not in {
-        c["content_id"] for c in call(env, "rep", "GET", "/api/content").json()
-    }
+    # Reps no longer get it as usable material (they may still see it as delivered history).
+    assert not any(
+        c["content_id"] == old.content_id and c["usable"]
+        for c in call(env, "rep", "GET", "/api/content").json()
+    )
     assert call(env, "admin", "POST", "/api/admin/cycle").status_code == 200
     latest = db.scalar(select(Nba.cycle_id).order_by(Nba.cycle_id.desc()))
     assert not db.scalar(

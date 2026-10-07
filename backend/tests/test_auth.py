@@ -471,7 +471,9 @@ def test_new_rep_gets_hcps_and_no_patients(env):
     assert client.get("/api/patients", headers=as_user(session)).status_code == 403
     assert client.get("/api/patients/PAT_00001", headers=as_user(session)).status_code == 403
     content = client.get("/api/content", headers=as_user(session)).json()
-    assert content and all(c["usable"] and c["audience"] == "HCP" for c in content)
+    assert content and all(
+        c["audience"] == "HCP" and (c["usable"] or c["delivered_by_you"]) for c in content
+    )
 
 
 def test_new_compliance_account_is_limited_to_compliance_functions(env):

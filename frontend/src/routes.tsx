@@ -46,6 +46,7 @@ const Dashboard = page(() => import("./pages/Dashboard"));
 const HcpList = page(() => import("./pages/Hcps").then((m) => ({ default: m.HcpList })));
 const HcpProfile = page(() => import("./pages/Hcps").then((m) => ({ default: m.HcpProfile })));
 const NbaDetail = page(() => import("./pages/NbaDetail"));
+const HcpWorkPage = page(() => import("./pages/HcpWork"));
 const PatientList = page(() => import("./pages/Patients").then((m) => ({ default: m.PatientList })));
 const PatientProfile = page(() => import("./pages/Patients").then((m) => ({ default: m.PatientProfile })));
 const MyConsents = page(() => import("./pages/Portal").then((m) => ({ default: m.MyConsents })));
@@ -152,6 +153,16 @@ export const ROUTES: AppRoute[] = [
     label: (can) => (can(P.HCP_READ_ALL) ? "HCPs" : "My HCPs"),
     icon: icon(Stethoscope),
     group: "work",
+  },
+  {
+    path: "/hcp-work",
+    anyOf: [P.HCP_READ_ASSIGNED],
+    element: <HcpWorkPage />,
+    label: () => "My HCP work",
+    icon: icon(ClipboardList),
+    group: "work",
+    // HCP requests, and follow-ups and meetings due.
+    badge: "hcp_work",
   },
   {
     path: "/content",

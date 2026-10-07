@@ -13,7 +13,7 @@ Outreach (the recommendation queue):
   responses       real patients' responses not yet looked at by the care team
 """
 
-from sqlalchemy import and_, func, not_, select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.orm import Session
 
 from app.core import clock, rbac
@@ -90,3 +90,36 @@ def responses_filter():
         Nba.target_id.in_(REAL_PATIENTS),
         Nba.response_reviewed_ts.is_(None),
     )
+
+
+def hcp_outreach(db: Session, user: User) -> dict[str, int]:
+    """A representative's queue: HCP recommendations to review, approved and not sent, and
+    visits sent whose outcome is not recorded yet. The same scope as the queue page."""
+    scope = rbac.nba_filter(user)
+    hcp = Nba.target_type == TargetType.HCP
+    base = select(func.count()).select_from(Nba).where(scope, hcp)
+    pending_visit = (
+        select(Interaction.nba_id)
+        .where(Interaction.channel == Channel.REP_VISIT, Interaction.outcome == Outcome.PENDING)
+        .where(Interaction.nba_id.is_not(None))
+    )
+    return {
+        "to_review": _count(db, base.where(Nba.status == NbaStatus.READY_FOR_REVIEW)),
+        "to_send": _count(db, base.where(Nba.status == NbaStatus.APPROVED)),
+        "visit_outcomes": _count(
+            db, base.where(Nba.status == NbaStatus.SENT, Nba.id.in_(pending_visit))
+        ),
+    }
+
+
+def hcp_work_due(db: Session, user: User) -> int:
+    """Open HCP requests, and follow-ups and meetings due today or overdue."""
+    from app.commercial import tasks as hcp_tasks
+    from app.models import HcpTask
+
+    today = clock.get_today(db)
+    query = hcp_tasks.visible(user).where(
+        HcpTask.status.in_(hcp_tasks.OPEN),
+        or_(HcpTask.kind == "hcp_request", HcpTask.due_date <= today),
+    )
+    return _count(db, select(func.count()).select_from(query.subquery()))

@@ -305,6 +305,9 @@ def _inbox_item(db: Session, i: Interaction) -> dict:
         and _therapy_active(db, i.therapy_id),
         "channel_note": CHANNEL_NOTE.get(i.channel),
         "content_notice": _content_notice(content),
+        "product": content.product if content else None,
+        # The HCP's own answer to the material (interested, request a meeting, ...).
+        "intent": i.intent,
     } | _hcp_source(db, i, content)
 
 
@@ -380,6 +383,53 @@ def my_inbox(user: User = Depends(portal_users), db: Session = Depends(get_db)) 
         )
         db.commit()
     return items
+
+
+class IntentBody(StrictBody):
+    intent: Literal[
+        "interested", "request_meeting", "need_info", "need_evidence", "not_now", "decline"
+    ]
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/inbox/{interaction_id}/intent")
+def answer_content(
+    interaction_id: int,
+    body: IntentBody,
+    user: User = Depends(require_permission(Permission.SELF_INBOX)),
+    db: Session = Depends(get_db),
+) -> dict:
+    """An HCP's answer to material delivered to them. It reaches the representatives
+    currently assigned to them as work (a request, or a follow-up for "not now"), and the
+    engine reads it as a signal; declining stops that material being proposed again."""
+    from app.commercial import tasks as hcp_tasks
+    from app.engagement import delivery
+
+    if not user.hcp_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    i = db.get(Interaction, interaction_id)
+    if (
+        i is None
+        or i.target_type != TargetType.HCP
+        or i.target_id != user.hcp_id
+        or i.source != "nba"
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    if i.intent is not None and i.intent == body.intent:
+        return _inbox_item(db, i)
+    outcome = Outcome.DECLINED if body.intent == "decline" else Outcome.REPLIED
+    delivery.capture_response(
+        db,
+        i,
+        outcome,
+        delivery.now_on(db),
+        actor=user.username,
+        actor_role=user.role,
+        note=body.note,
+    )
+    hcp_tasks.from_intent(db, user, i, body.intent, body.note)
+    db.commit()
+    return _inbox_item(db, i)
 
 
 class QuestionBody(StrictBody):
@@ -800,6 +850,11 @@ def attention(user: User = Depends(get_current_user), db: Session = Depends(get_
         elif user.hcp_id and "messages" in counts:
             # Replies about delivered material.
             counts["messages"] += unread
+    if can(user, Permission.NBA_REVIEW_HCP) and can(user, Permission.HCP_READ_ASSIGNED):
+        # A representative: recommendations to review or send and visits awaiting an outcome
+        # (the queue), and the HCP work owed (requests, follow-ups and meetings due).
+        counts["outreach"] = sum(workload.hcp_outreach(db, user).values())
+        counts["hcp_work"] = workload.hcp_work_due(db, user)
     if can(user, Permission.PRIVACY_MANAGE):
         counts["privacy_requests"] = db.scalar(
             select(func.count())

@@ -231,6 +231,11 @@ def set_status(
         if user.hcp_id:
             # Consultations waiting for this HCP go back to their care managers.
             returned = care.return_consultations(db, admin, user.hcp_id)
+        if can(user, Permission.HCP_READ_ASSIGNED):
+            # Its open HCP work goes to another representative assigned to the same HCP.
+            from app.commercial import tasks as hcp_tasks
+
+            hcp_tasks.reassign_open_work(db)
     elif can(user, Permission.PATIENT_CARE_MANAGE):
         records.adopt_unassigned(db, admin.username, admin.role)
     audit.record(

@@ -180,7 +180,11 @@ def test_compliance_sees_gate_outcomes_but_not_identities_and_cannot_review(env)
 
 def test_field_roles_only_see_usable_content_for_their_audience(env):
     rep_content = call(env, "rep", "GET", "/api/content").json()
-    assert rep_content and all(c["usable"] and c["audience"] == "HCP" for c in rep_content)
+    # Approved, in-date HCP material, plus anything delivered to the rep's own HCPs (whose
+    # questions and history come with the HCP), marked as such.
+    assert rep_content and all(
+        c["audience"] == "HCP" and (c["usable"] or c["delivered_by_you"]) for c in rep_content
+    )
     cm_content = call(env, "cm", "GET", "/api/content").json()
     assert cm_content and all(c["usable"] and c["audience"] == "PATIENT" for c in cm_content)
     everything = call(env, "compliance", "GET", "/api/content").json()
