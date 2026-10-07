@@ -115,7 +115,8 @@ def test_hero_hcp_best_content_is_not_cleared(seeded):
 
 def test_users_cover_all_roles(seeded):
     roles = set(seeded.scalars(select(User.role)))
-    assert roles == set(Role)
+    # Compliance / MLR reviewers are never seeded: they exist only by invitation.
+    assert roles == set(Role) - {Role.COMPLIANCE}
     hero_patient_user = seeded.scalar(select(User).where(User.username == "pat00001"))
     assert hero_patient_user.patient_id == "PAT_00001"
 

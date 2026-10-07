@@ -8,7 +8,7 @@ from app.datagen.generate import GenConfig, generate
 from app.llm import service
 from app.llm.base import DraftOutput, DraftRequest, DraftResult, MessageVariant
 from app.llm.template import TemplateProvider
-from app.llm.validator import DraftValidationError, validate
+from app.llm.validator import DraftValidationError, approved_text, validate
 from app.models import AuditLog, MessageDraft, Nba
 from app.models.enums import NbaStatus
 from app.nba.engine import run_cycle
@@ -107,10 +107,12 @@ class FakeProvider:
     def draft(self, r: DraftRequest) -> DraftResult:
         if self.error:
             raise self.error
+        # "{module}" stands for the approved content, which model wording must carry verbatim.
+        body = self.body.replace("{module}", approved_text(r)) if self.body else self.body
         return DraftResult(
             output=DraftOutput(
                 rationale_summary="Model summary.",
-                variants=[MessageVariant(subject=None, body=self.body)],
+                variants=[MessageVariant(subject=None, body=body)],
             ),
             provider=self.name,
             model="fake-1",
@@ -165,10 +167,9 @@ def test_cycle_drafts_every_ready_recommendation_and_no_blocked_one(cycled):
 def test_valid_model_output_is_stored_and_audited(cycled):
     db, _ = cycled
     nba = sms_nba(db)
-    rows = service.draft_for_nba(db, nba, FakeProvider(body="Hi, your refill is due."))
-    assert [(r.provider, r.model, r.body) for r in rows] == [
-        ("fake", "fake-1", "Hi, your refill is due.")
-    ]
+    rows = service.draft_for_nba(db, nba, FakeProvider(body="Hi, {module}"))
+    assert [(r.provider, r.model) for r in rows] == [("fake", "fake-1")]
+    assert rows[0].body == "Hi, " + approved_text(service.build_request(db, nba))
     assert nba.rationale_summary == "Model summary."
     log = db.scalar(select(AuditLog).where(AuditLog.action == "draft_generated"))
     assert log.nba_id == nba.id and log.detail["usage"]["output_tokens"] == 5
@@ -178,6 +179,8 @@ def test_valid_model_output_is_stored_and_audited(cycled):
     ("provider", "reason"),
     [
         (FakeProvider(body="Visit https://bad.example now"), "output rejected"),
+        # Model wording that does not carry the approved content verbatim (M-01).
+        (FakeProvider(body="Hi, your refill is due."), "approved content verbatim"),
         (FakeProvider(body="This will cure you"), "output rejected"),
         (FakeProvider(error=TimeoutError("slow")), "provider error: TimeoutError"),
     ],
@@ -198,11 +201,12 @@ def test_redrafting_keeps_human_edits(cycled):
     first = service.draft_for_nba(db, nba)
     first[0].body, first[0].edited_by_user_id = "Edited by the care manager.", 1
     db.flush()
-    service.draft_for_nba(db, nba, FakeProvider(body="Fresh model wording."))
+    service.draft_for_nba(db, nba, FakeProvider(body="Fresh model wording. {module}"))
     drafts = db.scalars(
         select(MessageDraft).where(MessageDraft.nba_id == nba.id).order_by(MessageDraft.variant_no)
     ).all()
-    assert [d.body for d in drafts] == ["Edited by the care manager.", "Fresh model wording."]
+    assert drafts[0].body == "Edited by the care manager."
+    assert drafts[1].body.startswith("Fresh model wording. ")
     assert [d.is_selected for d in drafts] == [True, False]
 
 

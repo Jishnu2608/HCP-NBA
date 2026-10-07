@@ -40,6 +40,8 @@ function page<T extends { default: ComponentType }>(load: () => Promise<T>) {
 const Admin = page(() => import("./pages/Admin"));
 const Audit = page(() => import("./pages/Audit"));
 const ContentLibrary = page(() => import("./pages/Content"));
+const ContentDetail = page(() => import("./pages/ContentDetail"));
+const NewContent = page(() => import("./pages/ContentDetail").then((m) => ({ default: m.NewContent })));
 const Dashboard = page(() => import("./pages/Dashboard"));
 const HcpList = page(() => import("./pages/Hcps").then((m) => ({ default: m.HcpList })));
 const HcpProfile = page(() => import("./pages/Hcps").then((m) => ({ default: m.HcpProfile })));
@@ -156,9 +158,15 @@ export const ROUTES: AppRoute[] = [
     anyOf: CONTENT_READ,
     element: <ContentLibrary />,
     label: (can) =>
-      can(P.CONTENT_APPROVE) ? "Content & MLR" : can(P.CONTENT_READ_ALL) ? "Content" : "Approved content",
+      can(P.CONTENT_APPROVE)
+        ? "Content & MLR"
+        : can(P.CONTENT_READ_ALL) || can(P.CONTENT_PROPOSE)
+          ? "Content"
+          : "Approved content",
     icon: icon(FileCheck2),
     group: "governance",
+    // Submissions to review (MLR); decisions and messages on my proposals (representative).
+    badge: "content",
   },
   {
     path: "/audit",
@@ -267,6 +275,8 @@ export const ROUTES: AppRoute[] = [
   },
   // Detail pages: guarded the same way, not shown in the menu.
   { path: "/nba/:id", anyOf: NBA_READ, element: <NbaDetail /> },
+  { path: "/content/new", anyOf: [P.CONTENT_PROPOSE], element: <NewContent /> },
+  { path: "/content/:id", anyOf: CONTENT_READ, element: <ContentDetail /> },
   { path: "/patients/:id", anyOf: PATIENT_READ, element: <PatientProfile /> },
   { path: "/hcps/:id", anyOf: HCP_READ, element: <HcpProfile /> },
 ];

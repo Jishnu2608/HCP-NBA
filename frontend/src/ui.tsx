@@ -344,7 +344,7 @@ export function MlrBadge({ status, expired }: { status: string; expired?: boolea
   if (status === "pending") {
     return (
       <Badge tone="warn" icon={<Clock3 className={ic} aria-hidden />}>
-        MLR pending
+        In MLR review
       </Badge>
     );
   }
@@ -355,7 +355,14 @@ export function MlrBadge({ status, expired }: { status: string; expired?: boolea
       </Badge>
     );
   }
-  return <Badge>MLR {status}</Badge>;
+  const other: Record<string, [Tone, string]> = {
+    draft: ["neutral", "Draft"],
+    changes_requested: ["warn", "Changes requested"],
+    withdrawn: ["bad", "Withdrawn"],
+    superseded: ["neutral", "Superseded"],
+  };
+  const [tone, text] = other[status] ?? ["neutral", `MLR ${status}`];
+  return <Badge tone={tone}>{text}</Badge>;
 }
 
 export function ConsentBadge({ granted }: { granted: boolean }) {

@@ -177,7 +177,11 @@ def redact(value: Any) -> Any:
 
 
 def audit_out(
-    a: AuditLog, *, identified: bool = True, verified_actors: set[str] | None = None
+    a: AuditLog,
+    *,
+    identified: bool = True,
+    verified_actors: set[str] | None = None,
+    viewer_id: int | None = None,
 ) -> dict:
     """`identified=False` (readers without audit:read:identified) masks account emails and
     patient / HCP ids, keeping what happened, when, and the actor's role."""
@@ -189,8 +193,11 @@ def audit_out(
         "entity_id": a.entity_id,
         "action": a.action,
         "actor": a.actor,
-        # The durable identity of the account that acted (an email can be reused later).
-        "actor_user_id": a.actor_user_id if identified else None,
+        # The durable identity of the account that acted (an email can be reused later). An
+        # account number identifies no one by itself, so masked readers get it too: a reviewer
+        # can tell their own decisions from another reviewer's.
+        "actor_user_id": a.actor_user_id,
+        "actor_is_you": viewer_id is not None and a.actor_user_id == viewer_id,
         "actor_role": a.actor_role,
         "actor_verified": a.actor in (verified_actors or set()),
         "compliance_ok": a.compliance_ok,

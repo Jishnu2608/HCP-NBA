@@ -16,7 +16,7 @@ from app.features import engagement as eng
 from app.features.adherence import Adherence, compute_adherence, coverage_intervals
 from app.features.population import Population, load_population
 from app.models import Content, EngineCycle, Nba, NbaCandidate, PatientTherapy
-from app.models.enums import ActionType, NbaStatus, RiskSegment, TargetType
+from app.models.enums import ActionType, MlrStatus, NbaStatus, RiskSegment, TargetType
 from app.models.tables import utcnow
 from app.nba import gates, rationale
 from app.scoring import propensity
@@ -26,6 +26,10 @@ CANDIDATES_KEPT = 10
 # Recommendations from an earlier cycle that nobody acted on are replaced, not stacked.
 SUPERSEDED = (NbaStatus.GENERATED, NbaStatus.READY_FOR_REVIEW, NbaStatus.BLOCKED)
 IN_FLIGHT = (NbaStatus.APPROVED,)
+# Content versions the engine considers. Drafts, versions sent back for changes, withdrawn and
+# superseded material are not options at all; pending and rejected ones still are, so a
+# better option held back by MLR stays visible to Compliance.
+IN_PLAY = (MlrStatus.APPROVED, MlrStatus.PENDING, MlrStatus.REJECTED)
 
 
 @dataclass
@@ -95,7 +99,7 @@ def patient_candidates(
     patient = pop.patients[pid]
     out = []
     for content in pop.contents.values():
-        if content.audience != TargetType.PATIENT:
+        if content.audience != TargetType.PATIENT or content.mlr_status not in IN_PLAY:
             continue
         if content.measure not in (ctx.therapy.measure, None):
             continue
@@ -126,6 +130,7 @@ def patient_candidates(
                         pop.consents.get(pid, []),
                         ctx.state,
                         settings["frequency_caps"],
+                        patient.country,
                     ),
                 )
             )
@@ -140,7 +145,11 @@ def hcp_candidates(
     already_engaged = {i.content_id for i in history if eng.is_engaged(i.outcome)}
     out = []
     for content in pop.contents.values():
-        if content.audience != TargetType.HCP or content.content_id in already_engaged:
+        if (
+            content.audience != TargetType.HCP
+            or content.content_id in already_engaged
+            or content.mlr_status not in IN_PLAY
+        ):
             continue
         # Content for a specialty goes only to HCPs who hold it (an HCP may hold several).
         held = pop.hcp_specialties.get(hcp_id) or {hcp.specialty}
@@ -163,6 +172,7 @@ def hcp_candidates(
                         [],
                         state,
                         settings["frequency_caps"],
+                        hcp.country,
                     ),
                 )
             )

@@ -134,9 +134,15 @@ class ConsentPurpose(StrEnum):
 
 
 class MlrStatus(StrEnum):
+    """Lifecycle of one content version. Only `approved` (and in date) is deliverable."""
+
+    DRAFT = "draft"
+    PENDING = "pending"  # submitted, waiting for an MLR decision
+    CHANGES_REQUESTED = "changes_requested"
     APPROVED = "approved"
-    PENDING = "pending"
     REJECTED = "rejected"
+    WITHDRAWN = "withdrawn"
+    SUPERSEDED = "superseded"
 
 
 class ActionType(StrEnum):

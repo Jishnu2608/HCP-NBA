@@ -19,8 +19,10 @@ import {
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, patch, post } from "../api";
+import { api, post } from "../api";
 import type { Json } from "../api";
+import { useAuth } from "../auth";
+import { P } from "../permissions";
 import { useToast } from "../toast";
 import {
   Alert,
@@ -93,6 +95,8 @@ function Fact({ icon, label, value, hint }: { icon: ReactNode; label: string; va
 
 export default function NbaDetail() {
   const { id } = useParams();
+  const { can } = useAuth();
+  const proposer = can(P.CONTENT_PROPOSE);
   const client = useQueryClient();
   const toast = useToast();
   const detail = useQuery({ queryKey: ["nba-detail", id], queryFn: () => api(`/nba/${id}`) });
@@ -140,7 +144,6 @@ export default function NbaDetail() {
   if (detail.isLoading) return <Loading label="Loading recommendation" />;
   if (detail.error) return <ErrorState error={detail.error} retry={() => void detail.refetch()} variant="page" title="This recommendation could not be loaded" />;
 
-  const dirty = draft && (body !== draft.body || subject !== (draft.subject ?? ""));
   const reviewing = n.can_review && n.status === "ready_for_review";
   const blocked = n.status === "blocked";
   // The safeguards as they stand now (consent, content approval and dates, the medication):
@@ -158,9 +161,7 @@ export default function NbaDetail() {
 
   const regular = grouped.filter((g) => g.kind !== "withheld");
 
-  const saveEdit = () => patch(`/nba/${id}/drafts/${draftId}`, { subject: subject || null, body });
   const approve = async (thenSend: boolean) => {
-    if (dirty) await saveEdit();
     await post(`/nba/${id}/approve`, { draft_id: draftId });
     if (thenSend) await post(`/nba/${id}/send`);
   };
@@ -190,7 +191,6 @@ export default function NbaDetail() {
               <XCircle className="h-4 w-4" aria-hidden /> Reject
             </Button>
           </div>
-          {dirty && <p className="text-[13px] text-warn">Your edits to the draft are saved when you approve.</p>}
         </div>
       )}
       {reviewing && rejecting && (
@@ -292,6 +292,9 @@ export default function NbaDetail() {
         <MlrBadge status={n.content.mlr_status} expired={n.content.is_expired} />
       </div>
       <p className="mt-3 text-sm leading-6 text-ink-muted">{n.content.body}</p>
+      <Link to={`/content/${n.content.content_id}`} className="mt-2 inline-block text-[13px] font-semibold text-primary-ink hover:underline">
+        Claims, evidence and MLR history
+      </Link>
       {n.content.expiry_date && (
         <p className="mt-3 text-[13px] text-ink-subtle">Approval valid until {fmtDate(n.content.expiry_date)}</p>
       )}
@@ -404,7 +407,7 @@ export default function NbaDetail() {
                   </Button>
                   {reviewing && n.drafts.length > 0 && (
                     <Button variant="ghost" onClick={() => reveal("[data-draft]")}>
-                      <PenLine className="h-4 w-4" aria-hidden /> Edit message
+                      <PenLine className="h-4 w-4" aria-hidden /> Read the message
                     </Button>
                   )}
                 </div>
@@ -460,7 +463,7 @@ export default function NbaDetail() {
             <Card
               dataAttr="draft"
               title="Message draft"
-              description={reviewing ? "Edit the wording if needed. Eligibility is already decided above." : undefined}
+              description={`The wording is MLR-approved content ${n.content.content_id} version ${n.content.version}, delivered exactly as shown. Choose a variant; to change the wording, ${proposer ? "propose a new version of the content" : "ask Compliance to revise the content"}.`}
               action={
                 reviewing && (
                   <Button
@@ -490,35 +493,22 @@ export default function NbaDetail() {
               {draft && (
                 <div className="space-y-4">
                   {n.channel !== "sms" && (
-                    <TextField
-                      label="Subject"
-                      value={subject}
-                      onChange={(e) => setSubject(e.target.value)}
-                      readOnly={!reviewing}
-                    />
+                    <TextField label="Subject" value={subject} readOnly />
                   )}
-                  <TextArea
-                    label="Message"
-                    value={body}
-                    onChange={(e) => setBody(e.target.value)}
-                    readOnly={!reviewing}
-                    rows={humanChannel ? 9 : 7}
-                  />
+                  <TextArea label="Message" value={body} readOnly rows={humanChannel ? 9 : 7} />
                   <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-subtle">
                     <span className="flex items-center gap-1.5">
                       <PenLine className="h-3.5 w-3.5 shrink-0" aria-hidden />
                       Worded by {draft.provider}
-                      {draft.model ? ` (${draft.model})` : ""} from the approved content; checked before it is stored.
+                      {draft.model ? ` (${draft.model})` : ""}: the approved content in a fixed frame, checked again at send.
+                      <Link to={`/content/${n.content.content_id}`} className="font-semibold text-primary-ink hover:underline">
+                        Open the content
+                      </Link>
                     </span>
                     {n.channel === "sms" && (
                       <span className={cx("tabular font-medium", body.length > 320 && "text-bad")}>{body.length} / 320</span>
                     )}
                   </div>
-                  {reviewing && dirty && (
-                    <Button busy={act.isPending} onClick={() => run(saveEdit, "Draft saved")}>
-                      Save edit
-                    </Button>
-                  )}
                 </div>
               )}
             </Card>

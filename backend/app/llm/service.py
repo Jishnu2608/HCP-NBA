@@ -63,7 +63,7 @@ def _safe_draft(provider: LLMProvider, request: DraftRequest) -> tuple[DraftResu
     elif provider is not _TEMPLATE:
         try:
             result = provider.draft(request)
-            result.output = validate(result.output, request)
+            result.output = validate(result.output, request, require_module=True)
             return result, None
         except DraftValidationError as exc:
             reason = f"output rejected: {exc}"

@@ -306,7 +306,8 @@ class AssignmentService:
     # sessions end (sessions.revoke_everyone) so no old cookie can land on a new id.
 
     KEPT_SOURCES = (AccountSource.SIGNUP, AccountSource.INVITATION)
-    SECURITY_AUDIT = ("user", "auth", "invitation")
+    # Account and security events, and content governance (MLR decisions, submissions).
+    SECURITY_AUDIT = ("user", "auth", "invitation", "content")
 
     def snapshot(self, db: Session) -> dict:
         emails = dict(db.execute(select(User.id, User.email)).all())
@@ -335,7 +336,13 @@ class AssignmentService:
                 }
             )
         audit_rows = [
-            {c.name: getattr(a, c.name) for c in AuditLog.__table__.columns if c.name != "id"}
+            {
+                **{
+                    c.name: getattr(a, c.name) for c in AuditLog.__table__.columns if c.name != "id"
+                },
+                # Account ids change in a rebuild: the acting account is re-linked by email.
+                "actor_user_id": emails.get(a.actor_user_id),
+            }
             for a in db.scalars(
                 select(AuditLog)
                 .where(AuditLog.entity_type.in_(self.SECURITY_AUDIT), AuditLog.nba_id.is_(None))
@@ -367,7 +374,6 @@ class AssignmentService:
         record still exists at the new scale."""
         patients = set(db.scalars(select(Patient.patient_id)))
         hcps = set(db.scalars(select(Hcp.hcp_id)))
-        db.add_all(AuditLog(**row) for row in saved.get("audit", []))
         for item in saved.get("accounts", []):
             account = dict(item["account"])
             if account["patient_id"] not in patients:
@@ -388,6 +394,10 @@ class AssignmentService:
         db.flush()
 
         ids = dict(db.execute(select(User.email, User.id)).all())
+        db.add_all(
+            AuditLog(**{**row, "actor_user_id": ids.get(row["actor_user_id"])})
+            for row in saved.get("audit", [])
+        )
         for item in saved.get("accounts", []):
             if item["invited_by"] in ids:
                 user = db.get(User, ids[item["account"]["email"]])

@@ -85,7 +85,10 @@ def test_admin_has_every_staff_permission_except_content_approval():
     care = {P.PATIENT_CARE_MANAGE, P.INVITE_PATIENT}
     # The administrator handles privacy requests and does not submit their own.
     care |= {P.PRIVACY_REQUEST}
-    assert set(P) - admin == self_scoped | narrower | care | {P.CONTENT_APPROVE}
+    # Content decisions belong to Compliance and proposals to representatives (separation of
+    # duties: the administrator neither writes nor approves governed material).
+    content = {P.CONTENT_APPROVE, P.CONTENT_PROPOSE}
+    assert set(P) - admin == self_scoped | narrower | care | content
     assert [r for r, perms in ROLE_PERMISSIONS.items() if P.CONTENT_APPROVE in perms] == [
         Role.COMPLIANCE
     ]

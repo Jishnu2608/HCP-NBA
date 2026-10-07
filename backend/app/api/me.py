@@ -27,6 +27,7 @@ from app.models import (
     CareRequest,
     Consent,
     Content,
+    ContentMessage,
     Hcp,
     Interaction,
     MessageDraft,
@@ -47,6 +48,7 @@ from app.models.enums import (
     ConditionStatus,
     ConsentPurpose,
     FillSource,
+    MlrStatus,
     Outcome,
     ReviewStatus,
     TargetType,
@@ -283,7 +285,9 @@ def _me(user: User) -> tuple[str, str]:
 
 
 def _inbox_item(db: Session, i: Interaction) -> dict:
-    draft = db.scalar(
+    # The wording actually delivered (recorded at send); older sends fall back to the selection.
+    draft = db.get(MessageDraft, i.draft_id) if i.draft_id else None
+    draft = draft or db.scalar(
         select(MessageDraft).where(MessageDraft.nba_id == i.nba_id, MessageDraft.is_selected)
     )
     content = db.get(Content, i.content_id) if i.content_id else None
@@ -300,7 +304,20 @@ def _inbox_item(db: Session, i: Interaction) -> dict:
         and i.outcome != Outcome.FILLED
         and _therapy_active(db, i.therapy_id),
         "channel_note": CHANNEL_NOTE.get(i.channel),
+        "content_notice": _content_notice(content),
     } | _hcp_source(db, i, content)
+
+
+def _content_notice(content: Content | None) -> str | None:
+    """Material withdrawn or replaced after it was delivered stays readable, marked as such."""
+    if content is None:
+        return None
+    if content.mlr_status == MlrStatus.WITHDRAWN:
+        why = f" Reason: {content.withdrawn_reason}" if content.withdrawn_reason else ""
+        return f"Withdrawn by the medical, legal and regulatory review: no longer current.{why}"
+    if content.mlr_status == MlrStatus.SUPERSEDED:
+        return "A newer approved version has replaced this material."
+    return None
 
 
 def _hcp_source(db: Session, i: Interaction, content: Content | None) -> dict:
@@ -309,9 +326,31 @@ def _hcp_source(db: Session, i: Interaction, content: Content | None) -> dict:
         return {}
     nba = db.get(Nba, i.nba_id) if i.nba_id else None
     sender = db.get(User, nba.reviewed_by_user_id) if nba and nba.reviewed_by_user_id else None
+    thread = list(
+        db.scalars(
+            select(ContentMessage)
+            .where(ContentMessage.interaction_id == i.id, ContentMessage.hcp_id == i.target_id)
+            .order_by(ContentMessage.id)
+        )
+    )
     return {
         "content_title": content.title if content else None,
+        "content_version": content.version if content else None,
         "sent_by": sender.display_name if sender else None,
+        "conversation": [
+            {
+                "id": m.id,
+                "author": "You"
+                if m.author_role == "hcp"
+                else "Medical, legal and regulatory review"
+                if m.author_role == "compliance"
+                else (sender.display_name if sender else "Your representative"),
+                "body": m.body,
+                "ts": m.ts,
+            }
+            for m in thread
+        ],
+        "can_ask": content is not None,
     }
 
 
@@ -329,7 +368,50 @@ def my_inbox(user: User = Depends(portal_users), db: Session = Depends(get_db)) 
         )
         .order_by(Interaction.int_ts.desc(), Interaction.id.desc())
     )
-    return [_inbox_item(db, i) for i in rows]
+    items = [_inbox_item(db, i) for i in rows]
+    if user.hcp_id:
+        # Replies about delivered material count as read once the inbox shows them.
+        from app.content import governance
+
+        governance.mark_read(
+            db,
+            user,
+            list(db.scalars(select(ContentMessage).where(ContentMessage.hcp_id == user.hcp_id))),
+        )
+        db.commit()
+    return items
+
+
+class QuestionBody(StrictBody):
+    body: str = Field(min_length=3, max_length=2000)
+
+
+@router.post("/inbox/{interaction_id}/question", status_code=201)
+def ask_about_content(
+    interaction_id: int,
+    body: QuestionBody,
+    user: User = Depends(require_permission(Permission.SELF_INBOX)),
+    db: Session = Depends(get_db),
+) -> dict:
+    """An HCP's question or concern about material delivered to them. It reaches the MLR
+    reviewers (who see the HCP without identity) and the representative who sent it."""
+    from app.content import governance
+
+    if not user.hcp_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    i = db.get(Interaction, interaction_id)
+    if (
+        i is None
+        or i.target_type != TargetType.HCP
+        or i.target_id != user.hcp_id
+        or i.source != "nba"
+        or i.content_id is None
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    content = db.get(Content, i.content_id)
+    governance.post_message(db, user, content, body.body, hcp_id=user.hcp_id, interaction_id=i.id)
+    db.commit()
+    return _inbox_item(db, i)
 
 
 @router.post("/inbox/{interaction_id}/respond")
@@ -685,6 +767,39 @@ def attention(user: User = Depends(get_current_user), db: Session = Depends(get_
                 Interaction.outcome.in_((Outcome.PENDING, Outcome.NO_RESPONSE)),
             )
         )
+    if (
+        can(user, Permission.CONTENT_APPROVE)
+        or can(user, Permission.CONTENT_PROPOSE)
+        or user.hcp_id
+    ):
+        from app.content import governance
+        from app.models import ContentReview
+
+        unread = db.scalar(select(func.count()).select_from(governance.unread(db, user).subquery()))
+        if can(user, Permission.CONTENT_APPROVE):
+            # Submissions waiting for a decision, and new messages from authors or HCPs.
+            pending = db.scalar(
+                select(func.count())
+                .select_from(Content)
+                .where(Content.mlr_status == MlrStatus.PENDING)
+            )
+            counts["content"] = pending + unread
+        elif can(user, Permission.CONTENT_PROPOSE):
+            # MLR decisions on my material I have not opened yet, and new messages.
+            unseen = db.scalar(
+                select(func.count())
+                .select_from(ContentReview)
+                .join(Content, Content.content_id == ContentReview.content_id)
+                .where(
+                    Content.author_user_id == user.id,
+                    Content.origin == "submitted",
+                    ContentReview.seen_by_author_at.is_(None),
+                )
+            )
+            counts["content"] = unseen + unread
+        elif user.hcp_id and "messages" in counts:
+            # Replies about delivered material.
+            counts["messages"] += unread
     if can(user, Permission.PRIVACY_MANAGE):
         counts["privacy_requests"] = db.scalar(
             select(func.count())

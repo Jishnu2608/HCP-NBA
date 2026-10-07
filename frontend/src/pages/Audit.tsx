@@ -83,7 +83,8 @@ export default function Audit() {
           <PersonName name={a.actor} verified={a.actor_verified} className="max-w-56 text-ink" />
           <div className="text-xs text-ink-subtle">
             {titleCase(a.actor_role)}
-            {a.actor_user_id ? ` · account #${a.actor_user_id}` : ""}
+            {a.actor_is_you ? " · you" : a.actor_user_id ? ` · account #${a.actor_user_id}` : ""}
+            {a.detail?.version ? ` · version ${a.detail.version}` : ""}
           </div>
         </div>
       ),

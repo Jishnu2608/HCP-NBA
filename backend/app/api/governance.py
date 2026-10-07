@@ -52,6 +52,8 @@ def audit_log(
     action: str | None = Query(None, max_length=48),
     nba_id: int | None = None,
     actor: str | None = Query(None, max_length=254),
+    entity_id: str | None = Query(None, max_length=64),
+    mine: bool = False,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     user: User = Depends(auditors),
@@ -67,6 +69,10 @@ def audit_log(
         where.append(AuditLog.nba_id == nba_id)
     if actor:
         where.append(AuditLog.actor == actor)
+    if entity_id:
+        where.append(AuditLog.entity_id == entity_id)
+    if mine:
+        where.append(AuditLog.actor_user_id == user.id)
     total = db.scalar(select(func.count()).select_from(AuditLog).where(*where))
     actions = dict(
         db.execute(select(AuditLog.action, func.count()).group_by(AuditLog.action)).all()
@@ -84,7 +90,10 @@ def audit_log(
     return {
         "total": total,
         "actions": actions,
-        "items": [out.audit_out(a, identified=identified, verified_actors=verified) for a in rows],
+        "items": [
+            out.audit_out(a, identified=identified, verified_actors=verified, viewer_id=user.id)
+            for a in rows
+        ],
     }
 
 

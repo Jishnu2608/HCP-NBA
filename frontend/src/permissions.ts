@@ -19,6 +19,7 @@ export const P = {
   CONTENT_READ_APPROVED_HCP: "content:read:approved_hcp",
   CONTENT_READ_APPROVED_PATIENT: "content:read:approved_patient",
   CONTENT_APPROVE: "content:approve",
+  CONTENT_PROPOSE: "content:propose",
   AUDIT_READ: "audit:read",
   AUDIT_READ_IDENTIFIED: "audit:read:identified",
   ANALYTICS_READ: "analytics:read",

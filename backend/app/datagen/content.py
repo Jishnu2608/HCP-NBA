@@ -156,6 +156,35 @@ _GENERAL_PATIENT = [
 ]  # fmt: skip
 
 
+_INDICATION = {
+    Measure.DIABETES: "Adults with type 2 diabetes on long-term medication",
+    Measure.HYPERTENSION: "Adults with high blood pressure on long-term medication",
+    Measure.CHOLESTEROL: "Adults with high cholesterol on statin therapy",
+}
+LIBRARY_SAFETY = (
+    "Synthetic demonstration material: makes no product efficacy or safety claim. Patients "
+    "follow their prescriber's advice and report side effects to their care team."
+)
+LIBRARY_LABELLING = "No product labelling applies (non-promotional adherence material)."
+
+
+def library_governance(content_id: str, title: str, measure: str | None) -> dict:
+    """The reviewable facts of a built-in library item (synthetic placeholders)."""
+    return {
+        "claims": [
+            {
+                "text": f"{title}: illustrative synthetic claim",
+                "reference": f"Synthetic library source {content_id} (demonstration only)",
+            }
+        ],
+        "indication": _INDICATION.get(
+            measure, "Adults on long-term medication for a chronic condition"
+        ),
+        "safety_info": LIBRARY_SAFETY,
+        "labelling_note": LIBRARY_LABELLING,
+    }
+
+
 def build_content(as_of: date) -> list[Content]:
     rows: list[Content] = []
 
@@ -169,10 +198,19 @@ def build_content(as_of: date) -> list[Content]:
             status, eff, exp = MlrStatus.APPROVED, effective, as_of - timedelta(days=30)
         else:
             status, eff, exp = MlrStatus(state), None, None
+        content_id = f"CNT_{n:03d}"
+        # The updated cohort summary is the second version of the first item of its measure.
+        previous = next(
+            (r.content_id for r in rows if "updated" in title and r.topic == topic), None
+        )
         rows.append(
             Content(
-                content_id=f"CNT_{n:03d}",
-                version=2 if "updated" in title else 1,
+                content_id=content_id,
+                version=2 if previous else 1,
+                lineage_id=previous or content_id,
+                previous_id=previous,
+                origin="library",
+                **library_governance(content_id, title, measure),
                 title=title,
                 body=body,
                 audience=audience,

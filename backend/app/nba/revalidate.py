@@ -10,9 +10,17 @@ from sqlalchemy.orm import Session
 from app.core import clock
 from app.core.engine_config import get_config
 from app.features.engagement import EngagementState
-from app.models import Consent, Content, Interaction, Nba, PatientTherapy
+from app.models import Consent, Content, Hcp, Interaction, Nba, Patient, PatientTherapy
 from app.models.enums import ReviewStatus, TargetType
 from app.nba import gates
+
+
+def _country(db: Session, nba: Nba) -> str | None:
+    if nba.target_type == TargetType.HCP:
+        hcp = db.get(Hcp, nba.target_id)
+        return hcp.country if hcp else None
+    patient = db.get(Patient, nba.target_id)
+    return patient.country if patient else None
 
 
 def current_failures(db: Session, nba: Nba, *, include_frequency: bool = True) -> list[str]:
@@ -38,6 +46,7 @@ def current_failures(db: Session, nba: Nba, *, include_frequency: bool = True) -
         list(consents),
         state,
         get_config(db, "frequency_caps"),
+        _country(db, nba),
     )
     if not include_frequency:
         failures = [f for f in failures if f not in gates.FREQUENCY_CODES]

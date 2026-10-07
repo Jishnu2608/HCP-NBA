@@ -150,7 +150,11 @@ def validate(db: Session) -> list[Check]:
     expired = sum(1 for c in contents.values() if c.expiry_date and c.expiry_date <= as_of)
     check(
         "content covers approved, pending, rejected and expired",
-        not (all(statuses[s] for s in MlrStatus) and expired),
+        # The built-in library starts with these states; later ones come from MLR decisions.
+        not (
+            all(statuses[s] for s in (MlrStatus.APPROVED, MlrStatus.PENDING, MlrStatus.REJECTED))
+            and expired
+        ),
         f"{dict(statuses)}, expired={expired}",
     )
     any_consent = sum(1 for pid in patients if any(c.granted and c.channel for c in consents[pid]))

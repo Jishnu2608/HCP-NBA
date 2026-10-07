@@ -17,6 +17,7 @@ from app.auth.service import ensure_system_admin
 from app.auth.sessions import sessions
 from app.clinical import activity, records
 from app.clinical import hcps as hcps_module
+from app.content import governance as content_governance
 from app.core import clock
 from app.core.config import get_settings
 from app.core.db import Base
@@ -546,10 +547,8 @@ def build_users(cfg: GenConfig, hcps: list[Hcp], patients: list[Patient]):
             **kw,
         )
 
-    staff = [
-        user("compliance1", "Priya Nair (MLR Reviewer)", Role.COMPLIANCE),
-        user("compliance2", "Jon Becker (Privacy)", Role.COMPLIANCE),
-    ]
+    # Compliance / MLR reviewers exist only by invitation: never seeded (Master_Build §13).
+    staff: list[User] = []
     reps = [
         user(f"rep{n:02d}", f"Medical Rep {n:02d}", Role.MEDICAL_REP)
         for n in range(1, cfg.n_reps + 1)
@@ -664,11 +663,13 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
     # are not demo data either.
     registered["real_patients"] = records.snapshot(db)
     registered["real_hcps"] = hcps_module.snapshot(db)
+    # Content, its versions, MLR decisions and conversations are governance records.
+    governance_saved = content_governance.snapshot(db)
     wipe(db)
     sessions.revoke_everyone(db)
     ensure_system_admin(db)
 
-    contents = build_content(cfg.as_of)
+    contents = content_governance.restore_content(governance_saved) or build_content(cfg.as_of)
     hcps, hcp_traits = build_hcps(cfg)
     db.add_all(contents + hcps)
     db.flush()
@@ -798,6 +799,7 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
     hcps_module.restore(db, registered.get("real_hcps", {}))
     records.restore(db, registered.get("real_patients", {}))
     assignments.restore(db, registered)
+    content_governance.restore_records(db, governance_saved)
     records.restore_links(db, registered.get("real_patients", {}))
     hcps_module.restore_links(db, registered.get("real_hcps", {}))
 

@@ -60,6 +60,30 @@ ADAPTERS: dict[str, ChannelAdapter] = {
 }
 
 
+WRITTEN_CHANNELS = (Channel.EMAIL, Channel.PORTAL, Channel.SMS)
+
+
+def wording_problem(db: Session, nba: Nba, draft: MessageDraft | None) -> str | None:
+    """Why the selected wording may not be delivered, if it may not (M-01). The recipient reads
+    the MLR-approved module of this exact content version inside the fixed template frame;
+    a draft someone edited, or model output that does not carry the module, never goes out."""
+    if draft is None:
+        if nba.channel in WRITTEN_CHANNELS:
+            return "No approved wording is selected for this message"
+        return None
+    if draft.nba_id != nba.id:
+        return "The selected wording belongs to another recommendation"
+    if draft.edited_by_user_id is not None:
+        return "The selected wording was edited after MLR approval"
+    if draft.provider != "template":
+        from app.llm.service import build_request
+        from app.llm.validator import approved_text
+
+        if approved_text(build_request(db, nba)) not in draft.body:
+            return "The selected wording does not carry the approved content verbatim"
+    return None
+
+
 class SendBlocked(Exception):
     def __init__(self, reason: str):
         super().__init__(reason)
@@ -99,6 +123,28 @@ def send(db: Session, nba: Nba, user: User) -> Interaction:
     draft = db.scalar(
         select(MessageDraft).where(MessageDraft.nba_id == nba.id, MessageDraft.is_selected)
     )
+    if draft is None and nba.channel in WRITTEN_CHANNELS:
+        # Nothing was drafted yet (for example a recommendation created outside a cycle): the
+        # built-in template sets the approved module in its fixed frame, which is governed.
+        from app.llm.service import _TEMPLATE, draft_for_nba
+
+        rows = draft_for_nba(db, nba, _TEMPLATE, actor=user.username, actor_role=user.role)
+        draft = next((r for r in rows if r.is_selected), rows[0] if rows else None)
+    problem = wording_problem(db, nba, draft)
+    if problem:
+        audit.record(
+            db,
+            "nba_blocked_at_send",
+            "nba",
+            nba.id,
+            nba_id=nba.id,
+            actor=user.username,
+            actor_role=user.role,
+            compliance_ok=False,
+            reason=problem,
+            detail={"gate_failures": ["wording_not_approved"], "draft_id": draft and draft.id},
+        )
+        raise SendBlocked(problem)
     adapter = ADAPTERS[nba.channel]
     reference = adapter.deliver(nba, draft)
     interaction = Interaction(
@@ -113,6 +159,7 @@ def send(db: Session, nba: Nba, user: User) -> Interaction:
         nba_id=nba.id,
         source="nba",
         actor_user_id=user.id,
+        draft_id=draft.id if draft else None,
     )
     db.add(interaction)
     if nba.target_type == TargetType.PATIENT:

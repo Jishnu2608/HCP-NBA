@@ -501,19 +501,77 @@ class Content(Base):
     measure: Mapped[str | None] = mapped_column(String(32))
     specialty: Mapped[str | None] = mapped_column(String(64))
     channels: Mapped[list[str]] = mapped_column(JSON)
-    mlr_status: Mapped[str] = mapped_column(String(16), index=True)
+    mlr_status: Mapped[str] = mapped_column(String(20), index=True)
     effective_date: Mapped[date | None] = mapped_column(Date)
     expiry_date: Mapped[date | None] = mapped_column(Date)
+    # One row per version: `content_id` names a version everywhere (recommendations,
+    # interactions, reviews). Versions of the same material share `lineage_id`.
+    lineage_id: Mapped[str | None] = mapped_column(String(16), index=True)
+    previous_id: Mapped[str | None] = mapped_column(String(16))
+    # "library" = the built-in synthetic library, "submitted" = proposed by a representative.
+    origin: Mapped[str] = mapped_column(String(16), default="library", server_default="library")
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # What the reviewer assesses: claims with their support, indication, safety, labelling
+    # and where the material may be used (country codes; null = not restricted).
+    claims: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON(none_as_null=True))
+    indication: Mapped[str | None] = mapped_column(Text)
+    safety_info: Mapped[str | None] = mapped_column(Text)
+    labelling_note: Mapped[str | None] = mapped_column(Text)
+    jurisdictions: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    review_owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    withdrawn_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class ContentReview(Base):
+    """One MLR decision on one content version."""
+
     __tablename__ = "content_review"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     content_id: Mapped[str] = mapped_column(ForeignKey("content.content_id"), index=True)
+    content_version: Mapped[int | None] = mapped_column(Integer)
     reviewer_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
-    decision: Mapped[str] = mapped_column(String(16))
+    decision: Mapped[str] = mapped_column(String(20))
+    previous_status: Mapped[str | None] = mapped_column(String(20))
+    resulting_status: Mapped[str | None] = mapped_column(String(20))
+    # Medical, legal and regulatory perspectives: {"verdict": "ok" | "concern", "note": str}.
+    medical: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    legal: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    regulatory: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    # `feedback` is what the representative reads; `comment` stays internal to Compliance.
+    feedback: Mapped[str | None] = mapped_column(Text)
     comment: Mapped[str | None] = mapped_column(Text)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # When the content's author first saw this decision (drives their menu count).
+    seen_by_author_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ContentMessage(Base):
+    """The conversation attached to a piece of content: representative and reviewers about a
+    version, or an HCP's question about material delivered to them (then `hcp_id` is set
+    and only that HCP, the reviewers and the sending representative take part)."""
+
+    __tablename__ = "content_message"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lineage_id: Mapped[str] = mapped_column(String(16), index=True)
+    content_id: Mapped[str] = mapped_column(ForeignKey("content.content_id"), index=True)
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    author_role: Mapped[str] = mapped_column(String(32))
+    body: Mapped[str] = mapped_column(Text)
+    hcp_id: Mapped[str | None] = mapped_column(String(16), index=True)
+    interaction_id: Mapped[int | None] = mapped_column(ForeignKey("interaction.id"))
+    ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ContentMessageRead(Base):
+    __tablename__ = "content_message_read"
+
+    message_id: Mapped[int] = mapped_column(ForeignKey("content_message.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), primary_key=True)
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -623,6 +681,8 @@ class Interaction(Base):
     # "history" = seeded baseline outreach, "nba" = sent through the engine.
     source: Mapped[str] = mapped_column(String(16), default="history")
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    # The exact wording delivered (engine sends): ties the delivery to the approved version.
+    draft_id: Mapped[int | None] = mapped_column(ForeignKey("message_draft.id"))
 
 
 class FeatureSnapshot(Base):

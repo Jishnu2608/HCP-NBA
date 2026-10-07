@@ -21,8 +21,13 @@ FREQUENCY_CODES = frozenset({"frequency_cap", "min_gap"})
 GATE_TEXT = {
     "audience_mismatch": "Content is not intended for this audience",
     "channel_not_allowed": "Content is not cleared for this channel",
+    "mlr_draft": "Content is a draft that has not been submitted to MLR",
     "mlr_pending": "Content is still pending MLR review",
+    "mlr_changes_requested": "MLR asked for changes to this content",
     "mlr_rejected": "Content was rejected at MLR review",
+    "mlr_withdrawn": "Content was withdrawn by MLR",
+    "mlr_superseded": "Content was replaced by a newer approved version",
+    "jurisdiction_mismatch": "Content is not cleared for use in this country",
     "mlr_not_effective": "Content approval is not yet effective",
     "mlr_expired": "Content approval has expired",
     CONSENT_MISSING: "Patient has not consented to outreach on this channel",
@@ -32,7 +37,11 @@ GATE_TEXT = {
 }
 
 
-def content_failures(content: Content, audience: str, channel: str, day: date) -> list[str]:
+def content_failures(
+    content: Content, audience: str, channel: str, day: date, country: str | None = None
+) -> list[str]:
+    """`country` is the recipient's country where known (HCPs); content restricted to a list
+    of countries is not used elsewhere, nor for a recipient whose country is unknown."""
     failures = []
     if content.audience != audience:
         failures.append("audience_mismatch")
@@ -44,6 +53,8 @@ def content_failures(content: Content, audience: str, channel: str, day: date) -
         failures.append("mlr_not_effective")
     elif content.expiry_date is not None and content.expiry_date <= day:
         failures.append("mlr_expired")
+    if content.jurisdictions and country not in content.jurisdictions:
+        failures.append("jurisdiction_mismatch")
     return failures
 
 
@@ -76,9 +87,10 @@ def evaluate(
     consents: list[Consent],
     state: EngagementState,
     caps: dict,
+    country: str | None = None,
 ) -> list[str]:
     """All gate failures for one proposed touch. Empty list means it may proceed."""
-    failures = content_failures(content, target_type, channel, day)
+    failures = content_failures(content, target_type, channel, day, country)
     if target_type == TargetType.PATIENT and not has_consent(consents, channel, day):
         failures.append(CONSENT_MISSING)
     failures += frequency_failures(state, day, caps[target_type])
@@ -86,7 +98,11 @@ def evaluate(
 
 
 def is_compliance(code: str) -> bool:
-    return code.startswith(MLR_PREFIX) or code in ("audience_mismatch", "channel_not_allowed")
+    return code.startswith(MLR_PREFIX) or code in (
+        "audience_mismatch",
+        "channel_not_allowed",
+        "jurisdiction_mismatch",
+    )
 
 
 def compliance_ok(failures: list[str]) -> bool:

@@ -11,6 +11,9 @@ from app.main import app
 from app.models import AuditLog, CareManagerPatient, Content, Nba, RepHcp, User
 from app.models.enums import NbaStatus
 
+# The three MLR perspectives, all recorded as satisfied.
+ALL_OK = {p: {"verdict": "ok", "note": ""} for p in ("medical", "legal", "regulatory")}
+
 PERSONAS = {
     "admin": "admin",
     "compliance": "compliance1",
@@ -257,23 +260,20 @@ def test_detail_shows_rationale_alternatives_drafts_and_audit(env):
     assert [a["action"] for a in d["audit"]] == ["nba_generated"]
 
 
-def test_edit_draft_is_validated_then_approve_and_audit(env):
+def test_wording_is_governed_variant_chosen_then_approve_and_audit(env):
+    """Delivered wording is the MLR-approved module: nobody edits it (M-01)."""
     _, db, _ = env
     nba = open_nba(db, "PATIENT", "PAT_00001")
     draft = call(env, "cm", "GET", f"/api/nba/{nba.id}").json()["drafts"][1]
     url = f"/api/nba/{nba.id}/drafts/{draft['id']}"
-    bad = call(env, "cm", "PATCH", url, json={"body": "This will cure you, see https://x.example"})
-    assert bad.status_code == 422 and len(bad.json()["detail"]) == 2
-    good = call(env, "cm", "PATCH", url, json={"body": "Hi Margaret, your refill is ready."})
-    assert good.status_code == 200 and good.json()["edited"] and good.json()["is_selected"]
+    refused = call(env, "cm", "PATCH", url, json={"body": "Hi Margaret, your refill is ready."})
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "governed_wording"
+    assert "ask Compliance" in refused.json()["detail"]["message"]
 
-    approved = call(env, "cm", "POST", f"/api/nba/{nba.id}/approve", json={})
+    approved = call(env, "cm", "POST", f"/api/nba/{nba.id}/approve", json={"draft_id": draft["id"]})
     assert approved.status_code == 200 and approved.json()["status"] == "approved"
-    assert [a["action"] for a in approved.json()["audit"]] == [
-        "nba_generated",
-        "draft_edited",
-        "nba_approved",
-    ]
+    assert [a["action"] for a in approved.json()["audit"]] == ["nba_generated", "nba_approved"]
     assert approved.json()["audit"][-1]["actor"] == "cm01"
     assert call(env, "cm", "POST", f"/api/nba/{nba.id}/approve", json={}).status_code == 409
 
@@ -337,7 +337,7 @@ def test_mlr_approval_by_compliance_then_cycle_uses_the_content(env):
     assert not before["usable"]
     done = call(
         env, "compliance", "POST", f"/api/content/{pending.content_id}/review",
-        json={"decision": "approve", "comment": "Claims verified"},
+        json={"decision": "approve", "comment": "Claims verified", **ALL_OK},
     )  # fmt: skip
     assert done.status_code == 200 and done.json()["usable"]
     assert call(env, "admin", "POST", "/api/admin/cycle").status_code == 200
@@ -346,13 +346,14 @@ def test_mlr_approval_by_compliance_then_cycle_uses_the_content(env):
     actions = call(
         env, "compliance", "GET", "/api/audit", params={"action": "content_approved"}
     ).json()
-    assert actions["items"][0]["actor"] == "compliance1"
+    assert actions["items"][0]["actor"] == "[email]"  # masked for Compliance
+    assert actions["items"][0]["actor_is_you"] and actions["items"][0]["detail"]["version"] == 2
     rejected = db.scalar(select(Content).where(Content.mlr_status == "rejected"))
     again = call(
         env, "compliance", "POST", f"/api/content/{rejected.content_id}/review",
-        json={"decision": "approve"},
+        json={"decision": "approve", **ALL_OK},
     )  # fmt: skip
-    assert again.status_code == 409
+    assert again.status_code == 409 and again.json()["detail"]["code"] == "rejected_final"
 
 
 def test_admin_config_is_typed_and_audited(env):

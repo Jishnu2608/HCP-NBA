@@ -68,12 +68,21 @@ def login(client, email: str, password: str):
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
+REVIEWERS = {"compliance1": "Priya Nair", "compliance2": "Jon Becker"}
+
+
 def sign_in(client, username: str) -> str:
     """Session token for a seeded account, obtained through the real email + password login.
 
     Tokens are cached on the client so a test module signs each account in once.
     """
     cache = client.__dict__.setdefault("_tokens", {})
+    if username not in cache and username in REVIEWERS:
+        # Compliance / MLR reviewers are never seeded: onboard them through the invitation,
+        # as the product does. The email keeps the familiar test name.
+        cache[username] = onboard(
+            client, f"{username}@nba.demo", "compliance", name=REVIEWERS[username]
+        )["token"]
     if username not in cache:
         email, password = (
             ADMIN_LOGIN if username == "admin" else (f"{username}@nba.demo", DEMO_PASSWORD)

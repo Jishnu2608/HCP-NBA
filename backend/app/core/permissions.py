@@ -33,6 +33,8 @@ class Permission(StrEnum):
     CONTENT_READ_APPROVED_HCP = "content:read:approved_hcp"
     CONTENT_READ_APPROVED_PATIENT = "content:read:approved_patient"
     CONTENT_APPROVE = "content:approve"
+    # Propose HCP content and revise one's own proposals; the decision stays with MLR.
+    CONTENT_PROPOSE = "content:propose"
     # Governance
     AUDIT_READ = "audit:read"
     # Audit detail with account emails and patient / HCP ids left in (others see them masked).
@@ -128,6 +130,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.NBA_READ_HCP_ASSIGNED,
             P.NBA_REVIEW_HCP,
             P.CONTENT_READ_APPROVED_HCP,
+            P.CONTENT_PROPOSE,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
         }

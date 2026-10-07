@@ -250,14 +250,20 @@ export default function Queue() {
         <Stat
           label="Pending review"
           value={shown(countFor(["ready_for_review"]))}
-          hint={audienceWord ? `${audienceWord} actions waiting for you` : "waiting for a reviewer"}
+          hint={
+            audienceWord
+              ? `${audienceWord} actions waiting for you`
+              : view === "gated"
+                ? "with the care team or representative"
+                : "waiting for a reviewer"
+          }
           icon={<Clock3 className="h-4 w-4" aria-hidden />}
           tone="brand"
         />
         <Stat
           label="Approved, not sent"
           value={shown(countFor(["approved"]))}
-          hint="ready to send"
+          hint={view === "gated" ? "sending re-checks every safeguard" : "ready to send"}
           icon={<CheckCircle2 className="h-4 w-4" aria-hidden />}
         />
         <Stat

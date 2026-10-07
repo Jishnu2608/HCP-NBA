@@ -12,12 +12,10 @@ from app.api.schemas import StrictBody
 from app.clinical import workload
 from app.core import clock, rbac
 from app.core.db import get_db
-from app.core.permissions import Permission
+from app.core.permissions import Permission, can
 from app.engagement import delivery
 from app.llm import service as drafting
-from app.llm.base import DraftOutput, MessageVariant
-from app.llm.validator import DraftValidationError, validate
-from app.models import Interaction, MessageDraft, Nba, Patient, User
+from app.models import Content, Interaction, MessageDraft, Nba, Patient, User
 from app.models.enums import Channel, NbaStatus, Outcome, PatientOrigin, TargetType
 from app.models.tables import utcnow
 from app.nba import gates
@@ -251,36 +249,25 @@ def edit_draft(
     user: User = Depends(readers),
     db: Session = Depends(get_db),
 ) -> dict:
-    """A reviewer's edit goes through the same wording checks as model output."""
+    """Wording is the MLR-approved content inside a fixed template frame, so nobody edits it
+    here: a change to what the recipient reads is a change to governed content, which goes
+    through MLR as a new content version (M-01). The reviewer chooses a variant instead."""
     nba = _reviewable(db, user, nba_id)
-    _require_status(nba, NbaStatus.READY_FOR_REVIEW)
-    draft = db.get(MessageDraft, draft_id)
-    if draft is None or draft.nba_id != nba.id:
-        raise not_found("Draft not found")
-    edited = DraftOutput(
-        rationale_summary=nba.rationale_summary or "Edited by reviewer.",
-        variants=[MessageVariant(subject=body.subject, body=body.body)],
+    content = db.get(Content, nba.content_id)
+    ref = f"{content.content_id} v{content.version}" if content else "the approved content"
+    how = (
+        "To change it, propose a new version of the content for MLR review."
+        if can(user, Permission.CONTENT_PROPOSE)
+        else "To change it, ask Compliance to revise the content."
     )
-    try:
-        validate(edited, drafting.build_request(db, nba))
-    except DraftValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.problems) from exc
-
-    for d in db.scalars(select(MessageDraft).where(MessageDraft.nba_id == nba.id)):
-        d.is_selected = d.id == draft.id
-    draft.subject, draft.body, draft.edited_by_user_id = body.subject, body.body, user.id
-    audit.record(
-        db,
-        "draft_edited",
-        "nba",
-        nba.id,
-        nba_id=nba.id,
-        actor=user.username,
-        actor_role=user.role,
-        detail={"draft_id": draft.id},
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        {
+            "code": "governed_wording",
+            "message": f"This wording is MLR-approved content {ref} and cannot be edited. {how}",
+            "content_id": nba.content_id,
+        },
     )
-    db.commit()
-    return out.draft_out(draft)
 
 
 @router.post("/{nba_id}/redraft")

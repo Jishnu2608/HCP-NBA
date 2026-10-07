@@ -357,6 +357,66 @@ export function MyMedications() {
   );
 }
 
+/** An HCP's question or concern about material they received: it reaches the medical,
+ * legal and regulatory reviewers and the representative who sent it; replies show here. */
+function ContentQuestion({ item }: { item: Json }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const ask = useMutation({
+    mutationFn: () => post(`/me/inbox/${item.id}/question`, { body: text }),
+    onSuccess: () => {
+      toast("Sent to the medical, legal and regulatory review and your representative.");
+      setText("");
+      setOpen(false);
+      void client.invalidateQueries({ queryKey: ["inbox"] });
+    },
+  });
+  const thread: Json[] = item.conversation ?? [];
+  return (
+    <div className="mt-3">
+      {thread.length > 0 && (
+        <ul className="mb-2 space-y-2 rounded-xl border border-line p-3 text-sm">
+          {thread.map((t) => (
+            <li key={t.id}>
+              <span className="font-semibold text-ink">{t.author}</span>{" "}
+              <span className="text-[12px] text-ink-subtle">{fmtDateTime(t.ts)}</span>
+              <p className="whitespace-pre-line text-ink-muted">{t.body}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {item.can_ask && !open && (
+        <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+          Ask about this content
+        </Button>
+      )}
+      {open && (
+        <div className="space-y-2">
+          <ErrorNote error={ask.error} />
+          <TextArea
+            label="Your question or concern"
+            hint="For example a claim you want checked. Reviewed by the medical, legal and regulatory team."
+            rows={3}
+            value={text}
+            maxLength={2000}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="flex gap-2">
+            <Button variant="primary" size="sm" busy={ask.isPending} disabled={text.trim().length < 3} onClick={() => ask.mutate()}>
+              Send
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MyInbox() {
   const { can } = useAuth();
   const client = useQueryClient();
@@ -390,7 +450,7 @@ export function MyInbox() {
         subtitle={
           isPatient
             ? "Messages sent to you by text, email or here in the portal."
-            : "Scientific and educational content shared with you. Every item is medical-legal-regulatory approved."
+            : "Scientific and educational content shared with you. Every item was approved by medical, legal and regulatory review when it was sent; anything withdrawn or replaced since is marked. Ask about any item and the reviewers reply here."
         }
       />
       <ErrorNote error={respond.error} className="mb-4" />
@@ -456,10 +516,17 @@ export function MyInbox() {
                     {m.content_title && (
                       <p className="mt-1 text-[13px] text-ink-subtle">
                         Approved content: {m.content_title}
+                        {m.content_version ? ` (version ${m.content_version})` : ""}
                         {m.sent_by ? ` · sent by ${m.sent_by}` : ""}
                       </p>
                     )}
+                    {m.content_notice && (
+                      <Alert tone="warn" className="mt-2" title="No longer current">
+                        {m.content_notice}
+                      </Alert>
+                    )}
                     <p className="mt-1.5 max-w-3xl whitespace-pre-line text-sm leading-6 text-ink-muted">{m.body}</p>
+                    {!isPatient && <ContentQuestion item={m} />}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2 md:flex-col md:items-stretch">
                     {isPatient && m.can_refill && (

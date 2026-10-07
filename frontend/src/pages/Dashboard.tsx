@@ -304,8 +304,10 @@ export default function Dashboard() {
               </dl>
               <p className="text-sm leading-6 text-ink-muted">
                 Baseline from {num(fair.baseline?.sent)} earlier touches to patients already in a gap. The engine bars appear
-                once at least {MIN_SENT} engine recommendations of this kind have an outcome: approve and send
-                recommendations, then play out the responses on the Engine page.
+                once at least {MIN_SENT} engine recommendations of this kind have an outcome
+                {can(P.ENGINE_OPERATE)
+                  ? ": approve and send recommendations, then play out the responses on the Engine page."
+                  : ", as the care team and representatives send recommendations and recipients respond."}
               </p>
               {can(P.ENGINE_OPERATE) && (
                 <Link
