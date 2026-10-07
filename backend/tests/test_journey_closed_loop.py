@@ -227,9 +227,18 @@ def test_declined_consultation_returns_to_the_care_manager(env, reon):
     assert declined.status_code == 200
     back = next(r for r in requests_of(client, cm, pid) if r["id"] == request["id"])
     assert back["status"] == "open" and back["assigned_hcp"] is None
-    assert "Not my specialty" in back["resolution"]
+    # The reason is for the care team (a note); the patient reads a neutral resolution.
+    assert any(n["kind"] == "hcp_decline" and "Not my specialty" in n["text"]
+               for n in back["notes"])  # fmt: skip
+    assert "Not my specialty" not in back["resolution"]
+    mine = next(r for r in health(client, s)["requests"] if r["id"] == request["id"])
+    assert "Not my specialty" not in str(mine)
     # Closed so later tests start from a clean slate.
-    client.patch(f"/api/care/requests/{request['id']}", json={"status": "closed"}, headers=cm)
+    client.patch(
+        f"/api/care/requests/{request['id']}",
+        json={"status": "closed", "resolution": "Closed for the next tests."},
+        headers=cm,
+    )
 
 
 def test_cm_records_an_off_platform_hcp_response(env, reon):

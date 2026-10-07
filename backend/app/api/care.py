@@ -97,6 +97,8 @@ class AssignHcpBody(StrictBody):
     hcp_id: str = Field(max_length=16)
     condition_id: int | None = None
     request_id: int | None = None
+    # Ask an HCP who already declined this consultation again, knowingly.
+    allow_declined: bool = False
 
 
 class RequestUpdateBody(StrictBody):
@@ -330,10 +332,11 @@ def add_note(
 def hcp_options(
     patient_id: str,
     condition_id: int | None = Query(None),
+    request_id: int | None = Query(None),
     user: User = Depends(manager),
     db: Session = Depends(get_db),
 ) -> dict:
-    return care.hcp_options(db, _patient(db, user, patient_id), condition_id)
+    return care.hcp_options(db, _patient(db, user, patient_id), condition_id, request_id=request_id)
 
 
 @router.put("/patients/{patient_id}/hcp")
@@ -345,8 +348,9 @@ def assign_hcp(
 ) -> dict:
     patient = _patient(db, user, patient_id)
     care.assign_hcp(
-        db, user, patient, body.hcp_id, condition_id=body.condition_id, request_id=body.request_id
-    )
+        db, user, patient, body.hcp_id, condition_id=body.condition_id,
+        request_id=body.request_id, allow_declined=body.allow_declined,
+    )  # fmt: skip
     db.commit()
     return _record(db, patient)
 

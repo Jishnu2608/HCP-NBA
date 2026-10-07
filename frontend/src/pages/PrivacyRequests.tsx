@@ -148,6 +148,14 @@ function SpecialtyRequestCard({ request }: { request: Json }) {
         </div>
       </dl>
       {request.notes && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-muted">“{request.notes}”</p>}
+      {open && request.open_consultations_affected > 0 && (
+        <Alert tone="warn" title="Open consultations are affected" className="mt-3">
+          {request.open_consultations_affected} consultation{request.open_consultations_affected === 1 ? " waiting" : "s waiting"} for
+          this HCP would no longer suit the new specialties. Approving returns{" "}
+          {request.open_consultations_affected === 1 ? "it" : "them"} to the care manager to route again; the patient is told
+          another professional will be arranged.
+        </Alert>
+      )}
       {!open && (
         <p className="mt-3 rounded-lg bg-subtle p-3 text-sm text-ink">
           <span className="font-semibold">Decided by {request.reviewer ?? "an administrator"}</span>

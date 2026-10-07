@@ -176,6 +176,10 @@ class AssignmentService:
                 )
             )
             chosen = _spread(ids, settings.signup_panel_hcps, _peers(db, user))
+            inviter = db.get(User, user.invited_by_user_id) if user.invited_by_user_id else None
+            if inviter is not None and inviter.hcp_id and inviter.hcp_id not in chosen:
+                # Invited by an HCP: the representative works with that HCP.
+                chosen = [inviter.hcp_id, *chosen]
             db.add_all(RepHcp(rep_user_id=user.id, hcp_id=hid) for hid in chosen)
         db.flush()
         return self.summary(db, user)
@@ -245,11 +249,6 @@ class AssignmentService:
         elif kind == HCPS:
             wanted = sorted(set(hcp_ids or []))
             self._require_existing(db, Hcp.hcp_id, wanted, "HCP")
-            if any(hcps.is_real(db.get(Hcp, h)) for h in wanted):
-                # Representatives work the engine's synthetic HCP population only.
-                raise AuthError(
-                    409, "record_origin_mismatch", "Representatives are assigned demo HCPs only."
-                )
             db.execute(delete(RepHcp).where(RepHcp.rep_user_id == user.id))
             db.add_all(RepHcp(rep_user_id=user.id, hcp_id=h) for h in wanted)
         elif kind == OWN_PATIENT:

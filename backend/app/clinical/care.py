@@ -242,6 +242,7 @@ def note_out(db: Session, n: CareNote) -> dict:
         "id": n.id,
         "kind": n.kind,
         "text": n.text,
+        "hcp_id": n.hcp_id,
         "hcp": out.hcp_name(hcp) if hcp else None,
         "author": author.display_name if author else None,
         # Written by the HCP themselves (in the app), or recorded by the care team.
@@ -836,11 +837,32 @@ def add_note(
 
 
 def _hcp_country(h: Hcp) -> str | None:
-    """Synthetic HCPs are practices in US states; an invited HCP's location is not recorded."""
-    return "US" if h.origin == hcp_records.SYNTHETIC and h.state else None
+    """Where the HCP practises: synthetic practices are in US states; an invited HCP's
+    record holds the country they gave when accepting the invitation."""
+    return h.country or ("US" if h.origin == hcp_records.SYNTHETIC and h.state else None)
 
 
-def hcp_options(db: Session, patient: Patient, condition_id: int | None, limit: int = 40):
+def declines(db: Session, request_id: int) -> dict[str, str]:
+    """HCPs who declined this consultation, with the reason they gave the care team."""
+    return {
+        n.hcp_id: n.text
+        for n in db.scalars(
+            select(CareNote)
+            .where(CareNote.request_id == request_id, CareNote.kind == CareNoteKind.HCP_DECLINE)
+            .order_by(CareNote.created_at)
+        )
+        if n.hcp_id
+    }
+
+
+def hcp_options(
+    db: Session,
+    patient: Patient,
+    condition_id: int | None,
+    limit: int = 40,
+    *,
+    request_id: int | None = None,
+):
     """HCPs with at least one specialty that suits the patient's condition (an HCP may hold
     several): those in the patient's country first, then specialist before primary care,
     HCPs who answer in the app before the rest, then those in the patient's state. An HCP
@@ -858,11 +880,10 @@ def hcp_options(db: Session, patient: Patient, condition_id: int | None, limit: 
     active_account = select(User.hcp_id).where(
         User.hcp_id.is_not(None), User.status == AccountStatus.ACTIVE
     )
-    in_country = (
-        case((Hcp.origin == hcp_records.SYNTHETIC, 0), else_=1)
-        if patient.country == "US"
-        else case((Hcp.origin == hcp_records.SYNTHETIC, 1), else_=0)
+    practice_country = func.coalesce(
+        Hcp.country, case((Hcp.origin == hcp_records.SYNTHETIC, "US"), else_=None)
     )
+    in_country = case((practice_country == patient.country, 0), else_=1)
     order = [in_country, rank, case((Hcp.hcp_id.in_(active_account), 0), else_=1)]
     if patient.state:
         order.append(case((Hcp.state == patient.state, 0), else_=1))
@@ -875,11 +896,11 @@ def hcp_options(db: Session, patient: Patient, condition_id: int | None, limit: 
         .limit(limit)
     ).all()
     label = vocabulary.condition_label(code, condition.other_text if condition else None)
+    declined = declines(db, request_id) if request_id else {}
     items = []
     for h, best in rows:
         matched = vocabulary.specialty_label(specialties[best])
         country = _hcp_country(h)
-        place = ", ".join(x for x in (h.city, h.state) if x)
         items.append(
             _hcp_brief(db, h)
             | {
@@ -887,11 +908,12 @@ def hcp_options(db: Session, patient: Patient, condition_id: int | None, limit: 
                 "organization": h.organization,
                 "country": country,
                 "country_label": jurisdiction.label(country, None) if country else None,
-                "location": (
-                    f"{place}, {jurisdiction.label(country, None)}" if place and country else None
-                ),
+                "location": out.hcp_location_label(h),
                 "same_country": country is not None and country == patient.country,
                 "reason": f"{matched} · {label}" if condition else matched,
+                # Already said they cannot take this consultation, and why.
+                "declined_this_request": h.hcp_id in declined,
+                "decline_reason": declined.get(h.hcp_id),
             }
         )
     return {
@@ -913,6 +935,7 @@ def assign_hcp(
     *,
     condition_id: int | None = None,
     request_id: int | None = None,
+    allow_declined: bool = False,
 ) -> None:
     require_real(patient)
     hcp = db.get(Hcp, hcp_id)
@@ -927,6 +950,13 @@ def assign_hcp(
             raise AuthError(404, "not_found", "Not found.")
     if request is not None and request.status == CareRequestStatus.CLOSED:
         raise AuthError(409, "request_closed", "This request is already closed.")
+    if request is not None and not allow_declined and hcp.hcp_id in declines(db, request.id):
+        raise AuthError(
+            409,
+            "hcp_declined",
+            "This healthcare professional already declined this consultation. Choose another, "
+            "or confirm that you want to ask them again.",
+        )
     if condition is not None and condition.status == ConditionStatus.DISMISSED:
         raise AuthError(409, "condition_not_added", "This condition was not added to the record.")
     held = set(hcp_records.specialties_of(db, hcp.hcp_id))
@@ -944,20 +974,15 @@ def assign_hcp(
         db.add(
             PatientHcp(patient_id=patient.patient_id, hcp_id=hcp.hcp_id, is_primary=not has_primary)
         )
-    if condition is not None:
-        measure = vocabulary.measure_of_condition(condition.condition)
-        for t in db.scalars(
-            select(PatientTherapy).where(
-                PatientTherapy.patient_id == patient.patient_id,
-                PatientTherapy.measure == measure,
-                PatientTherapy.prescriber_hcp_id.is_(None),
-            )
-        ):
-            t.prescriber_hcp_id = hcp.hcp_id
+    # Routing makes the HCP part of the care team for this consultation. It never makes them
+    # anyone's prescriber: that is recorded only when the care team says so (Confirm or Record
+    # a medication).
     if request is not None:
         request.assigned_hcp_id = hcp.hcp_id
         request.handled_by_user_id = cm.id
         if request.type == CareRequestType.CONSULTATION:
+            # The condition the consultation was routed for (specialty changes re-check it).
+            request.condition_id = condition.id if condition else None
             # Routing starts the consultation; it stays open until the HCP has answered and
             # the care manager has closed it.
             request.status = CareRequestStatus.AWAITING_HCP
@@ -1014,9 +1039,23 @@ def respond_consultation(
         request.resolution = f"{out.hcp_name(hcp)} responded."
     elif response == "decline":
         why = _text(note_to_care_team or message, "reason", 500, required=True)
+        # The reason is for the care team: kept as a note the patient never sees. The patient
+        # reads only that another professional will be arranged.
+        db.add(
+            CareNote(
+                patient_id=request.patient_id, author_user_id=actor.id, hcp_id=hcp.hcp_id,
+                kind=CareNoteKind.HCP_DECLINE, text=why, visible_to_patient=False,
+                request_id=request.id, created_at=now,
+            )
+        )  # fmt: skip
         request.status = CareRequestStatus.OPEN
-        request.resolution = f"{out.hcp_name(hcp)} could not take this consultation: {why}"
+        request.resolution = (
+            f"{out.hcp_name(hcp)} could not take this consultation. Your care manager will "
+            "arrange another healthcare professional."
+        )
         request.assigned_hcp_id = None
+        db.flush()
+        _release_care_team_link(db, request.patient_id, hcp.hcp_id)
     else:
         raise AuthError(422, "invalid_response", "Choose advice or decline.")
     db.flush()
@@ -1024,6 +1063,87 @@ def respond_consultation(
         db, actor, f"consultation_{'answered' if response == 'advice' else 'declined'}",
         request.patient_id, request=request.id, hcp=hcp.hcp_id,
     )  # fmt: skip
+
+
+def _release_care_team_link(db: Session, patient_id: str, hcp_id: str) -> None:
+    """An HCP added to the care team only by a consultation they declined leaves it again:
+    no prescription, no other consultation, no advice of theirs ties them to the patient."""
+    link = db.get(PatientHcp, (patient_id, hcp_id))
+    if link is None:
+        return
+    prescribes = db.scalar(
+        select(PatientTherapy.id).where(
+            PatientTherapy.patient_id == patient_id, PatientTherapy.prescriber_hcp_id == hcp_id
+        )
+    )
+    other_work = db.scalar(
+        select(CareRequest.id).where(
+            CareRequest.patient_id == patient_id, CareRequest.assigned_hcp_id == hcp_id
+        )
+    )
+    advised = db.scalar(
+        select(CareNote.id).where(
+            CareNote.patient_id == patient_id,
+            CareNote.hcp_id == hcp_id,
+            CareNote.kind != CareNoteKind.HCP_DECLINE,
+        )
+    )
+    if prescribes or other_work or advised:
+        return
+    was_primary = link.is_primary
+    db.delete(link)
+    db.flush()
+    if was_primary:
+        successor = db.scalar(select(PatientHcp).where(PatientHcp.patient_id == patient_id))
+        if successor is not None:
+            successor.is_primary = True
+
+
+def unsuited_consultations(db: Session, hcp_id: str, specialties: list[str]) -> list[CareRequest]:
+    """Consultations waiting for this HCP whose routing condition the given specialties no
+    longer suit (no condition = primary care)."""
+    held = set(specialties)
+    out_ = []
+    for r in db.scalars(
+        select(CareRequest).where(
+            CareRequest.assigned_hcp_id == hcp_id,
+            CareRequest.status == CareRequestStatus.AWAITING_HCP,
+        )
+    ):
+        condition = db.get(PatientCondition, r.condition_id) if r.condition_id else None
+        code = condition.condition if condition else vocabulary.OTHER
+        needed = set(vocabulary.specialties_for(code))
+        if not held & needed:
+            out_.append(r)
+    return out_
+
+
+def return_unsuited_consultations(
+    db: Session, actor: User, hcp_id: str, specialties: list[str]
+) -> int:
+    """After a specialty change: consultations the HCP no longer suits go back to their care
+    manager to route again, with a reason the patient can read and a note for the team."""
+    hcp = db.get(Hcp, hcp_id)
+    count = 0
+    for r in unsuited_consultations(db, hcp_id, specialties):
+        r.status, r.assigned_hcp_id = CareRequestStatus.OPEN, None
+        r.resolution = (
+            f"{out.hcp_name(hcp)} can no longer take this consultation. Your care manager will "
+            "arrange another healthcare professional."
+        )
+        db.add(
+            CareNote(
+                patient_id=r.patient_id, author_user_id=actor.id, hcp_id=hcp_id,
+                kind=CareNoteKind.HCP_DECLINE, visible_to_patient=False, request_id=r.id,
+                text="Returned automatically: this HCP's specialties changed and no longer "
+                "suit the condition the consultation was routed for. Route it again.",
+                created_at=utcnow(),
+            )
+        )  # fmt: skip
+        _audit(db, actor, "consultation_returned", r.patient_id, request=r.id, hcp=hcp_id,
+               why="specialty_changed")  # fmt: skip
+        count += 1
+    return count
 
 
 def return_consultations(db: Session, actor: User, hcp_id: str) -> int:

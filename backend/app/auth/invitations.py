@@ -501,7 +501,13 @@ def complete_for(db: Session, user: User) -> Invitation | None:
     inv.status, inv.accepted_at = InvitationStatus.ACCEPTED, now
     if inv.role == Role.HCP and user.hcp_id is None:
         # A new, blank HCP record with exactly the specialties the inviter chose (or none).
-        user.hcp_id = hcps.create_hcp(db, user.display_name, inv.specialties or []).hcp_id
+        user.hcp_id = hcps.create_hcp(
+            db,
+            user.display_name,
+            inv.specialties or [],
+            country=user.country,
+            region=user.region,
+        ).hcp_id
     user.professionally_verified = True
     user.professionally_verified_at = now
     user.verification_source = VerificationSource.INVITATION

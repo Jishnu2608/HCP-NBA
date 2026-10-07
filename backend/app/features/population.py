@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core import clock
@@ -34,6 +34,32 @@ class Population:
     fills: dict[int, list[tuple[date, int]]] = field(default_factory=dict)
     interactions: dict[tuple[str, str], list[Interaction]] = field(default_factory=dict)
     consents: dict[str, list[Consent]] = field(default_factory=dict)
+    # Every specialty each HCP holds (`hcp_specialty`).
+    hcp_specialties: dict[str, set[str]] = field(default_factory=dict)
+
+
+def _engine_hcps(db: Session) -> dict:
+    from app.models import User
+    from app.models.enums import AccountStatus
+
+    active = select(User.hcp_id).where(
+        User.hcp_id.is_not(None), User.status == AccountStatus.ACTIVE
+    )
+    return {
+        h.hcp_id: h
+        for h in db.scalars(
+            select(Hcp).where(or_(Hcp.origin == "synthetic", Hcp.hcp_id.in_(active)))
+        )
+    }
+
+
+def _hcp_specialties(db: Session) -> dict[str, set[str]]:
+    from app.models import HcpSpecialty
+
+    out: dict[str, set[str]] = defaultdict(set)
+    for hcp_id, specialty in db.execute(select(HcpSpecialty.hcp_id, HcpSpecialty.specialty)):
+        out[hcp_id].add(specialty)
+    return dict(out)
 
 
 def load_population(db: Session, *, patient_id: str | None = None) -> Population:
@@ -71,13 +97,10 @@ def load_population(db: Session, *, patient_id: str | None = None) -> Population
     return Population(
         as_of=as_of,
         patients={p.patient_id: p for p in db.scalars(one(select(Patient), Patient.patient_id))},
-        # The engine's HCP population is synthetic: an invited HCP has no prescribing or
-        # engagement data, and is reached through care routing and their inbox instead.
-        hcps=(
-            {}
-            if patient_id
-            else {h.hcp_id: h for h in db.scalars(select(Hcp).where(Hcp.origin == "synthetic"))}
-        ),
+        # The engine's HCP population: synthetic HCPs and invited HCPs whose account is
+        # active. An invited HCP has no history; the same gates, models and review apply.
+        hcps=({} if patient_id else _engine_hcps(db)),
+        hcp_specialties=({} if patient_id else _hcp_specialties(db)),
         contents={} if patient_id else {c.content_id: c for c in db.scalars(select(Content))},
         therapies=therapies,
         fills=fills,

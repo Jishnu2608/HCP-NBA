@@ -6,6 +6,7 @@ gate result. The LLM layer may rephrase this text later; it never adds reasons o
 
 from datetime import date
 
+from app.clinical.vocabulary import specialty_label
 from app.features.adherence import Adherence
 from app.features.engagement import EngagementState
 from app.models import Content, Hcp
@@ -37,7 +38,18 @@ SEGMENT_LABEL = {
     "medium_value_dormant": "mid-volume prescriber who rarely engages",
     "low_value_engaged": "lower-volume prescriber who engages regularly",
     "low_value_dormant": "lower-volume prescriber who rarely engages",
+    # Invited HCPs: prescribing volume not recorded.
+    "unrated_engaged": "prescribing volume not recorded, engages regularly",
+    "unrated_dormant": "prescribing volume not recorded, rarely engages",
+    "unrated_new": "prescribing volume not recorded, no engagement history yet",
 }
+
+
+def _specialty_words(hcp) -> str:
+    """'Endocrinology physician', or a plain statement when no specialty is configured."""
+    if not hcp.specialty:
+        return "Physician (specialty not configured)"
+    return f"{specialty_label(hcp.specialty)} physician"
 
 
 def _a(noun: str) -> str:
@@ -170,8 +182,12 @@ def hcp_reasons(
         _reason(
             "who",
             "segment",
-            f"{hcp.specialty} physician, {SEGMENT_LABEL.get(hcp.segment, hcp.segment)} "
-            f"(value score {hcp.value_score or 0:.0f} of 100)",
+            f"{_specialty_words(hcp)}, {SEGMENT_LABEL.get(hcp.segment, hcp.segment)} "
+            + (
+                f"(value score {hcp.value_score:.0f} of 100)"
+                if hcp.value_score is not None
+                else "(value not rated)"
+            ),
         )
     ]
     key = ("measure", measure)
@@ -182,7 +198,11 @@ def hcp_reasons(
         )
         reasons.append(_reason("action", "topic_history", text))
     else:
-        text = f"Topic matches the {hcp.specialty} specialty"
+        text = (
+            f"Topic matches the {specialty_label(hcp.specialty)} specialty"
+            if hcp.specialty
+            else "General content, open to every specialty"
+        )
         reasons.append(_reason("action", "specialty_match", text))
     key = ("subtopic", subtopic)
     if state.sent[key] and state.engaged[key]:

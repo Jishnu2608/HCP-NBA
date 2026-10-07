@@ -202,10 +202,10 @@ def hcp_features(
         "rate_subtopic": state.rate(("subtopic", subtopic), HCP_ENGAGE_PRIOR),
         "recent_30": state.recent(day, 30),
         "days_since_last": state.days_since_last(day),
-        "specialty_match": specialty_match(hcp.specialty, measure),
+        "specialty_match": specialty_match(hcp.specialty or "", measure),
         "channel": str(channel),
         "action": str(content.action_type),
-        "specialty": hcp.specialty,
+        "specialty": hcp.specialty or "Not configured",
         "measure": measure,
         "subtopic": subtopic,
     }

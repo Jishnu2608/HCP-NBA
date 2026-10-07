@@ -214,8 +214,15 @@ def refresh_hcp_features(db: Session, pop: Population, settings: dict) -> dict:
         level = "engaged" if rate >= median_rate else "dormant"
         channels = _channel_summary(state, HCP_CHANNELS, eng.HCP_ENGAGE_PRIOR)
 
-        hcp.segment = f"{tier}_value_{level}"
-        hcp.value_score = round(100 * (0.7 * vol_pct + 0.3 * percentile(rates, rate)), 1)
+        if hcp.origin != "synthetic":
+            # An invited HCP's prescribing volume is not known, and with no contact yet
+            # nothing is known about engagement: neither is guessed.
+            level = level if any(state.sent.values()) else "new"
+            hcp.segment = f"unrated_{level}"
+            hcp.value_score = None
+        else:
+            hcp.segment = f"{tier}_value_{level}"
+            hcp.value_score = round(100 * (0.7 * vol_pct + 0.3 * percentile(rates, rate)), 1)
         hcp.channel_affinity = _best_channel(channels)
         segments[hcp.segment] += 1
 

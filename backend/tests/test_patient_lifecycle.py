@@ -258,7 +258,8 @@ def test_care_manager_confirms_routes_and_patient_sees_the_hcp(env):
     health = client.get("/api/me/health", headers=me).json()
     assert [h["hcp_id"] for h in health["care_team"]["hcps"]] == [endo]
     assert health["medications"][0]["review_status"] == "confirmed"
-    assert health["medications"][0]["prescriber"]  # the routed HCP prescribes it now
+    # Routing puts the HCP on the care team; it never records them as the prescriber.
+    assert health["medications"][0]["prescriber"] is None
     assert all(r["status"] == "closed" for r in health["requests"])
     # Confirmed: now part of what the engine sees. The patient can log a refill.
     assert pid in load_population(db).therapies

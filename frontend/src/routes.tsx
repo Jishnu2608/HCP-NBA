@@ -234,6 +234,8 @@ export const ROUTES: AppRoute[] = [
     label: () => "Profile",
     icon: icon(UserRound),
     group: "self",
+    // An administrator decided a specialty request the HCP has not looked at yet.
+    badge: "specialty_decisions",
   },
   {
     // Admin: every invitation, under Administration. HCP: the ones they sent, as "Team".

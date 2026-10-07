@@ -323,7 +323,7 @@ export default function Invitations() {
         subtitle={
           seesAll
             ? "Professional accounts are created only by invitation. Invite healthcare professionals, representatives, care managers and MLR reviewers, and see who invited whom."
-            : "Invite the medical representative and care manager you work with. They join with the role you choose and the Verified mark."
+            : "Invite a medical representative or a care manager. A representative you invite is assigned to you and can send you approved content. A care manager you invite works with their own patient panel and, like any care manager, can route consultations to you; they are not linked to your patients. Both join with the Verified mark."
         }
       />
       <KpiGrid>

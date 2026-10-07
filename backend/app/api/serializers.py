@@ -40,6 +40,15 @@ def location_label(p: Patient) -> str | None:
     return jurisdiction.label(p.country, p.region)
 
 
+def hcp_location_label(h: Hcp) -> str | None:
+    """Where the HCP practises: a synthetic practice's city and state, or the country (and
+    US state) an invited HCP gave when accepting their invitation."""
+    country = h.country or ("US" if h.origin == "synthetic" and h.state else None)
+    if h.city and h.state:
+        return f"{h.city}, {h.state}, {jurisdiction.label(country, None)}"
+    return jurisdiction.label(country, h.state if country == "US" else None) if country else None
+
+
 def patient_brief(p: Patient) -> dict:
     """Location fields shared by every patient view."""
     return {
@@ -180,6 +189,8 @@ def audit_out(
         "entity_id": a.entity_id,
         "action": a.action,
         "actor": a.actor,
+        # The durable identity of the account that acted (an email can be reused later).
+        "actor_user_id": a.actor_user_id if identified else None,
         "actor_role": a.actor_role,
         "actor_verified": a.actor in (verified_actors or set()),
         "compliance_ok": a.compliance_ok,

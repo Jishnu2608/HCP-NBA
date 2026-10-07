@@ -67,6 +67,7 @@ const ORIGIN_LABEL: Record<string, string> = {
   synthetic: "Demo record",
   self_registered: "Self-registered",
   clinic: "Clinic patient",
+  invited: "Registered HCP",
 };
 
 export function OriginBadge({ origin }: { origin: string | null | undefined }) {
@@ -889,8 +890,8 @@ function HcpPicker({
 }) {
   const [condition, setCondition] = useState<string>(conditionId ? String(conditionId) : conditions[0] ? String(conditions[0].id) : "");
   const options = useQuery({
-    queryKey: ["hcp-options", patientId, condition],
-    queryFn: () => api(`/care/patients/${patientId}/hcp-options${query({ condition_id: condition })}`),
+    queryKey: ["hcp-options", patientId, condition, requestId],
+    queryFn: () => api(`/care/patients/${patientId}/hcp-options${query({ condition_id: condition, request_id: requestId })}`),
   });
   // Only the chosen row shows progress.
   const [choosing, setChoosing] = useState<string | null>(null);
@@ -948,23 +949,34 @@ function HcpPicker({
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {h.in_app ? <Badge tone="ok">Answers in the app</Badge> : <Badge tone="neutral">Off-platform: you record their response</Badge>}
                   {!h.same_country && h.country && <Badge tone="warn">Outside the patient's country</Badge>}
+                  {h.declined_this_request && <Badge tone="bad">Declined this consultation</Badge>}
                 </div>
+                {h.declined_this_request && h.decline_reason && (
+                  <p className="mt-1 text-[13px] text-ink-muted">Their reason: “{h.decline_reason}”</p>
+                )}
               </div>
               <Button
                 size="sm"
                 busy={busy && choosing === h.hcp_id}
                 disabled={busy && choosing !== h.hcp_id}
                 onClick={() => {
+                  // Asking an HCP who declined this consultation again is a deliberate choice.
+                  if (h.declined_this_request && !window.confirm(`${h.name} already declined this consultation. Ask them again?`)) return;
                   setChoosing(h.hcp_id);
                   run(
                     "put",
                     `/care/patients/${patientId}/hcp`,
-                    { hcp_id: h.hcp_id, condition_id: condition ? Number(condition) : null, request_id: requestId ?? null },
+                    {
+                      hcp_id: h.hcp_id,
+                      condition_id: condition ? Number(condition) : null,
+                      request_id: requestId ?? null,
+                      allow_declined: Boolean(h.declined_this_request),
+                    },
                     requestId ? `Routed to ${h.name}. The consultation now waits for their response.` : `${h.name} added to the care team.`,
                   );
                 }}
               >
-                Assign
+                {h.declined_this_request ? "Ask again" : "Assign"}
               </Button>
             </li>
           ))}

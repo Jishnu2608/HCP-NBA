@@ -139,6 +139,7 @@ def build_hcps(cfg: GenConfig) -> tuple[list[Hcp], dict[str, dict]]:
             organization=rng.choice(ref.ORGANIZATIONS).format(city=city),
             city=city,
             state=state,
+            country="US",
             zip=f"{zip3}{rng.randrange(100):02d}",
             rx_volume_annual=hero.get("rx_volume", int(median_rx * rng.lognormvariate(0, 0.5))),
         )

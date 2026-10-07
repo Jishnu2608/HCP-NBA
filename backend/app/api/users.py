@@ -333,9 +333,9 @@ def set_specialties(
         raise AuthError(409, "not_an_hcp", "Specialties apply to HCP accounts only.")
     if hcp_records.pending_for(db, hcp.hcp_id):
         raise AuthError(409, "request_pending", "Decide the HCP's pending change request first.")
-    hcp_records.set_specialties(db, admin, hcp, body.specialties, why="administrator")
+    result = hcp_records.set_specialties(db, admin, hcp, body.specialties, why="administrator")
     db.commit()
-    return _detail(db, user)
+    return _detail(db, user) | {"consultations_returned": result["consultations_returned"]}
 
 
 # --- HCP specialty change requests (part of the administrator's request centre) ---------

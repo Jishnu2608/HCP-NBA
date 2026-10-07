@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -23,12 +23,14 @@ from app.core.db import get_db
 from app.core.permissions import Permission
 from app.engagement import delivery
 from app.models import (
+    CareNote,
     CareRequest,
     Consent,
     Content,
     Hcp,
     Interaction,
     MessageDraft,
+    Nba,
     Patient,
     PatientCondition,
     PatientHcp,
@@ -38,6 +40,7 @@ from app.models import (
     User,
 )
 from app.models.enums import (
+    CareNoteKind,
     CareRequestStatus,
     CareRequestType,
     Channel,
@@ -48,6 +51,7 @@ from app.models.enums import (
     ReviewStatus,
     TargetType,
 )
+from app.models.tables import utcnow
 
 router = APIRouter(prefix="/api/me", tags=["portal"])
 
@@ -107,6 +111,9 @@ def my_profile(user: User = Depends(profile_readers), db: Session = Depends(get_
             "organization": h.organization,
             "city": h.city,
             "state": h.state,
+            "country": h.country,
+            # From the practice (synthetic) or the residence the HCP gave when joining.
+            "location": out.hcp_location_label(h),
         }
     p = db.get(Patient, user.patient_id)
     therapies = db.scalars(
@@ -222,26 +229,30 @@ def set_sharing_consent(
 
 @router.get("/patients")
 def my_patients(user: User = Depends(panel_readers), db: Session = Depends(get_db)) -> list[dict]:
-    """Adherence summary for this HCP's patients who consent to sharing with their provider."""
+    """Adherence summary of the patients whose care team this HCP is on (`patient_hcp`) and
+    who currently consent to sharing with their doctors: every confirmed medication, whoever
+    prescribed it. Being on the care team, not a prescriber field, is the relationship."""
     today = clock.get_today(db)
     result = []
     for pid in rbac.shared_patient_ids(db, own_hcp_id(user), today):
         p = db.get(Patient, pid)
         therapies = db.scalars(
             select(PatientTherapy).where(
-                PatientTherapy.patient_id == pid, PatientTherapy.prescriber_hcp_id == user.hcp_id
+                PatientTherapy.patient_id == pid,
+                PatientTherapy.review_status == ReviewStatus.CONFIRMED,
             )
         ).all()
-        if therapies:
-            result.append(
-                {
-                    "patient_id": pid,
-                    "name": out.patient_name(p),
-                    "therapies": [
-                        out.therapy_out(db, t, today, with_risk=False) for t in therapies
-                    ],
-                }
-            )
+        result.append(
+            {
+                "patient_id": pid,
+                "name": out.patient_name(p),
+                "therapies": [
+                    out.therapy_out(db, t, today, with_risk=False)
+                    | {"prescribed_by_you": t.prescriber_hcp_id == user.hcp_id}
+                    for t in therapies
+                ],
+            }
+        )
     return result
 
 
@@ -289,6 +300,18 @@ def _inbox_item(db: Session, i: Interaction) -> dict:
         and i.outcome != Outcome.FILLED
         and _therapy_active(db, i.therapy_id),
         "channel_note": CHANNEL_NOTE.get(i.channel),
+    } | _hcp_source(db, i, content)
+
+
+def _hcp_source(db: Session, i: Interaction, content: Content | None) -> dict:
+    """An HCP sees which approved content an item is and who sent it (their representative)."""
+    if i.target_type != TargetType.HCP:
+        return {}
+    nba = db.get(Nba, i.nba_id) if i.nba_id else None
+    sender = db.get(User, nba.reviewed_by_user_id) if nba and nba.reviewed_by_user_id else None
+    return {
+        "content_title": content.title if content else None,
+        "sent_by": sender.display_name if sender else None,
     }
 
 
@@ -452,11 +475,21 @@ def my_specialty_requests(
         select(SpecialtyChangeRequest)
         .where(SpecialtyChangeRequest.requested_by_user_id == user.id)
         .order_by(SpecialtyChangeRequest.id.desc())
-    )
+    ).all()
+    # Decisions shown here for the first time are marked new, and seen from now on (they
+    # leave the menu count).
+    fresh = {r.id for r in rows if r.decided_at is not None and r.seen_at is None}
+    for r in rows:
+        if r.id in fresh:
+            r.seen_at = utcnow()
+    if fresh:
+        db.commit()
     return {
         "specialties": hcp_records.specialty_out(db, own_hcp_id(user)),
         "options": vocabulary.specialty_options(),
-        "requests": [hcp_records.request_out(db, r) for r in rows],
+        "requests": [
+            hcp_records.request_out(db, r) | {"new_decision": r.id in fresh} for r in rows
+        ],
     }
 
 
@@ -479,23 +512,52 @@ def request_specialty_change(
 consultation_handlers = require_permission(Permission.SELF_CONSULTATIONS_MANAGE)
 
 
-def _consultation_out(db: Session, r: CareRequest) -> dict:
-    """What the routed HCP needs to answer: the patient asked for this consultation, so its
-    details (reason, condition, current medications and adherence) are shared with them while
-    it is open, whatever the ongoing provider-sharing setting."""
+# A consultation is the HCP's work, and its clinical context theirs to see, only while it is
+# with them or waiting for the care manager to close it after their answer.
+WITH_HCP = (CareRequestStatus.AWAITING_HCP, CareRequestStatus.HCP_RESPONDED)
+
+
+def _consultation_out(db: Session, r: CareRequest, hcp_id: str) -> dict:
+    """What the routed HCP needs to answer. The patient asked for this consultation, so its
+    clinical details (confirmed conditions, current medications and adherence) are shared
+    with the HCP while it is open, whatever the provider-sharing setting. Once it is closed,
+    or after the HCP declined it, only the request itself, the HCP's own notes and the
+    outcome remain: continuing access to clinical data needs the patient's sharing consent
+    (My patients)."""
     today = clock.get_today(db)
     p = db.get(Patient, r.patient_id)
-    therapies = db.scalars(
-        select(PatientTherapy).where(
-            PatientTherapy.patient_id == r.patient_id,
-            PatientTherapy.review_status == ReviewStatus.CONFIRMED,
-        )
-    ).all()
+    current = r.status in WITH_HCP and r.assigned_hcp_id == hcp_id
+    row = care.request_out(db, r, for_patient=False)
+    # Only this HCP's own notes (another HCP's decline reason is not theirs to read).
+    row["notes"] = [n for n in row["notes"] if n.get("hcp_id") == hcp_id]
     managers = [u.display_name for u in records.responsible_care_managers(db, r.patient_id)]
-    return care.request_out(db, r, for_patient=False) | {
+    declined = care.declines(db, r.id).get(hcp_id) if r.assigned_hcp_id != hcp_id else None
+    row |= {
         "patient_age": int((today - p.birth_date).days / 365.25),
         "patient_location": out.location_label(p),
-        "conditions": [
+        "care_managers": managers,
+        "context_available": current,
+        "declined_by_you": declined is not None,
+        "group": (
+            "waiting"
+            if current and r.status == CareRequestStatus.AWAITING_HCP
+            else "with_care_manager"
+            if current
+            else "history"
+        ),
+        "conditions": [],
+        "medications": [],
+    }
+    if declined is not None:
+        row |= {"status_label": "You declined this consultation", "assigned_hcp": None}
+    if current:
+        therapies = db.scalars(
+            select(PatientTherapy).where(
+                PatientTherapy.patient_id == r.patient_id,
+                PatientTherapy.review_status == ReviewStatus.CONFIRMED,
+            )
+        ).all()
+        row["conditions"] = [
             care.condition_out(c)
             for c in db.scalars(
                 select(PatientCondition).where(
@@ -503,13 +565,12 @@ def _consultation_out(db: Session, r: CareRequest) -> dict:
                     PatientCondition.status == ConditionStatus.CONFIRMED,
                 )
             )
-        ],
-        "medications": [
+        ]
+        row["medications"] = [
             out.therapy_out(db, t, today, with_risk=False) | {"drug_name": t.drug_name}
             for t in therapies
-        ],
-        "care_managers": managers,
-    }
+        ]
+    return row
 
 
 def _routed_to_me(db: Session, user: User, request_id: int) -> CareRequest:
@@ -528,21 +589,29 @@ def _routed_to_me(db: Session, user: User, request_id: int) -> CareRequest:
 def my_consultations(
     user: User = Depends(consultation_handlers), db: Session = Depends(get_db)
 ) -> dict:
-    """Consultations care managers routed to this HCP: waiting ones first, then answered."""
+    """Consultations care managers routed to this HCP, in three groups: waiting for them,
+    answered and with the care manager, and history (closed, withdrawn or declined by them).
+    Clinical details are included only for the first two."""
     hcp_id = own_hcp_id(user)
+    declined_ids = select(CareNote.request_id).where(
+        CareNote.hcp_id == hcp_id, CareNote.kind == CareNoteKind.HCP_DECLINE
+    )
     rows = db.scalars(
         select(CareRequest)
         .where(
-            CareRequest.assigned_hcp_id == hcp_id,
             CareRequest.type == CareRequestType.CONSULTATION,
+            or_(CareRequest.assigned_hcp_id == hcp_id, CareRequest.id.in_(declined_ids)),
         )
         .order_by(CareRequest.updated_at.desc(), CareRequest.id.desc())
     ).all()
-    waiting = [r for r in rows if r.status == CareRequestStatus.AWAITING_HCP]
-    others = [r for r in rows if r.status != CareRequestStatus.AWAITING_HCP]
+    items = [_consultation_out(db, r, hcp_id) for r in rows]
+    order = {"waiting": 0, "with_care_manager": 1, "history": 2}
+    items.sort(key=lambda i: order[i["group"]])
     return {
-        "waiting": len(waiting),
-        "items": [_consultation_out(db, r) for r in waiting + others],
+        "waiting": sum(1 for i in items if i["group"] == "waiting"),
+        "with_care_manager": sum(1 for i in items if i["group"] == "with_care_manager"),
+        "history": sum(1 for i in items if i["group"] == "history"),
+        "items": items,
     }
 
 
@@ -566,7 +635,7 @@ def answer_consultation(
         note_to_care_team=body.note_to_care_team,
     )  # fmt: skip
     db.commit()
-    return _consultation_out(db, r)
+    return _consultation_out(db, r, own_hcp_id(user))
 
 
 # --- What needs this person's attention ---------------------------------------------------
@@ -583,6 +652,17 @@ def attention(user: User = Depends(get_current_user), db: Session = Depends(get_
         # The same definitions the Care requests page and the queue show (clinical.workload).
         counts["care_requests"] = workload.care_requests(db, user)["needs_you"]
         counts["outreach"] = sum(workload.outreach(db, user).values())
+    if can(user, Permission.SELF_SPECIALTY_REQUEST):
+        # Decisions on this HCP's specialty requests they have not looked at yet.
+        counts["specialty_decisions"] = db.scalar(
+            select(func.count())
+            .select_from(SpecialtyChangeRequest)
+            .where(
+                SpecialtyChangeRequest.requested_by_user_id == user.id,
+                SpecialtyChangeRequest.decided_at.is_not(None),
+                SpecialtyChangeRequest.seen_at.is_(None),
+            )
+        )
     if can(user, Permission.SELF_CONSULTATIONS_MANAGE) and user.hcp_id:
         counts["consultations"] = db.scalar(
             select(func.count())

@@ -265,8 +265,13 @@ function SpecialtyEditor({ account }: { account: Json }) {
   useEffect(() => setValue(current), [account.id, current.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = useMutation({
     mutationFn: () => put(`/admin/users/${account.id}/specialties`, { specialties: value }),
-    onSuccess: () => {
-      toast("Specialties saved.");
+    onSuccess: (data: Json) => {
+      const returned = data?.consultations_returned ?? 0;
+      toast(
+        returned
+          ? `Specialties saved. ${returned} consultation${returned === 1 ? "" : "s"} no longer suited went back to the care manager.`
+          : "Specialties saved.",
+      );
       void client.invalidateQueries({ queryKey: ["users"] });
     },
   });

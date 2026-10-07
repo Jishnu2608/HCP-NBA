@@ -97,6 +97,8 @@ class CareRequestStatus(StrEnum):
 class CareNoteKind(StrEnum):
     HCP_INSTRUCTION = "hcp_instruction"
     FOLLOW_UP = "follow_up"
+    # Why an HCP could not take a consultation: for the care team only.
+    HCP_DECLINE = "hcp_decline"
 
 
 class TargetType(StrEnum):

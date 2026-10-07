@@ -653,7 +653,13 @@ export function NoteList({ items, staff, compact }: { items: Json[]; staff?: boo
             <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
             {/* Follow-ups are tracked as requests with a due date; a follow-up note is an older,
                 untracked note kept for the record and is not open work. */}
-            <span className="font-semibold text-ink">{n.kind === "hcp_instruction" ? "Instruction" : "Note (earlier follow-up, not tracked)"}</span>
+            <span className="font-semibold text-ink">
+              {n.kind === "hcp_instruction"
+                ? "Instruction"
+                : n.kind === "hcp_decline"
+                  ? "Could not take this consultation"
+                  : "Note (earlier follow-up, not tracked)"}
+            </span>
             {n.hcp && <span>from {n.hcp}{n.by_hcp ? "" : staff ? " (recorded by the care team)" : ""}</span>}
             <span aria-hidden>·</span>
             <span className="tabular">{fmtDateTime(n.created_at)}</span>

@@ -15,10 +15,11 @@ import {
   Stethoscope,
   Users,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
+import { useAttention } from "../attention";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
 import { preferences } from "../session";
@@ -362,6 +363,10 @@ export function MyInbox() {
   const toast = useToast();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: () => api<Json[]>("/me/inbox") });
   const isPatient = can(P.SELF_CONSENT_MANAGE);
+  // An HCP lands here: consultations waiting for them are announced first, so the page never
+  // says "nothing to do" while a patient waits.
+  const attention = useAttention();
+  const waitingConsultations = can(P.SELF_CONSULTATIONS_MANAGE) ? attention.consultations ?? 0 : 0;
   // A patient who allows no contact method cannot receive anything: say so, not just "empty".
   const consents = useQuery({ queryKey: ["consents"], queryFn: () => api<Json[]>("/me/consents"), enabled: isPatient });
   const reachable = (consents.data ?? []).some((c) => c.channel && c.granted && c.in_effect !== false);
@@ -389,6 +394,14 @@ export function MyInbox() {
         }
       />
       <ErrorNote error={respond.error} className="mb-4" />
+      {waitingConsultations > 0 && (
+        <Alert tone="warn" title="Patients are waiting for you" className="mb-4">
+          <Link to="/my-patients" className="font-semibold text-primary-ink underline">
+            {waitingConsultations} consultation{waitingConsultations === 1 ? "" : "s"} waiting for your response
+          </Link>
+          .
+        </Alert>
+      )}
       {isPatient && consents.data && !reachable && (
         <Alert tone="warn" title="Your care team cannot send you messages yet" className="mb-4">
           You have not allowed any way of contacting you, so reminders and messages cannot reach you.{" "}
@@ -407,7 +420,9 @@ export function MyInbox() {
       {!inbox.data!.length ? (
         <Card>
           <EmptyState title="No messages yet" icon={<InboxIcon className="h-5 w-5" />}>
-            {isPatient ? "Messages from your care team will appear here." : "Content shared with you will appear here."}
+            {isPatient
+              ? "Messages from your care team will appear here."
+              : "Approved content your representative sends you will appear here. Consultations care managers route to you are under My patients."}
           </EmptyState>
         </Card>
       ) : (
@@ -438,6 +453,12 @@ export function MyInbox() {
                       )}
                     </div>
                     {m.subject && <h2 className="mt-2 text-[15px] font-semibold text-ink">{m.subject}</h2>}
+                    {m.content_title && (
+                      <p className="mt-1 text-[13px] text-ink-subtle">
+                        Approved content: {m.content_title}
+                        {m.sent_by ? ` · sent by ${m.sent_by}` : ""}
+                      </p>
+                    )}
                     <p className="mt-1.5 max-w-3xl whitespace-pre-line text-sm leading-6 text-ink-muted">{m.body}</p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2 md:flex-col md:items-stretch">
@@ -552,8 +573,9 @@ export function MyConsents() {
               <Alert tone="warn" title="Stop sharing with your doctors?" className="mt-4">
                 <p>
                   The doctors on your care team will no longer see how you are getting on with your medicines (days
-                  covered, last refill). A consultation you already asked for is not affected. You can switch sharing back
-                  on at any time.
+                  covered, last refill). A doctor handling a consultation you asked for still sees your conditions and
+                  medicines until that consultation is closed, and no longer afterwards. You can switch sharing back on at
+                  any time.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
@@ -602,18 +624,22 @@ function RoutedConsultations() {
     refetchInterval: 60_000,
   });
   const [answering, setAnswering] = useState<Json | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const close = useCallback(() => setAnswering(null), []);
   if (!can(P.SELF_CONSULTATIONS_MANAGE)) return null;
   if (list.isLoading) return <Loading label="Loading consultations" rows={2} />;
   if (list.error) return <ErrorState error={list.error} retry={() => void list.refetch()} title="Consultations could not be loaded" />;
   const items: Json[] = list.data.items;
+  const active = items.filter((c) => c.group !== "history");
+  const history = items.filter((c) => c.group === "history");
   return (
     <section aria-labelledby="consultations-title" className="mb-6">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 id="consultations-title" className="text-[17px] font-semibold text-ink">
           Consultations routed to you
         </h2>
-        {list.data.waiting > 0 && <Badge tone="warn">{list.data.waiting} waiting</Badge>}
+        {list.data.waiting > 0 && <Badge tone="warn">{list.data.waiting} waiting for you</Badge>}
+        {list.data.with_care_manager > 0 && <Badge tone="info">{list.data.with_care_manager} answered, with the care manager</Badge>}
       </div>
       {!items.length ? (
         <Card>
@@ -622,8 +648,16 @@ function RoutedConsultations() {
           </EmptyState>
         </Card>
       ) : (
+        <>
+        {!active.length && (
+          <Card className="mb-3">
+            <EmptyState title="Nothing waiting for you" icon={<Stethoscope className="h-5 w-5" />} compact>
+              Every consultation routed to you is answered and closed, or back with its care manager.
+            </EmptyState>
+          </Card>
+        )}
         <ul className="space-y-3">
-          {items.map((c) => {
+          {[...active, ...(showHistory ? history : [])].map((c) => {
             // A care manager who takes a consultation back says so; it never just disappears.
             const withdrawn = c.status_label === "Withdrawn by the care manager";
             const state = withdrawn
@@ -643,7 +677,16 @@ function RoutedConsultations() {
                   action={<Badge tone={state.tone}>{state.label}</Badge>}
                 >
                   <p className="whitespace-pre-line text-sm text-ink">“{c.reason}”</p>
-                  {withdrawn && c.resolution && <p className="mt-2 text-sm text-ink-muted">{c.resolution}</p>}
+                  {(withdrawn || (c.group === "history" && c.status === "closed")) && c.resolution && (
+                    <p className="mt-2 text-sm text-ink-muted">Outcome: {c.resolution}</p>
+                  )}
+                  {!c.context_available ? (
+                    <p className="mt-3 text-[13px] text-ink-subtle">
+                      {c.declined_by_you
+                        ? "You declined this consultation; it went back to the care manager."
+                        : "This consultation is closed. The patient's clinical details are shown only while a consultation is open, or under adherence below if they share it with you."}
+                    </p>
+                  ) : (
                   <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
                     <div>
                       <dt className="text-[13px] text-ink-subtle">Conditions</dt>
@@ -662,6 +705,7 @@ function RoutedConsultations() {
                       </dd>
                     </div>
                   </dl>
+                  )}
                   <p className="mt-3 text-[13px] text-ink-subtle">
                     Routed {fmtDate(c.updated_at)} by {c.care_managers.join(", ") || "the care manager"}
                   </p>
@@ -682,6 +726,12 @@ function RoutedConsultations() {
             );
           })}
         </ul>
+        {history.length > 0 && (
+          <Button variant="ghost" size="sm" className="mt-3" onClick={() => setShowHistory((v) => !v)}>
+            {showHistory ? "Hide finished consultations" : `Show finished consultations (${history.length})`}
+          </Button>
+        )}
+        </>
       )}
       {answering && (
         <Drawer title={`Respond about ${answering.patient_name}`} onClose={close}>
@@ -769,7 +819,13 @@ export function MyPatients() {
   const patients = useQuery({ queryKey: ["my-patients"], queryFn: () => api<Json[]>("/me/patients") });
   if (patients.isLoading) return <Loading label="Loading your patients" />;
   if (patients.error) return <ErrorState error={patients.error} retry={() => void patients.refetch()} variant="page" title="Your patients could not be loaded" />;
-  const rows = patients.data!.flatMap((p) => p.therapies.map((t: Json) => ({ ...t, name: p.name, patient_id: p.patient_id })));
+  // One row per confirmed medication, whoever prescribed it; a patient on your care team with
+  // no confirmed medication still appears.
+  const rows = patients.data!.flatMap((p) =>
+    p.therapies.length
+      ? p.therapies.map((t: Json) => ({ ...t, name: p.name, patient_id: p.patient_id }))
+      : [{ name: p.name, patient_id: p.patient_id, therapy_id: "none", drug_name: null }],
+  );
   const columns: Column<Json>[] = [
     {
       key: "patient",
@@ -782,7 +838,19 @@ export function MyPatients() {
         </div>
       ),
     },
-    { key: "drug", header: "Medication", cell: (r) => <span className="text-ink-muted">{titleCase(r.drug_name)}</span> },
+    {
+      key: "drug",
+      header: "Medication",
+      cell: (r) =>
+        r.drug_name ? (
+          <span className="text-ink-muted">
+            {titleCase(r.drug_name)}
+            {r.prescribed_by_you && <span className="text-ink-subtle"> · prescribed by you</span>}
+          </span>
+        ) : (
+          <span className="text-ink-subtle">No confirmed medication</span>
+        ),
+    },
     { key: "fill", header: "Last refill", cell: (r) => <span className="tabular text-ink-muted">{fmtDate(r.last_fill_date)}</span> },
     {
       key: "gap",
@@ -790,7 +858,7 @@ export function MyPatients() {
       align: "right",
       cell: (r) => <span className={cx("tabular font-semibold", r.gap_days > 0 ? "text-bad" : "text-ink")}>{r.gap_days}</span>,
     },
-    { key: "adherence", header: "Adherence", hideOnMobile: true, cell: (r) => <AdherenceBadge therapy={r} /> },
+    { key: "adherence", header: "Adherence", hideOnMobile: true, cell: (r) => (r.drug_name ? <AdherenceBadge therapy={r} /> : null) },
   ];
   return (
     <>
@@ -803,7 +871,7 @@ export function MyPatients() {
       <Card flush>
         {!rows.length ? (
           <EmptyState title="No patients have agreed to sharing" icon={<Users className="h-5 w-5" />}>
-            Patients appear here once they allow their adherence summary to be shared with you.
+            Patients on whose care team you are appear here once they allow their adherence summary to be shared with their doctors.
           </EmptyState>
         ) : (
           <DataTable
@@ -811,7 +879,7 @@ export function MyPatients() {
             columns={columns}
             rows={rows}
             rowKey={(r) => `${r.patient_id}-${r.therapy_id}`}
-            mobileAside={(r) => (r.adherent ? <Badge tone="ok">On track</Badge> : <Badge tone="warn">Below target</Badge>)}
+            mobileAside={(r) => (!r.drug_name ? null : r.adherent ? <Badge tone="ok">On track</Badge> : <Badge tone="warn">Below target</Badge>)}
           />
         )}
       </Card>
@@ -891,6 +959,18 @@ export function MyProfile() {
   });
   const [asking, setAsking] = useState(false);
   const close = useCallback(() => setAsking(false), []);
+  // Decisions shown for the first time stay highlighted for this visit; seeing them clears the
+  // menu count.
+  const client = useQueryClient();
+  const [fresh, setFresh] = useState<number[]>([]);
+  useEffect(() => {
+    const ids: number[] = (requests.data?.requests ?? []).filter((r: Json) => r.new_decision).map((r: Json) => r.id);
+    if (ids.length) {
+      setFresh((prev) => [...new Set([...prev, ...ids])]);
+      void client.invalidateQueries({ queryKey: ["attention"] });
+      void client.invalidateQueries({ queryKey: ["me"] });
+    }
+  }, [requests.data, client]);
   if (profile.isLoading) return <Loading label="Loading your profile" rows={3} />;
   if (profile.error) return <ErrorState error={profile.error} retry={() => void profile.refetch()} variant="page" title="Your profile could not be loaded" />;
   const p: Json = profile.data;
@@ -930,14 +1010,16 @@ export function MyProfile() {
               <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
               <div className="min-w-0">
                 <dt className="text-[13px] text-ink-subtle">Organization</dt>
-                <dd className="break-words text-sm font-semibold text-ink">{p.organization ?? "Not recorded"}</dd>
+                <dd className="break-words text-sm font-semibold text-ink">
+                  {p.organization ?? <span className="font-normal text-ink-subtle">Not collected when you joined</span>}
+                </dd>
               </div>
             </div>
             <div className="flex gap-3">
               <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
               <div>
                 <dt className="text-[13px] text-ink-subtle">Location</dt>
-                <dd className="text-sm font-semibold text-ink">{p.city ? `${p.city}, ${p.state}` : "Not recorded"}</dd>
+                <dd className="text-sm font-semibold text-ink">{p.location ?? "Not recorded"}</dd>
               </div>
             </div>
             {p.npi && (
@@ -966,7 +1048,10 @@ export function MyProfile() {
                 {mine.map((r) => (
                   <li key={r.id} className="py-3 first:pt-0 last:pb-0">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-ink">{ACTION_LABEL[r.action]}</span>
+                      <span className="flex items-center gap-2 text-sm font-semibold text-ink">
+                        {ACTION_LABEL[r.action]}
+                        {fresh.includes(r.id) && <Badge tone="accent">New decision</Badge>}
+                      </span>
                       <Badge tone={r.status === "approved" ? "ok" : r.status === "rejected" ? "bad" : "warn"}>
                         {titleCase(r.status)}
                       </Badge>

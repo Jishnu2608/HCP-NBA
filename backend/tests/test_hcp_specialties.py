@@ -111,17 +111,23 @@ def test_invitation_specialties_are_validated(env):
     assert response.status_code == 422 and code_of(response) == "invalid_specialty"
 
 
-def test_invited_hcps_stay_out_of_the_engine_and_rep_assignments(env):
+def test_invited_hcps_join_the_engine_and_can_be_assigned_a_rep(env):
+    """A real (invited) HCP with an active account is part of the engine's HCP population
+    and can be assigned to a representative, behind the same gates as a synthetic HCP."""
     client, db = env
     session = onboard_hcp(client, "outside.engine@example.org", [ENDO])
     hid = session["user"]["hcp_id"]
-    assert hid not in load_population(db).hcps
+    pop = load_population(db)
+    assert hid in pop.hcps and pop.hcp_specialties[hid] == {ENDO}
     rep = db.scalar(select(User).where(User.username == "rep01"))
+    current = [h["hcp_id"] for h in client.get(
+        f"/api/admin/users/{rep.id}", headers=auth(client, "admin")
+    ).json()["hcps"]]  # fmt: skip
     response = client.put(
-        f"/api/admin/users/{rep.id}/assignments", json={"hcp_ids": [hid]},
+        f"/api/admin/users/{rep.id}/assignments", json={"hcp_ids": [*current, hid]},
         headers=auth(client, "admin"),
     )  # fmt: skip
-    assert response.status_code == 409 and code_of(response) == "record_origin_mismatch"
+    assert response.status_code == 200
 
 
 # --- Who may change specialties ------------------------------------------------------------

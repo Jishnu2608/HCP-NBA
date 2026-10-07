@@ -45,6 +45,9 @@ class Hcp(Base):
     city: Mapped[str | None] = mapped_column(String(64))
     state: Mapped[str | None] = mapped_column(String(2))
     zip: Mapped[str | None] = mapped_column(String(10))
+    # Country of practice: "US" for the synthetic population; for an invited HCP the
+    # country of residence they gave when accepting the invitation.
+    country: Mapped[str | None] = mapped_column(String(8))
     rx_volume_annual: Mapped[int] = mapped_column(Integer, default=0)
     origin: Mapped[str] = mapped_column(
         String(16), default="synthetic", server_default="synthetic", index=True
@@ -95,6 +98,8 @@ class SpecialtyChangeRequest(Base):
     decision_notes: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # When the HCP saw the decision (until then it counts in their menu).
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Patient(Base):
@@ -646,6 +651,9 @@ class AuditLog(Base):
     entity_id: Mapped[str] = mapped_column(String(32))
     action: Mapped[str] = mapped_column(String(48))
     actor: Mapped[str] = mapped_column(String(64))
+    # The account that acted, when an account did: the durable identity (an email can be
+    # registered again after an account is deleted). No foreign key, so history survives.
+    actor_user_id: Mapped[int | None] = mapped_column(Integer, index=True)
     actor_role: Mapped[str] = mapped_column(String(32))
     compliance_ok: Mapped[bool | None] = mapped_column(Boolean)
     consent_ok: Mapped[bool | None] = mapped_column(Boolean)

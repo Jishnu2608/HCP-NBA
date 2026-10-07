@@ -2,8 +2,9 @@
 
 An invited HCP gets a new, blank record: no NPI, practice, prescribing volume, history or
 specialty is invented. Specialties come only from an administrator (at invitation or later,
-or by approving the HCP's own change request) and only from the controlled list. Synthetic
-HCPs keep their generated record and are the only HCPs the engine targets.
+or by approving the HCP's own change request) and only from the controlled list. The record
+takes the country the person gave when accepting the invitation. Invited HCPs with an active
+account are part of the engine's HCP population like synthetic ones, behind the same gates.
 """
 
 from sqlalchemy import func, select
@@ -54,19 +55,39 @@ def specialty_out(db: Session, hcp_id: str) -> list[dict]:
 def _replace(db: Session, hcp_id: str, values: list[str]) -> None:
     db.query(HcpSpecialty).filter(HcpSpecialty.hcp_id == hcp_id).delete()
     db.add_all(HcpSpecialty(hcp_id=hcp_id, specialty=s) for s in values)
+    hcp = db.get(Hcp, hcp_id)
+    if hcp is not None and hcp.origin != SYNTHETIC:
+        # The engine reads one specialty per HCP (content relevance, features): an invited
+        # HCP's first specialty, kept in step with the list.
+        hcp.specialty = values[0] if values else None
     db.flush()
 
 
+def unsuited_consultations(db: Session, hcp_id: str, values: list[str]) -> list:
+    """Consultations waiting for this HCP that the given specialties would no longer suit."""
+    from app.clinical import care
+
+    return care.unsuited_consultations(db, hcp_id, values)
+
+
 def set_specialties(db: Session, actor: User, hcp: Hcp, values: list[str], *, why: str) -> dict:
-    """Administrator-authorised change. Audited with the previous and the new list."""
+    """Administrator-authorised change. Audited with the previous and the new list. A
+    consultation waiting for this HCP that the new specialties no longer suit goes back to
+    its care manager to route again (said plainly to them and the patient), never silently
+    left with the HCP."""
+    from app.clinical import care
+
     values = validate_specialties(values)
     previous = specialties_of(db, hcp.hcp_id)
     _replace(db, hcp.hcp_id, values)
+    returned = care.return_unsuited_consultations(db, actor, hcp.hcp_id, values)
     audit.record(
         db, "hcp_specialties_changed", "hcp", hcp.hcp_id, actor=actor.username,
-        actor_role=actor.role, detail={"previous": previous, "new": values, "via": why},
+        actor_role=actor.role,
+        detail={"previous": previous, "new": values, "via": why,
+                "consultations_returned": returned},
     )  # fmt: skip
-    return {"previous": previous, "new": values}
+    return {"previous": previous, "new": values, "consultations_returned": returned}
 
 
 def new_hcp_id(db: Session) -> str:
@@ -76,15 +97,24 @@ def new_hcp_id(db: Session) -> str:
     return f"HCP_R{number.id:06d}"
 
 
-def create_hcp(db: Session, name: str, specialties: list[str]) -> Hcp:
-    """A blank record for an invited HCP. Only the name and the given specialties."""
+def create_hcp(
+    db: Session,
+    name: str,
+    specialties: list[str],
+    *,
+    country: str | None = None,
+    region: str | None = None,
+) -> Hcp:
+    """A blank record for an invited HCP: the name, the given specialties and the country
+    (and US state) the person gave. Nothing else is invented."""
     clean = " ".join(name.split())
     for prefix in ("Dr. ", "Dr "):
         clean = clean.removeprefix(prefix)
     first, _, last = clean.partition(" ")
     hcp = Hcp(
         hcp_id=new_hcp_id(db), first_name=first[:64], last_name=last.strip()[:64],
-        origin=INVITED, rx_volume_annual=0,
+        origin=INVITED, rx_volume_annual=0, country=country,
+        state=region if country == "US" else None,
     )  # fmt: skip
     db.add(hcp)
     db.flush()
@@ -127,6 +157,10 @@ def request_out(db: Session, r: SpecialtyChangeRequest, *, staff: bool = False) 
             "account_id": requester.id if requester else None,
             "reviewer": reviewer.display_name if reviewer else None,
             "current": [{"code": s, "label": label(s)} for s in specialties_of(db, r.hcp_id)],
+            # What approving would do to consultations waiting for this HCP.
+            "open_consultations_affected": len(unsuited_consultations(db, r.hcp_id, r.requested))
+            if r.status == PENDING
+            else None,
         }
     return row
 

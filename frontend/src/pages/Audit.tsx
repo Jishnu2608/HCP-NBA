@@ -81,7 +81,10 @@ export default function Audit() {
       cell: (a) => (
         <div className="min-w-0">
           <PersonName name={a.actor} verified={a.actor_verified} className="max-w-56 text-ink" />
-          <div className="text-xs text-ink-subtle">{titleCase(a.actor_role)}</div>
+          <div className="text-xs text-ink-subtle">
+            {titleCase(a.actor_role)}
+            {a.actor_user_id ? ` · account #${a.actor_user_id}` : ""}
+          </div>
         </div>
       ),
     },

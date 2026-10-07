@@ -142,7 +142,9 @@ def hcp_candidates(
     for content in pop.contents.values():
         if content.audience != TargetType.HCP or content.content_id in already_engaged:
             continue
-        if content.specialty not in (None, hcp.specialty):
+        # Content for a specialty goes only to HCPs who hold it (an HCP may hold several).
+        held = pop.hcp_specialties.get(hcp_id) or {hcp.specialty}
+        if content.specialty is not None and content.specialty not in held:
             continue
         for channel in content.channels:
             out.append(
@@ -470,7 +472,9 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
             withheld=decision.withheld,
             eligible=c.eligible,
         )
-        priority = (hcp.value_score or 0.0) * max(c.p_engage, 0.01)
+        # An unrated (invited) HCP counts as mid-value: neither favoured nor buried.
+        value = hcp.value_score if hcp.value_score is not None else 50.0
+        priority = value * max(c.p_engage, 0.01)
         _persist(
             db, cycle, decision, reasons, scheduled_for, timing_note, priority, None, pop.as_of
         )

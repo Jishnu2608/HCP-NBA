@@ -316,6 +316,13 @@ export function SegmentBadge({ value }: { value: string | null | undefined }) {
       </Badge>
     );
   }
+  // Invited HCPs: prescribing volume is not recorded, so no value tier is shown.
+  const UNRATED: Record<string, string> = {
+    unrated_new: "New contact",
+    unrated_engaged: "Engaged · volume not rated",
+    unrated_dormant: "Rarely engages · volume not rated",
+  };
+  if (UNRATED[value]) return <Badge tone="neutral">{UNRATED[value]}</Badge>;
   return <Badge tone={value.startsWith("high") ? "brand" : "sage"}>{titleCase(value)}</Badge>;
 }
 
