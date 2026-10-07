@@ -42,17 +42,21 @@ Unify → Segment → Predict NBA → Personalize → Orchestrate → Engage →
 | Care management | Care managers work a queue of care requests: confirm or dismiss what patients reported (only confirmed medications count for adherence; a last refill date keeps an already-taken medication from looking unfilled), record medications, refills and instructions, route patients to an HCP by the condition's specialty, schedule follow-ups with a due date, and set up and invite clinic patients. Every real patient always has one active care manager |
 | Consultations | A patient's consultation stays open after routing: the HCP sees it in the app and answers or declines (or the care manager records the answer of an HCP without an account), then the care manager closes it with a written outcome (or withdraws it with a reason the HCP and the patient both see). The patient sees each step and the advice under their request |
 | Work awareness | Menu counts show new work (care requests, outreach to review or send, call outcomes to record, registered patients' responses, consultations, unread messages, administrator requests), with the same figures on every page; recommendations show whether their safeguards still pass before anyone acts; adherence is always as of today and updates the moment a medication is confirmed, refilled or stopped |
+| Content governance (MLR) | Medical representatives propose HCP content with its claims and supporting references, indication, safety and benefit-risk information, labelling note and the countries it may be used in, and submit it. The MLR reviewer records a medical, legal and regulatory verdict and approves, requests changes or rejects, with feedback the author reads (an internal note stays with Compliance). A decided version never changes: the author opens a new version, which is reviewed again, and approving it replaces the earlier approved version everywhere. Approved material can be withdrawn, or sent back for a new version, when new evidence or a concern arises. Author and reviewer talk on the content itself |
+| Controlled delivery | What a patient or HCP receives is the approved content of one version, word for word, in a fixed template frame. Nobody edits the wording before sending; the send path refuses edited or altered wording and records which version and which wording went to whom. Withdrawn or replaced material stops being recommended at once, and copies already delivered are marked as no longer current |
+| Delivery oversight | For every content item and version, the MLR reviewer sees recommendations waiting, deliveries, responses by outcome and channel, recipients without identity, the exact wording delivered, and copies still in inboxes after a withdrawal |
+| HCP portal | Inbox of approved content with the sender and version; an HCP can ask about any item, and the question reaches the MLR reviewers (who see the HCP only by specialty and country) and the representative who sent it, with replies shown under the item. Consultations routed to the HCP are grouped as waiting, with the care manager, or finished; the patient's conditions and medicines are shown only while the consultation is with the HCP. My patients lists the patients whose care team the HCP is on and who share their adherence. Location and specialty decisions on the profile |
 | HCP 360 | Segment and value, topics and channels the HCP engages with, interaction history |
 | Adherence risk | Rule-based 0-100 score with named drivers: days covered, current gap, widening gaps, non-response, never filled |
 | Propensity models | Chance of a response and of a fill, per action and channel. Logistic regression, compared against a boosted-tree challenger and a no-model baseline |
 | Recommendation engine | Lists candidate actions, applies hard gates, ranks what is left, picks one, keeps the options that lost |
-| Hard gates | Content approval (MLR) and validity window, consent per channel, contact frequency. Deterministic code, checked at generation, at approval and at send |
+| Hard gates | Content approval (MLR) of the exact version and its validity window, the countries the content is cleared for, consent per channel, contact frequency. Deterministic code, checked at generation, at approval and at send |
 | Rationale | Who, why this action, why this channel, why now, compliance status, and any better option a gate held back |
-| Drafting | Message wording from the approved content module, through a model-agnostic interface with an offline default. Output is validated before it is stored |
-| Review | Approve, edit, reject, send. Human-in-the-loop always |
+| Drafting | The approved content module set in a fixed template frame, through a model-agnostic interface with an offline default. A model may only frame the module; output that does not carry it word for word is discarded |
+| Review | Approve, reject, send, choosing among the approved wording variants. Human-in-the-loop always |
 | Closed loop | Simulated delivery, response capture, "play out responses now" for the simulated population, retraining, next cycle. Everything runs on today's real date; simulated refills follow real days |
 | Analytics | Recommendation mix, why options were held back, response by channel, adherence by measure over time, engine versus earlier outreach on equal terms |
-| Audit | Append-only record of every recommendation, gate result, decision, send, response and settings change, with the actor |
+| Audit | Append-only record of every recommendation, gate result, decision, send, response, content decision (with its version and the status before and after) and settings change, with the acting account's durable id |
 | Interface | One design system in clinical blue and cool slate, light and dark themes (saved per browser, otherwise following the system setting), responsive from phones to wide screens and at high browser zoom, a bento-grid layout for dashboards and 360 pages, consistent error pages (404, 400, 401, 403, 500, data failures) |
 
 Therapy areas match the three Medicare STAR adherence measures: diabetes, hypertension, cholesterol.
@@ -68,10 +72,10 @@ Authenticated account → Role → Permissions → Data scope → UI
 | Role | Sees | Can do |
 |---|---|---|
 | Administrator | Every module and all data, including users, invitations and assignments | Run the engine, change settings, manage accounts, permanently delete patient accounts, review recommendations, invite any professional role. **Cannot approve content.** |
-| Compliance / MLR Reviewer | Content library, blocked and held-back recommendations (identities hidden), audit log with identities masked, metrics | Approve or reject content. The only role that can. |
-| Medical Representative | Assigned HCPs and their recommendations, approved HCP content | Approve, edit, reject, send; log visit outcome |
+| Compliance / MLR Reviewer | Content library with every submitted version and its review history, delivery and response per item (recipients unidentified), HCP questions, blocked and held-back recommendations (identities hidden), audit log with identities masked and their own actions marked, metrics | Review content (medical, legal, regulatory), approve, request changes, reject, withdraw, ask for a new version; maintain library content as new versions; answer authors and HCPs. The only role that decides on content. |
+| Medical Representative | Assigned HCPs and their recommendations, approved HCP content, own content proposals and the MLR feedback on them, questions from HCPs about content they sent | Approve, reject, send; log visit outcome; propose, revise and submit HCP content; reply to MLR and to HCPs |
 | Care Manager | Assigned patients, their care requests and recommendations, approved patient content | Approve, edit, reject, send; log call outcome; confirm what patients report, record medications, refills and instructions, route patients to an HCP by specialty, create clinic patients and invite them |
-| Healthcare Professional | Own profile, own inbox, adherence summary of own patients who consent to sharing | Read and respond to content; invite a Medical Representative or Care Manager |
+| Healthcare Professional | Own profile and specialties, own inbox, consultations routed to them, adherence summary of patients whose care team they are on and who consent to sharing | Read and respond to content, ask MLR about it; answer or decline a consultation; request a specialty change; invite a Medical Representative (who is then assigned to them) or Care Manager |
 | Patient | Own conditions, medications, care team, instructions, messages and consent | Build a health profile, ask to consult an HCP, change consent, respond, log a refill |
 
 - The role is fixed when the account is created: by patient sign-up, or by the invitation. No endpoint changes it.
@@ -102,7 +106,8 @@ Everyone:       Log in with email and password → the account's own dashboard
 - **HCP specialties:** an invited HCP starts with a blank record and only the specialties the inviting administrator chose (several allowed; none shows "Specialty not configured"). The HCP can ask for a change from their profile; an administrator approves or rejects it in **Requests**. Care managers route patients using every specialty an HCP holds.
 - **Patient lists** (Patients, a care manager's panel, an HCP's patients, assignment lists, search) always show the most recently active patient first: new sign-ups, changes, entries, refills, messages, consent changes and sign-ins all count. The order is set on the server; there is no sort control. The recommendation queue stays ranked by priority.
 - **Clinic patients:** a care manager can set up a record for someone seen at the clinic, record conditions, medications and the doctor's instructions, and invite the patient by email; the invitation is bound to that record and the care manager stays responsible.
-- On confirmation a professional account receives starting data from the synthetic pool: one own record for an HCP, a panel of demo patients for a care manager, a set of HCPs for a medical representative.
+- On confirmation a professional account receives its starting data: an HCP gets a new blank record of their own (with the country they gave), a care manager a panel of demo patients, a medical representative a set of demo HCPs (plus the inviting HCP, when an HCP invited them). An invited HCP with an active account receives approved content through the same engine and safeguards as everyone else.
+- **Compliance / MLR reviewers** exist only by invitation from the administrator; none is seeded with the demo data. Any number may exist: a review in progress shows its reviewer, and another reviewer takes it over explicitly.
 - **Deleting a patient account:** an administrator can delete a patient account permanently (typing its email to confirm), also straight from the patient's deletion request. The account and the patient's own data go; the audit log keeps what happened without naming them; the same email can sign up again as a new, empty patient. Professional accounts are disabled, not deleted.
 - The administrator manages invitations on **Invitations** and accounts on **Users and assignments** (assignments, disable or re-enable, who invited whom). An HCP sees the invitations they sent under **Team**.
 - Sessions are kept in a cookie the page's JavaScript cannot read. Sign-out ends the session on the server. Two different accounts in two tabs of the same browser are no longer possible; use a private window or another browser profile for the second one.
@@ -185,6 +190,7 @@ If PowerShell refuses to run the scripts, allow local scripts for your user once
 
 - **Administrator:** the email in `NBA_ADMIN_EMAIL` (default shown in [.env.example](.env.example)) with the password that `setup.ps1` generated in your `.env` as `NBA_ADMIN_PASSWORD`. Choose your own by editing `.env`, then run `python -m app.auth.rotate` from `backend` and restart.
 - **Demo accounts** for the other roles are created with the synthetic data and share `NBA_DEMO_PASSWORD`. An administrator can see their emails on the Users and assignments page.
+- **An MLR reviewer:** none is seeded. Invite one from **Invitations** with the role Compliance / MLR Reviewer; content proposals, reviews and approvals then happen on **Content**.
 - **A professional account of your own:** sign in as the administrator, open **Invitations**, invite your email with a role, and open the link from the email (or, without email configured, from the development box).
 - **A patient account:** use **Patient sign-up**. Without email configured, the verification code is shown on screen in development mode. The new patient starts with an empty health profile and is given a care manager; sign in as that care manager (shown under "Your care team") to see the requests on **Care requests**.
 - **A clinic patient:** sign in as a care manager, open **Care requests** → **New clinic patient**, record their care on the patient page, then **Invite to portal**.
@@ -236,7 +242,7 @@ The server listens only on this computer by default. To open it from a phone on 
 
 ### Resetting the data
 
-The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, real patients with everything recorded for them, invitations and the security audit trail, and signs everyone out. Account and invitation ids are never reused, not even after a deletion or a reset, so the audit history of one account can never appear under another; demo and administrator accounts get new, higher ids after each reset. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
+The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, real patients with everything recorded for them, invitations, the security audit trail, and all content with its versions, MLR decisions and conversations, and signs everyone out. It never creates Compliance accounts. Account and invitation ids are never reused, not even after a deletion or a reset, so the audit history of one account can never appear under another; demo and administrator accounts get new, higher ids after each reset. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
 
 ## Secrets and accounts
 
@@ -340,6 +346,10 @@ scripts/                setup and run
 15. Patient lists have one server-side order, latest activity first; the recommendation queue keeps its priority ranking.
 16. A consultation closes only with an outcome: routing hands it to the HCP; the HCP's answer returns it to the care manager.
 17. One time base: stored times are UTC and "today" is the UTC date; screens show local time.
+18. What a recipient reads is the MLR-approved version, word for word. Changing the wording means a new content version that MLR reviews again.
+19. One approved version per content item; decided versions never change and are never re-approved or re-dated.
+20. Content governance survives a demo reset, and Compliance accounts exist only by invitation.
+21. Routing a consultation never makes an HCP a prescriber, and an HCP sees a patient's clinical details only while a consultation is with them.
 
 ## Path to production
 
@@ -367,9 +377,10 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 - Unverified accounts: the correct password for an account that has not confirmed its email answers "verify your email" instead of the generic sign-in failure, so the owner can finish. Anyone holding that password can see the account exists.
 - A professional cannot be invited to an email that already has a patient account.
 - Only patient accounts can be deleted; professional accounts can only be disabled. Other privacy requests (correction, restriction) are still carried out by a person.
-- Invited HCP accounts still use a demo HCP record. Demo HCPs are all in the US, so patients elsewhere are offered every HCP of a suitable specialty.
+- Demo HCPs are all in the US; invited HCPs carry their own country, and routing puts HCPs in the patient's country first.
+- MLR review is one reviewer's decision covering the medical, legal and regulatory perspectives (no separate sign-off per reviewer), approval validity is fixed at two years, and care managers cannot propose patient content (the MLR reviewer maintains it).
 - **Legal documents are drafts.** Legal bases, retention periods, HIPAA applicability, sub-processors, hosting region, transfer mechanisms, governing law and adult-age rules are marked to be confirmed. No retention periods are enforced except for expired security records (sessions, codes, rate-limit counters).
-- No guardian / parental-consent flow for minors, and no consent model yet for content sent to healthcare professionals.
+- No guardian / parental-consent flow for minors, and no consent or opt-out model yet for content sent to healthcare professionals.
 - The hosted language-model provider has not been exercised; drafting uses offline templates.
 - No browser end-to-end tests yet; behaviour is covered by backend tests and manual checks, including a scripted layout check at phone, tablet and desktop widths. Real browser zoom and operating-system display scaling have not been tested.
 - Explanation texts from the engine format dates day-month-year, while the interface uses US dates.
