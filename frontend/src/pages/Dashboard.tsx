@@ -17,6 +17,7 @@ import {
   Stethoscope,
   TrendingUp,
 } from "lucide-react";
+import { useRef } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -34,6 +35,7 @@ import {
 } from "recharts";
 import { api, query } from "../api";
 import { BarList, ChartFrame, ChartPanel, ChartTable, Sparkline, shortDate, useInsights } from "../charts";
+import { gsap, reducedMotion, useGSAP } from "../motion";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
 import { BarRow, BentoCard, BentoGrid, InsightRow, SectionHeader } from "../layout";
@@ -138,12 +140,32 @@ function Empty({ children }: { children: ReactNode }) {
 /** One small line per series, each on its own scale from zero, with its total: never two
  *  measures on one axis. */
 function SmallMultiples({ series, unit }: { series: Json[]; unit: string }) {
+  const ref = useRef<HTMLUListElement>(null);
+  const totals = useRef<Map<string, number> | null>(null);
+  const signature = series.map((sr) => `${sr.key ?? sr.role}:${sr.points.reduce((n: number, p: Json) => n + p.value, 0)}`).join("|");
+  // When a series' count rises between refreshes (not on first load), its latest point
+  // pulses once so the change is noticed. Nothing repeats.
+  useGSAP(
+    () => {
+      const now = new Map(series.map((sr) => [String(sr.key ?? sr.role), sr.points.reduce((n: number, p: Json) => n + p.value, 0)]));
+      const before = totals.current;
+      totals.current = now;
+      if (!before || !ref.current || reducedMotion()) return;
+      now.forEach((total, key) => {
+        if (total > (before.get(key) ?? total)) {
+          const dot = ref.current!.querySelector(`[data-series="${key}"] [data-last]`);
+          if (dot) gsap.fromTo(dot, { scale: 2, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.5, ease: "power2.out" });
+        }
+      });
+    },
+    { dependencies: [signature] },
+  );
   return (
-    <ul className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+    <ul ref={ref} className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
       {series.map((sr) => {
         const top = Math.max(1, ...sr.points.map((p: Json) => p.value));
         return (
-          <li key={sr.key ?? sr.role} className="min-w-0">
+          <li key={sr.key ?? sr.role} data-series={sr.key ?? sr.role} className="min-w-0">
             <div className="flex items-baseline justify-between gap-3 text-sm">
               <span className="min-w-0 text-ink">{sr.label}</span>
               <span className="tabular shrink-0 font-semibold text-ink">{num(sr.total ?? sr.points.reduce((n: number, p: Json) => n + p.value, 0))}</span>

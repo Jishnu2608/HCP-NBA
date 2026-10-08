@@ -149,63 +149,27 @@ Everywhere a recommendation appears it reads in the same order: "Next best actio
 
 ## Motion
 
-Short (150-650 ms), and only where it says something:
+Built on GSAP (`frontend/src/motion.tsx`, approved motion plan of 2026-10-08). Motion explains hierarchy, a change of state or where something went; it never decorates. Performance comes first: transform and opacity only (SVG stroke for drawing lines), no animation sets React state, every tween lives in a `useGSAP` scope and is reverted on unmount.
 
-| Motion | Meaning |
-|---|---|
-| Cards in a grid rise in one after another (`stagger`) | The page has loaded |
-| KPI figures count up (`AnimatedNumber`) | A figure has arrived or changed |
-| Proportion bars grow from the left (`animate-grow`) | Relative size |
-| The active filter's highlight slides (`Segmented`) | Which view is selected |
-| A status badge pops once when its status changes (`animate-pop`) | The state changed |
-| Interactive cards lift 2px with a stronger border (`lift`) | This can be opened |
-| Drawers slide, menus and toasts rise | Where the new surface came from |
+Tokens: micro 0.18 s (press, small state), standard 0.32 s (cards, panels, drawers), expressive 0.6 s (landing page only). Easing `power2.out` in, `power2.in` out.
 
-No looping animations, no scaling beyond 2px, no glow. Everything collapses to nothing under `prefers-reduced-motion`, and the count-up is skipped.
+| Building block | Where | Meaning |
+|---|---|---|
+| `useEntrance` | `KpiGrid` (after the heading), `BentoGrid` (after the figures), the sign-in panel | The page arrived, in reading order. At most 8 items move (4 on touch); runs once, never on refetch |
+| `Morph` | Status badges, request status chips, MLR badges, content version badges | The state changed (never on first render) |
+| `useChangeHighlight` | Data tables with `motionSig`, request lists, HCP consultations, HCP work | A new row, or a row whose state changed, lifts in once; other rows never move |
+| `playExit` | Drawers, the phone navigation drawer, the account menu, toasts | Where the surface went; then it unmounts. Backdrops only fade (no blur) |
+| `AnimatedNumber` | KPI figures | Moves from the old value to the new one; first load shows the value at once |
+| `Button done` | Refill, HCP intent answers, follow-up and meeting forms | idle -> working -> done ✓ for 1.6 s |
+| Nav indicator | Sidebar | One marker glides to the active page; collapse is instant |
+| `useDrawIn` (`charts.tsx`) | Every chart frame | Bars grow from their baseline, lines draw, point groups fade, supply cells sweep, once when first in view (IntersectionObserver). Labels show final values from the start; later updates use the marks' own transitions |
+| `Steps` with `seenKey`, `StreakCard` | Consultation steps, content lifecycle, streaks | Animate only when the value differs from what this viewer last saw (`preferences.lastSeen`); first sight and reloads are static |
+| Verification code | Sign-up | Digit pop, a 4 px shake of the code row on a wrong code, green sweep on success (navigation waits at most 250 ms) |
+| Landing (`pages/Landing.tsx`, lazy chunk with ScrollTrigger) | Hero, data-to-action strip, 8-step loop, section reveals | Hero builds a recommendation the way a reviewer reads it; the strip lights signal -> insight -> action -> review -> outcome; the loop highlights one step at a time only while on screen (mouse devices); one ScrollTrigger per section, `once`. Magnetic pull on the main sign-in buttons and a pointer spotlight on role cards, desktop mouse only |
 
-## Shape, depth, spacing
+CSS keeps the cheap pieces: `lift` hover, `animate-grow` / `animate-grow-up` (a "from" frame that hands over to the element's own scale), `animate-pop`, `animate-fade`, the skeleton opacity pulse, the engine progress bar (only while an operation runs), `.chart-hatch`, `.spotlight`.
 
-- Radius: controls 8px, cards and panels 12px, badges and chips 6px. Avatars are rounded squares.
-- Shadows are tinted to the palette (`shadow-card`, `shadow-raised`, `shadow-overlay`). Cards have a 1px border and a light shadow.
-- Spacing follows the Tailwind 4px scale. Page gutter: 16px on phones, 24px on tablets, 32px on desktops. Content is capped at 1440px.
-- Layering uses `--z-sticky`, `--z-nav`, `--z-drawer`, `--z-toast`. No other z-index values.
+Not used, on purpose: route exit transitions, animated sidebar width, staggering long lists, ScrollTrigger inside the app, count-up on load, celebrations or confetti, particles or canvas, pointer effects on dashboard cards, backdrop blur, pinning or scrubbing, theme cross-fades, shaking whole forms, counting inside chart labels, Recharts animation, character-by-character text, continuous pulses.
 
-## Components (`ui.tsx`)
+Reduced motion: every GSAP entry point checks `prefers-reduced-motion` (or uses `gsap.matchMedia`), so nothing moves and state changes remain visible as text and icons; the CSS override collapses the rest.
 
-| Component | Notes |
-|---|---|
-| `PageHeader` | Title, optional back link, badges beside the title, subtitle, actions |
-| `Card` | Titled panel; `flush` for edge-to-edge tables and lists |
-| `Button`, `IconButton` | Variants: primary, accent, secondary, ghost, danger, quiet-danger. Sizes sm (36px), md (40px), lg (48px). Busy state with spinner |
-| `Badge`, `StatusBadge`, `SegmentBadge`, `MlrBadge`, `ConsentBadge` | Status semantics above |
-| `KpiCard` (alias `Stat`), `KpiGrid`, `AnimatedNumber`, `Meter` | Key figures with fixed title/value/hint regions, column logic by count, count-up, proportion bars |
-| `DataTable` | Table on wide containers, stacked cards on narrow ones. Switches on the container's own width (container query), not the window's. Rows can be opened by click or keyboard |
-| `Table` | Small fixed tables; scrolls sideways if it must |
-| `Pagination`, `Segmented`, `Toolbar`, `Select`, `SearchInput` | List controls. `Segmented` scrolls sideways on phones instead of wrapping |
-| `TextField`, `PasswordField`, `TextArea`, `Switch`, `FormField` | Label above the control, hint or error below, required marker, `aria-invalid` and `aria-describedby` wired up. Password fields have a show/hide toggle |
-| `Alert`, `ErrorNote`, `ErrorState`, `EmptyState` | Designed empty, error and information states |
-| `Skeleton`, `Loading`, `LoadingRows` | Skeleton loaders shaped like the content |
-| `Timeline`, `TimelineItem` | Audit trails and histories |
-| `Avatar`, `ChannelIcon`, `Truncate` | Initials, channel glyphs, long text with a native tooltip |
-
-`toast.tsx` provides short success confirmations after an action. Errors stay inline next to the control that caused them.
-
-## Layout
-
-- Shell (`App.tsx`): dark sidebar from 1024px, collapsible to an icon rail (remembered per browser). Below 1024px the sidebar becomes a drawer opened from the top bar. The sidebar is grouped into Workspace, My account, Governance and Administration, and shows only routes the account's permissions allow (from `routes.tsx`).
-- Top bar: theme switch and an account menu showing the signed-in name, email, role and Sign out. No date is shown; the application always uses the real date. A "Skip to content" link is the first focusable element.
-- Detail pages (Patient 360, HCP 360, recommendation): main column plus a 360px side column from 1280px. Below that, the recommendation comes first, then the main content, then details.
-- The recommendation page keeps the Decision panel in view while the rationale is read. On high zoom it scrolls within itself instead of being cut off.
-
-## Accessibility
-
-- Visible focus ring on every interactive element (`:focus-visible`), skip link, landmarks (`header`, `nav`, `main`, `aside`).
-- Radio groups for the invitation role choice and filters.
-- `VerifiedBadge` / `PersonName`: a small primary-blue disc with a white check after a person's name, with a label on hover and keyboard focus ("Verified professional — onboarded through an authorized invitation", or "provisioned by the platform"). Shown only when the server reports `professionally_verified`; never derived from the role. Used in the account menu, sidebar, Users table and drawer (including lineage), Invitations list, HCP profile and audit actor cells.
-- Verification code: six boxes that accept typing, Backspace, arrows, paste and one-time-code autofill.
-- Touch targets at least 40px for primary controls. Motion is reduced to nearly zero under `prefers-reduced-motion`.
-- Text contrast meets WCAG AA in both themes.
-
-## Performance
-
-Route pages are loaded on demand (`React.lazy` in `routes.tsx`). The charts library is fetched only with the dashboard. No image assets; the favicon is inline SVG.

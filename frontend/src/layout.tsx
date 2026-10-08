@@ -11,9 +11,10 @@
 // stacked supporting cards. Cards stretch to the tallest cell in their row, so neighbouring
 // cards always align.
 import { ArrowRight } from "lucide-react";
-import { useId } from "react";
+import { useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { useEntrance } from "./motion";
 import { cx } from "./ui";
 
 type Span = "full" | "wide" | "half" | "narrow";
@@ -50,8 +51,15 @@ export function BentoCell({
   return <div className={cx("flex min-w-0 flex-col [&>*]:flex-1", spanClass(span, pairOnTablet, rows), className)}>{children}</div>;
 }
 
+/** The grid enters after the page heading and figures: first cells lift in, in order, once. */
 export function BentoGrid({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cx("stagger grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12", className)}>{children}</div>;
+  const ref = useRef<HTMLDivElement>(null);
+  useEntrance(ref, { delay: 0.1 });
+  return (
+    <div ref={ref} className={cx("grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12", className)}>
+      {children}
+    </div>
+  );
 }
 
 /**
@@ -205,7 +213,7 @@ export function BarRow({
         <span className="tabular shrink-0 font-semibold text-ink">{figure}</span>
       </div>
       <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-sunken">
-        <div className={cx("animate-grow h-full origin-left rounded-full", fill)} style={{ width: `${v * 100}%` }} />
+        <div className={cx("animate-grow h-full w-full origin-left rounded-full transition-transform duration-300", fill)} style={{ transform: `scaleX(${v})` }} />
       </div>
       {sub && <div className="mt-1 text-xs text-ink-subtle">{sub}</div>}
     </li>

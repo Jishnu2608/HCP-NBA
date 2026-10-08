@@ -354,6 +354,7 @@ export default function Queue() {
               columns={columns}
               rows={list.data.items}
               rowKey={(n) => n.id}
+              motionSig={(n) => n.status}
               onRowClick={(n) => navigate(`/nba/${n.id}`)}
               rowClassName={(n) => n.status === "blocked" && "bg-bad-soft/35"}
               mobileAside={(n) => <StatusBadge status={n.status} />}

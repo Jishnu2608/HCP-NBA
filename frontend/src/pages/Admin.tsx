@@ -218,6 +218,13 @@ export default function Admin() {
         title="Engine"
         subtitle="Run a recommendation cycle, let the simulated population respond to what was sent, or restore the seeded starting point. Everything runs on today's date."
       />
+      {/* While an operation runs (15 to 30 seconds at full scale): an indeterminate bar, only
+          for as long as the request is in flight. Transform only; removed when it ends. */}
+      {busy && (
+        <div role="progressbar" aria-label={`${run.variables?.label ?? "Operation"} running`} className="mb-4 h-1 overflow-hidden rounded-full bg-sunken">
+          <div className="engine-progress h-full w-1/3 rounded-full bg-primary" />
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Operation

@@ -1,3 +1,6 @@
+import { Steps } from "../charts";
+import type { Step } from "../charts";
+import { DUR, Morph, gsap, reducedMotion, useGSAP } from "../motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -11,7 +14,7 @@ import {
   Undo2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, patch, post } from "../api";
 import type { Json } from "../api";
@@ -441,13 +444,28 @@ const VERSION_DECISION: Record<string, string> = {
  *  how the material reached its current state. Every step carries its status in words. */
 function VersionTimeline({ versions, reviews, current }: { versions: Json[]; reviews: Json[]; current: string }) {
   const ordered = [...versions].sort((a, b) => a.version - b.version);
+  const ref = useRef<HTMLOListElement>(null);
+  // Once, on opening: the lineage line draws down and each version appears in turn.
+  useGSAP(
+    () => {
+      if (reducedMotion()) return;
+      const tl = gsap.timeline({ defaults: { duration: DUR.standard } });
+      tl.from("[data-vt-line]", { scaleY: 0, transformOrigin: "50% 0%", duration: 0.5, ease: "power2.inOut" }).from(
+        "[data-vt-item]",
+        { opacity: 0, x: -6, stagger: 0.1, clearProps: "opacity,transform" },
+        0.1,
+      );
+    },
+    { scope: ref },
+  );
   return (
-    <ol className="relative space-y-4 before:absolute before:inset-y-2 before:left-[11px] before:w-0.5 before:bg-line" aria-label="Version history">
+    <ol ref={ref} className="relative space-y-4" aria-label="Version history">
+      <span data-vt-line aria-hidden className="absolute inset-y-2 left-[11px] w-0.5 bg-line" />
       {ordered.map((v) => {
         const decisions = reviews.filter((r) => r.content_id === v.content_id && r.kind === "review");
         const here = v.content_id === current;
         return (
-          <li key={v.content_id} className="relative pl-9">
+          <li key={v.content_id} data-vt-item className="relative pl-9">
             <span
               className={cx(
                 "absolute left-0 top-0.5 grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold",
@@ -461,7 +479,9 @@ function VersionTimeline({ versions, reviews, current }: { versions: Json[]; rev
               <Link to={`/content/${v.content_id}`} className={cx("text-sm font-semibold hover:underline", here ? "text-ink" : "text-primary-ink")}>
                 Version {v.version} · {v.content_id}
               </Link>
-              <MlrBadge status={v.status} />
+              <Morph value={v.status}>
+                <MlrBadge status={v.status} />
+              </Morph>
               {here && <span className="text-xs text-ink-subtle">(this page)</span>}
             </div>
             <p className="tabular mt-0.5 text-xs text-ink-subtle">
@@ -488,6 +508,39 @@ function VersionTimeline({ versions, reviews, current }: { versions: Json[]; rev
         );
       })}
     </ol>
+  );
+}
+
+/**
+ * For the representative who proposed it: where this material is on its way to an HCP.
+ * Built only from the record (submission, decisions, approval window, deliveries); a step
+ * that has not happened is shown as ahead, never assumed.
+ */
+function ContentLifecycle({ c }: { c: Json }) {
+  const decided = (decision: string) => (c.reviews ?? []).some((r: Json) => r.kind === "review" && r.decision === decision);
+  const status: string = c.mlr_status;
+  const ended = status === "rejected" || status === "withdrawn";
+  const approved = status === "approved" || status === "superseded";
+  const steps: Step[] = [];
+  const push = (key: string, label: string, done: boolean, date?: string | null) => steps.push({ key, label, state: done ? "done" : "todo", date });
+  push("draft", "Drafted", true);
+  push("review", "MLR review", Boolean(c.decided_at) || approved || ended, c.submitted_at);
+  if (decided("request_changes")) push("changes", "Changes requested", true);
+  if ((c.versions ?? []).length > 1) push("resubmitted", "Resubmitted", c.version > 1 && Boolean(c.submitted_at));
+  if (ended) {
+    push("ended", status === "rejected" ? "Rejected" : "Withdrawn", true, c.decided_at);
+  } else {
+    push("approved", "Approved", approved, approved ? c.decided_at : null);
+    push("ready", "Ready to use", Boolean(c.usable), c.usable ? c.effective_date : null);
+    push("sent", "Sent to your HCPs", Boolean(c.delivered_by_you));
+  }
+  // The first step not done is the current one (unless the path ended).
+  const next = steps.findIndex((s) => s.state === "todo");
+  if (next >= 0 && !ended) steps[next] = { ...steps[next], state: "current" };
+  return (
+    <Card title="Where this material is" className="mb-4">
+      <Steps steps={steps} label="Content lifecycle" seenKey={`content.${c.lineage_id ?? c.content_id}.${c.content_id}`} />
+    </Card>
   );
 }
 
@@ -702,12 +755,15 @@ export default function ContentDetail() {
         subtitle={`${c.content_id} · version ${c.version}${c.previous_id ? ` (revises ${c.previous_id})` : ""}${c.author ? ` · proposed by ${c.mine ? "you" : c.author}` : c.origin === "library" ? " · library material" : ""}`}
         meta={
           <>
-            <MlrBadge status={c.mlr_status} expired={c.mlr_status === "approved" && c.is_expired} />
+            <Morph value={c.mlr_status}>
+              <MlrBadge status={c.mlr_status} expired={c.mlr_status === "approved" && c.is_expired} />
+            </Morph>
             <Badge tone="sage">{c.audience === "HCP" ? "HCP audience" : "Patient audience"}</Badge>
           </>
         }
       />
 
+      {c.mine && <ContentLifecycle c={c} />}
       {c.withdrawn_reason && c.mlr_status === "withdrawn" && (
         <Alert tone="bad" className="mb-4" title="Withdrawn">
           {c.withdrawn_reason}

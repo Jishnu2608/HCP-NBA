@@ -17,11 +17,18 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useRef } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { DUR, MEDIA, gsap, useGSAP, useMagnetic, useSpotlight } from "../motion";
 import { ThemeToggle } from "../theme";
 import { cx } from "../ui";
 import { Brand } from "./AuthLayout";
+
+// ScrollTrigger is used on this page only (it loads with the landing chunk): one trigger
+// per section, revealed once, never pinned or scrubbed.
+gsap.registerPlugin(ScrollTrigger);
 
 const LOOP = [
   ["Unify", "One profile per HCP and patient: fills, interactions, consent, content."],
@@ -43,7 +50,22 @@ const ROLES: Array<{ icon: typeof Users; name: string; text: string }> = [
   { icon: UserRound, name: "Patient", text: "Own medications, messages and contact preferences" },
 ];
 
-function CtaLink({ to, variant, children, className }: { to: string; variant: "accent" | "quiet" | "light"; children: ReactNode; className?: string }) {
+function CtaLink({
+  to,
+  variant,
+  children,
+  className,
+  magnetic,
+}: {
+  to: string;
+  variant: "accent" | "quiet" | "light";
+  children: ReactNode;
+  className?: string;
+  magnetic?: boolean;
+}) {
+  const ref = useRef<HTMLAnchorElement>(null);
+  // The main call to action leans very slightly toward a mouse pointer (desktop only).
+  useMagnetic(magnetic ? ref : { current: null });
   const style = {
     accent: "bg-accent text-on-accent shadow-card hover:bg-accent-hover",
     quiet: "border border-line-strong bg-surface text-ink hover:bg-subtle",
@@ -51,6 +73,7 @@ function CtaLink({ to, variant, children, className }: { to: string; variant: "a
   };
   return (
     <Link
+      ref={ref}
       to={to}
       className={cx(
         "inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-5 text-[15px] font-semibold transition-colors active:translate-y-px",
@@ -75,9 +98,11 @@ function RecommendationPreview() {
     <div className="relative mx-auto w-full max-w-[460px] lg:mx-0">
       <div
         aria-hidden
+        data-hero="back"
         className="absolute -right-4 top-10 hidden h-[88%] w-[92%] rotate-[2.5deg] rounded-2xl border border-line bg-sage sm:block"
       />
       <figure
+        data-hero="card"
         aria-label="Example recommendation"
         className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-overlay"
       >
@@ -92,7 +117,7 @@ function RecommendationPreview() {
         </div>
         <div className="px-5 pb-5 pt-4">
           <div className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Refill reminder</div>
-          <dl className="mt-3 grid grid-cols-3 gap-2">
+          <dl data-hero="facts" className="mt-3 grid grid-cols-3 gap-2">
             {[
               [<Smartphone key="i" className="h-3.5 w-3.5" aria-hidden />, "Channel", "Text"],
               [<CalendarClock key="i" className="h-3.5 w-3.5" aria-hidden />, "Timing", "Today"],
@@ -110,7 +135,7 @@ function RecommendationPreview() {
           <div className="mt-4 text-[13px] font-semibold text-ink-muted">Why this action</div>
           <ul className="mt-2 space-y-1.5">
             {reasons.map((r) => (
-              <li key={r} className="flex gap-2 text-[13px] leading-5 text-ink">
+              <li key={r} data-hero="reason" className="flex gap-2 text-[13px] leading-5 text-ink">
                 <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary-ink" aria-hidden />
                 {r}
               </li>
@@ -120,13 +145,14 @@ function RecommendationPreview() {
             {["MLR approved", "Consent granted", "Within contact limit"].map((g) => (
               <span
                 key={g}
+                data-hero="gate"
                 className="inline-flex items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 text-xs font-semibold text-ok ring-1 ring-inset ring-ok-line"
               >
                 <ShieldCheck className="h-3 w-3" aria-hidden /> {g}
               </span>
             ))}
           </div>
-          <div className="mt-5 flex gap-2">
+          <div data-hero="action" className="mt-5 flex gap-2">
             <span className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg bg-primary text-[13px] font-semibold text-on-primary">
               Approve and send
             </span>
@@ -143,9 +169,175 @@ function RecommendationPreview() {
   );
 }
 
-export default function Landing() {
+const STRIP = [
+  { icon: HeartPulse, name: "Patient signal", text: "Supply running out" },
+  { icon: Gauge, name: "Insight", text: "Risk and response chance" },
+  { icon: ListChecks, name: "Next best action", text: "Refill reminder by text" },
+  { icon: UserCheck, name: "Human review", text: "Approved by the care team" },
+  { icon: Check, name: "Outcome", text: "Refill recorded, the model learns" },
+];
+
+/**
+ * From signal to outcome, in five steps. When it first comes into view each step lights up
+ * in turn and the connector to the next one draws. Horizontal from 640px, vertical below.
+ */
+function DataToAction() {
+  const ref = useRef<HTMLOListElement>(null);
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add({ wide: "(min-width: 640px)", reduce: MEDIA.reduce }, (ctx) => {
+        const { wide, reduce } = ctx.conditions as { wide: boolean; reduce: boolean };
+        if (reduce) return;
+        const nodes = gsap.utils.toArray<HTMLElement>("[data-strip-node]");
+        const glows = gsap.utils.toArray<HTMLElement>("[data-strip-glow]");
+        const links = gsap.utils.toArray<HTMLElement>("[data-strip-link]");
+        gsap.set(links, wide ? { scaleX: 0, transformOrigin: "0% 50%" } : { scaleY: 0, transformOrigin: "50% 0%" });
+        const tl = gsap.timeline({ paused: true, defaults: { duration: 0.28 } });
+        nodes.forEach((node, i) => {
+          tl.from(node, { opacity: 0.35, y: 6 }, i * 0.22);
+          tl.fromTo(glows[i], { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1 }, i * 0.22);
+          if (links[i]) tl.to(links[i], wide ? { scaleX: 1 } : { scaleY: 1 }, i * 0.22 + 0.12);
+        });
+        ScrollTrigger.create({ trigger: ref.current, start: "top 85%", once: true, onEnter: () => tl.play() });
+      });
+      return () => mm.revert();
+    },
+    { scope: ref },
+  );
   return (
-    <div className="min-h-dvh bg-canvas text-ink">
+    <ol ref={ref} aria-label="From a patient signal to an outcome" className="flex flex-col gap-0 sm:flex-row sm:items-start">
+      {STRIP.map(({ icon: Icon, name, text }, i) => (
+        <li key={name} className="flex gap-3 sm:flex-1 sm:flex-col sm:items-center sm:gap-0 sm:text-center">
+          <div className="flex flex-col items-center sm:w-full sm:flex-row">
+            <span className={cx("hidden h-0.5 flex-1 sm:block", i === 0 && "invisible")} aria-hidden>
+              {i > 0 && <span data-strip-link className="block h-full w-full bg-primary-line" />}
+            </span>
+            <span data-strip-node className="relative grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface text-primary-ink ring-1 ring-line">
+              <span data-strip-glow aria-hidden className="absolute inset-0 rounded-xl bg-primary-soft ring-2 ring-primary-line" />
+              <Icon className="relative h-[18px] w-[18px]" aria-hidden />
+            </span>
+            <span className="hidden h-0.5 flex-1 sm:block" aria-hidden />
+            {i < STRIP.length - 1 && (
+              <span className="my-1 block h-6 w-0.5 sm:hidden" aria-hidden>
+                <span data-strip-link className="block h-full w-full bg-primary-line" />
+              </span>
+            )}
+          </div>
+          <div className="pb-3 sm:mt-2 sm:px-2 sm:pb-0">
+            <p className="text-sm font-semibold text-ink">{name}</p>
+            <p className="text-[13px] leading-5 text-ink-muted">{text}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * The hero plays once, in reading order: headline, promise, actions, then the example
+ * recommendation builds itself the way a reviewer reads one (card, facts, reasons,
+ * safeguards passed, decision). Under a second; nothing loops.
+ */
+function useHeroIntro(scope: React.RefObject<HTMLElement | null>) {
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add(MEDIA.reduce, () => {});
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        const tl = gsap.timeline({ defaults: { duration: DUR.expressive, ease: "power3.out" } });
+        tl.from("[data-hero='text'] > *", { opacity: 0, y: 18, stagger: 0.08 })
+          .from("[data-hero='card']", { opacity: 0, y: 24, duration: 0.5 }, 0.15)
+          .from("[data-hero='back']", { opacity: 0, rotation: 0, duration: 0.6 }, 0.3)
+          .from("[data-hero='facts'] > *", { opacity: 0, y: 6, stagger: 0.05, duration: 0.3 }, 0.4)
+          .from("[data-hero='reason']", { opacity: 0, x: -8, stagger: 0.07, duration: 0.3 }, 0.5)
+          .from("[data-hero='gate']", { opacity: 0, scale: 0.85, stagger: 0.06, duration: 0.25, ease: "back.out(2)" }, 0.75)
+          .from("[data-hero='action']", { opacity: 0, y: 6, duration: 0.3 }, 0.9);
+      });
+      return () => mm.revert();
+    },
+    { scope },
+  );
+}
+
+/**
+ * The eight-step loop: when it scrolls into view each step's marker draws in order. While
+ * it stays on screen, one step at a time is highlighted round the cycle (a single tween at
+ * a time, transform only), and the highlight pauses whenever the section leaves the view.
+ * Off on touch screens and under reduced motion.
+ */
+function useLoopMotion(scope: React.RefObject<HTMLElement | null>) {
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add({ fine: "(pointer: fine)", reduce: MEDIA.reduce }, (ctx) => {
+        const { fine, reduce } = ctx.conditions as { fine: boolean; reduce: boolean };
+        if (reduce) return;
+        const marks = gsap.utils.toArray<HTMLElement>("[data-loop-mark]");
+        const sweeps = gsap.utils.toArray<HTMLElement>("[data-loop-sweep]");
+        gsap.set(marks, { scaleX: 0, transformOrigin: "0% 50%" });
+        const intro = gsap.to(marks, { scaleX: 1, duration: 0.35, stagger: 0.09, paused: true });
+        let cycle: gsap.core.Timeline | null = null;
+        if (fine) {
+          cycle = gsap.timeline({ paused: true, repeat: -1 });
+          sweeps.forEach((el) => {
+            cycle!
+              .fromTo(el, { scaleX: 0, opacity: 1 }, { scaleX: 1, duration: 0.9, ease: "power1.inOut", transformOrigin: "0% 50%" })
+              .to(el, { opacity: 0, duration: 0.3 }, ">-0.1");
+          });
+        }
+        ScrollTrigger.create({
+          trigger: scope.current,
+          start: "top 75%",
+          end: "bottom top",
+          onEnter: () => intro.play(),
+          onToggle: (self) => (self.isActive ? cycle?.play() : cycle?.pause()),
+        });
+      });
+      return () => mm.revert();
+    },
+    { scope },
+  );
+}
+
+/**
+ * Sections below the fold rise in as they first come into view: one ScrollTrigger per
+ * section (not per card), staggering that section's own items. Never replays.
+ */
+function useSectionReveal(scope: React.RefObject<HTMLElement | null>) {
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.utils.toArray<HTMLElement>("[data-reveal]").forEach((section) => {
+          const items = section.querySelectorAll("[data-reveal-item]");
+          if (!items.length) return;
+          gsap.from(items, {
+            opacity: 0,
+            y: 16,
+            duration: 0.5,
+            stagger: 0.07,
+            scrollTrigger: { trigger: section, start: "top 80%", once: true },
+          });
+        });
+      });
+      return () => mm.revert();
+    },
+    { scope },
+  );
+}
+
+export default function Landing() {
+  const root = useRef<HTMLDivElement>(null);
+  const hero = useRef<HTMLElement>(null);
+  const loop = useRef<HTMLElement>(null);
+  const roles = useRef<HTMLUListElement>(null);
+  useHeroIntro(hero);
+  useLoopMotion(loop);
+  useSectionReveal(root);
+  useSpotlight(roles, "[data-spot]");
+  return (
+    <div ref={root} className="min-h-dvh bg-canvas text-ink">
       <a href="#content" className="skip-link">
         Skip to content
       </a>
@@ -178,8 +370,8 @@ export default function Landing() {
 
       <main id="content">
         {/* Hero */}
-        <section className="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-12 sm:px-6 sm:pt-16 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:pb-24 lg:pt-20">
-          <div className="max-w-xl">
+        <section ref={hero} className="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-12 sm:px-6 sm:pt-16 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:pb-24 lg:pt-20">
+          <div data-hero="text" className="max-w-xl">
             <h1 className="text-[44px] font-semibold leading-[1.05] tracking-[-0.03em] text-ink sm:text-[56px] lg:text-[64px]">
               Next Best Action
             </h1>
@@ -187,7 +379,7 @@ export default function Landing() {
               The right message, to the right person, on the right channel, at the right moment.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <CtaLink to="/login" variant="accent">
+              <CtaLink to="/login" variant="accent" magnetic>
                 Sign in <ArrowRight className="h-4 w-4" aria-hidden />
               </CtaLink>
               <CtaLink to="/signup" variant="quiet">
@@ -201,15 +393,23 @@ export default function Landing() {
           <RecommendationPreview />
         </section>
 
+        {/* Signal to outcome: the product in one line */}
+        <section aria-labelledby="strip-title" className="mx-auto max-w-6xl px-4 pb-14 sm:px-6">
+          <h2 id="strip-title" className="sr-only">
+            From a patient signal to an outcome
+          </h2>
+          <DataToAction />
+        </section>
+
         {/* Problem → approach, as a plain statement band */}
-        <section className="border-y border-line bg-surface">
+        <section data-reveal className="border-y border-line bg-surface">
           <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-3 md:gap-0 md:divide-x md:divide-line">
             {[
               ["For HCPs", "Fewer, more relevant touches: the topic and channel each professional actually engages with."],
               ["For patients", "Outreach timed to the refill gap, on a channel the patient has agreed to."],
               ["For the organization", "One engine on one data foundation, on top of existing CRM and marketing tools."],
             ].map(([title, text]) => (
-              <div key={title} className="md:px-8 md:first:pl-0 md:last:pr-0">
+              <div key={title} data-reveal-item className="md:px-8 md:first:pl-0 md:last:pr-0">
                 <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
                 <p className="mt-1.5 text-[15px] leading-6 text-ink-muted">{text}</p>
               </div>
@@ -218,7 +418,7 @@ export default function Landing() {
         </section>
 
         {/* The loop */}
-        <section id="how" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6 lg:py-24">
+        <section ref={loop} id="how" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6 lg:py-24">
           <div className="max-w-2xl">
             <h2 className="text-[32px] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-4xl">
               From data to a decision a person can approve
@@ -232,7 +432,13 @@ export default function Landing() {
               <li key={name} className="relative border-t-2 border-line pt-5">
                 <span
                   aria-hidden
-                  className={cx("absolute -top-[2px] left-0 h-[2px] w-12", name === "Gate" ? "bg-accent" : "bg-primary")}
+                  data-loop-sweep
+                  className="absolute -top-[2px] left-0 h-[2px] w-full bg-primary-line opacity-0"
+                />
+                <span
+                  aria-hidden
+                  data-loop-mark
+                  className={cx("absolute -top-[2px] left-0 h-[2px] w-12", name === "Gate" || name === "Review" ? "bg-accent" : "bg-primary")}
                 />
                 <div className="tabular text-[13px] font-semibold text-ink-subtle">{String(i + 1).padStart(2, "0")}</div>
                 <h3 className="mt-1 text-[17px] font-semibold text-ink">{name}</h3>
@@ -243,9 +449,9 @@ export default function Landing() {
         </section>
 
         {/* Explainable + compliant: asymmetric pair */}
-        <section id="safeguards" className="scroll-mt-20 bg-subtle/70">
+        <section id="safeguards" data-reveal className="scroll-mt-20 bg-subtle/70">
           <div className="mx-auto grid max-w-6xl gap-5 px-4 py-16 sm:px-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:py-24">
-            <div className="flex flex-col rounded-2xl border border-line bg-surface p-6 shadow-card sm:p-10">
+            <div data-reveal-item className="flex flex-col rounded-2xl border border-line bg-surface p-6 shadow-card sm:p-10">
               <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary-soft text-primary-ink" aria-hidden>
                 <ListChecks className="h-5 w-5" />
               </span>
@@ -272,7 +478,7 @@ export default function Landing() {
               </dl>
             </div>
             <div className="flex flex-col gap-5">
-              <div className="flex-1 rounded-2xl bg-nav p-6 text-nav-ink sm:p-8">
+              <div data-reveal-item className="flex-1 rounded-2xl bg-nav p-6 text-nav-ink sm:p-8">
                 <span className="grid h-11 w-11 place-items-center rounded-xl bg-white/5 text-nav-indicator ring-1 ring-inset ring-white/10" aria-hidden>
                   <ShieldCheck className="h-5 w-5" />
                 </span>
@@ -292,7 +498,7 @@ export default function Landing() {
                   Checked when a recommendation is created, again at approval and again at send.
                 </p>
               </div>
-              <div className="rounded-2xl border border-line bg-surface p-6 shadow-card sm:p-8">
+              <div data-reveal-item className="rounded-2xl border border-line bg-surface p-6 shadow-card sm:p-8">
                 <span className="grid h-11 w-11 place-items-center rounded-xl bg-accent-soft text-accent-ink" aria-hidden>
                   <MessageSquareText className="h-5 w-5" />
                 </span>
@@ -307,7 +513,7 @@ export default function Landing() {
         </section>
 
         {/* Measured, not claimed */}
-        <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
+        <section data-reveal className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
           <div className="grid gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16">
             <div>
               <h2 className="text-[32px] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-4xl">
@@ -325,7 +531,7 @@ export default function Landing() {
               ].map(([Icon, title, text]) => {
                 const I = Icon as typeof BarChart3;
                 return (
-                  <li key={String(title)} className="flex gap-4 py-5">
+                  <li key={String(title)} data-reveal-item className="flex gap-4 py-5">
                     <I className="mt-0.5 h-5 w-5 shrink-0 text-primary-ink" aria-hidden />
                     <div>
                       <h3 className="text-[15px] font-semibold text-ink">{String(title)}</h3>
@@ -339,7 +545,7 @@ export default function Landing() {
         </section>
 
         {/* Roles */}
-        <section id="roles" className="scroll-mt-20 border-t border-line bg-surface">
+        <section id="roles" data-reveal className="scroll-mt-20 border-t border-line bg-surface">
           <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
             <div className="max-w-2xl">
               <h2 className="text-[32px] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-4xl">
@@ -350,9 +556,9 @@ export default function Landing() {
                 assigned HCPs, a patient only their own record. Access is enforced on the server for every request.
               </p>
             </div>
-            <ul className="mt-10 grid gap-x-10 sm:grid-cols-2 lg:grid-cols-3">
+            <ul ref={roles} className="mt-10 grid gap-x-10 sm:grid-cols-2 lg:grid-cols-3">
               {ROLES.map(({ icon: Icon, name, text }) => (
-                <li key={name} className="flex gap-3.5 border-t border-line py-5">
+                <li key={name} data-reveal-item data-spot className="spotlight -mx-3 flex gap-3.5 rounded-xl border-t border-line px-3 py-5">
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-sage text-sage-ink" aria-hidden>
                     <Icon className="h-[18px] w-[18px]" />
                   </span>
@@ -379,7 +585,7 @@ export default function Landing() {
               </p>
             </div>
             <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-              <CtaLink to="/login" variant="accent">
+              <CtaLink to="/login" variant="accent" magnetic>
                 Sign in <ArrowRight className="h-4 w-4" aria-hidden />
               </CtaLink>
               <CtaLink to="/signup" variant="light">

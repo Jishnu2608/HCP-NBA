@@ -15,13 +15,14 @@ import {
   Stethoscope,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
 import { useAttention } from "../attention";
 import { BarList, ChartFrame, ChartPanel, ChartTable, DayStrip, StackedBar, StreakCard, duration, shortDate, useInsights } from "../charts";
 import { BentoGrid } from "../layout";
+import { useChangeHighlight } from "../motion";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
 import { preferences } from "../session";
@@ -123,11 +124,13 @@ function MedicationCard({
   coverage,
   onRefill,
   refilling,
+  refilled,
 }: {
   m: Json;
   coverage?: Json;
   onRefill?: () => void;
   refilling?: boolean;
+  refilled?: boolean;
 }) {
   const confirmed = m.review_status === "confirmed";
   return (
@@ -188,7 +191,7 @@ function MedicationCard({
       )}
       {onRefill && confirmed && (
         <div className="mt-4 border-t border-line pt-4">
-          <Button size="sm" busy={refilling} onClick={onRefill}>
+          <Button size="sm" busy={refilling} done={refilled} onClick={onRefill}>
             <RefreshCcw className="h-3.5 w-3.5" aria-hidden /> I refilled today
           </Button>
         </div>
@@ -369,6 +372,7 @@ export function MyMedications() {
                 coverage={coverage.get(m.therapy_id)}
                 onRefill={editable ? () => refill.mutate(m.therapy_id) : undefined}
                 refilling={refill.isPending && refill.variables === m.therapy_id}
+                refilled={refill.isSuccess && refill.variables === m.therapy_id}
               />
             ))}
           </div>
@@ -458,7 +462,7 @@ function ContentIntent({ item }: { item: Json }) {
       <ErrorNote error={answer.error} />
       <div className="mt-1.5 flex flex-wrap gap-2">
         {INTENTS.map(([k, label]) => (
-          <Button key={k} size="sm" variant={k === "decline" ? "ghost" : "secondary"} busy={answer.isPending && answer.variables === k} onClick={() => answer.mutate(k)}>
+          <Button key={k} size="sm" variant={k === "decline" ? "ghost" : "secondary"} busy={answer.isPending && answer.variables === k} done={answer.isSuccess && answer.variables === k} onClick={() => answer.mutate(k)}>
             {label}
           </Button>
         ))}
@@ -878,6 +882,9 @@ function RoutedConsultations() {
   const [answering, setAnswering] = useState<Json | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const close = useCallback(() => setAnswering(null), []);
+  // A newly routed consultation, or one whose state changed, lifts in once at its place.
+  const listRef = useRef<HTMLUListElement>(null);
+  useChangeHighlight(listRef, [(list.data?.items ?? []).map((c: Json) => `${c.id}:${c.status}:${c.group}`).join("|"), showHistory]);
   if (!can(P.SELF_CONSULTATIONS_MANAGE)) return null;
   if (list.isLoading) return <Loading label="Loading consultations" rows={2} />;
   if (list.error) return <ErrorState error={list.error} retry={() => void list.refetch()} title="Consultations could not be loaded" />;
@@ -916,7 +923,7 @@ function RoutedConsultations() {
             </EmptyState>
           </Card>
         )}
-        <ul id="consultation-list" className="scroll-mt-20 space-y-3">
+        <ul ref={listRef} id="consultation-list" className="scroll-mt-20 space-y-3">
           {[...active, ...(showHistory ? history : [])].map((c) => {
             // A care manager who takes a consultation back says so; it never just disappears.
             const withdrawn = c.status_label === "Withdrawn by the care manager";
@@ -924,7 +931,7 @@ function RoutedConsultations() {
               ? { tone: "neutral" as const, label: c.status_label }
               : CONSULTATION_STATE[c.status] ?? { tone: "neutral" as const, label: c.status };
             return (
-              <li key={c.id}>
+              <li key={c.id} data-motion-id={c.id} data-motion-sig={`${c.status}:${c.group}`}>
                 <Card
                   title={
                     <span className="flex flex-wrap items-center gap-2">

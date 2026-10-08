@@ -388,6 +388,7 @@ export default function Invitations() {
               columns={columns}
               rows={items}
               rowKey={(i) => i.id}
+              motionSig={(i) => `${i.status}:${i.delivery ?? ""}`}
               mobileAside={(i) => <InvitationStatus status={i.status} />}
             />
           )}

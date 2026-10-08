@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, CalendarPlus, CheckCircle2, ClipboardList, Hand, Send, XCircle } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, patch, post, query } from "../api";
 import type { Json } from "../api";
 import { BarList, CalendarStrip, ChartPanel, ChartTable, StackedBar, StreakCard, WindowChart, useInsights } from "../charts";
 import { BentoGrid, SectionHeader } from "../layout";
+import { useChangeHighlight } from "../motion";
 import { useToast } from "../toast";
 import {
   Alert,
@@ -144,6 +145,7 @@ export function TaskForm({
         <Button
           variant="primary"
           busy={save.isPending}
+          done={save.isSuccess}
           disabled={!reason.trim() || (kind === "follow_up" ? !due : !at)}
           onClick={() => save.mutate()}
         >
@@ -219,7 +221,7 @@ function CompleteForm({ task, onDone, onCancel }: { task: Json; onDone: () => vo
       </div>
       <TextArea label="Note (optional)" rows={2} value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
       <div className="flex gap-2">
-        <Button variant="primary" busy={done.isPending} onClick={() => done.mutate()}>
+        <Button variant="primary" busy={done.isPending} done={done.isSuccess} onClick={() => done.mutate()}>
           <CheckCircle2 className="h-4 w-4" aria-hidden /> Record
         </Button>
         <Button variant="ghost" onClick={onCancel}>
@@ -282,7 +284,7 @@ export function TaskRow({ t, showHcp = true }: { t: Json; showHcp?: boolean }) {
   const [mode, setMode] = useState<null | "answer" | "complete" | "move">(null);
   const open = t.status === "open" || t.status === "scheduled";
   return (
-    <li className="py-4">
+    <li data-motion-id={t.id} data-motion-sig={`${t.status}:${t.overdue}`} className="py-4">
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={t.kind === "hcp_request" ? "accent" : t.kind === "meeting" ? "info" : "neutral"}>{KIND[t.kind]}</Badge>
         {t.intent_label && <Badge tone="sage">{t.intent_label}</Badge>}
@@ -620,6 +622,9 @@ type View = "today" | "requests" | "follow_ups" | "meetings" | "overdue" | "done
 export default function HcpWork() {
   const [view, setView] = useState<View>("today");
   const work = useQuery({ queryKey: ["hcp-work", view], queryFn: () => api(`/hcp-work${query({ view })}`), refetchInterval: 60_000 });
+  // New HCP requests and tasks whose state changed lift in once; the rest stay still.
+  const listRef = useRef<HTMLUListElement>(null);
+  useChangeHighlight(listRef, [view, (work.data?.items ?? []).map((t: Json) => `${t.id}:${t.status}:${t.overdue}`).join("|")]);
   if (work.isLoading) return <Loading label="Loading your HCP work" />;
   if (work.error) return <ErrorState error={work.error} retry={() => void work.refetch()} variant="page" title="Your HCP work could not be loaded" />;
   const d = work.data!;
@@ -652,7 +657,7 @@ export default function HcpWork() {
               {view === "today" ? "No request, follow-up or meeting is due. New HCP requests appear here and in the menu count." : undefined}
             </EmptyState>
           ) : (
-            <ul className="divide-y divide-line px-5 sm:px-6">
+            <ul ref={listRef} className="divide-y divide-line px-5 sm:px-6">
               {d.items.map((t: Json) => (
                 <TaskRow key={t.id} t={t} />
               ))}

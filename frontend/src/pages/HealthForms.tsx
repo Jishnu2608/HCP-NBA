@@ -2,9 +2,10 @@
 // conditions, medications, care requests, instructions and the care team. What the server
 // accepts is checked there; these only collect and display.
 import { Steps } from "../charts";
+import { Morph, useChangeHighlight } from "../motion";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Clock3, HeartPulse, MessageSquareText, Pill, Stethoscope, UserRound } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useState, useRef } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api } from "../api";
 import type { Json } from "../api";
@@ -588,17 +589,21 @@ export function CareTeam({ team }: { team: Json }) {
 }
 
 export function RequestList({ items, staff, actions }: { items: Json[]; staff?: boolean; actions?: (r: Json) => ReactNode }) {
+  const list = useRef<HTMLUListElement>(null);
+  useChangeHighlight(list, [items.map((r) => `${r.id}:${r.status}`).join("|")]);
   if (!items.length) return <p className="text-sm text-ink-subtle">No requests.</p>;
   return (
-    <ul className="divide-y divide-line">
+    <ul ref={list} className="divide-y divide-line">
       {items.map((r) => (
-        <li key={r.id} className="py-3 first:pt-0 last:pb-0">
+        <li key={r.id} data-motion-id={r.id} data-motion-sig={r.status} className="py-3 first:pt-0 last:pb-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-sm font-semibold text-ink">{REQUEST_LABEL[r.type] ?? titleCase(r.type)}</span>
             <span className="flex flex-wrap items-center gap-1.5">
               {r.overdue && <Badge tone="bad">Overdue</Badge>}
               {/* Patients read what the status means for them; staff see the workflow state. */}
-              <StatusChip status={r.status} staff={staff} label={staff ? undefined : r.status_label} />
+              <Morph value={r.status}>
+                <StatusChip status={r.status} staff={staff} label={staff ? undefined : r.status_label} />
+              </Morph>
             </span>
           </div>
           <div className="mt-0.5 text-[13px] leading-5 text-ink-subtle">
@@ -626,7 +631,7 @@ export function RequestList({ items, staff, actions }: { items: Json[]; staff?: 
           )}
           {r.progress && (
             <div className="mt-2 rounded-lg bg-subtle px-3 py-2.5">
-              <Steps steps={r.progress.steps} label="Where this consultation stands" vertical />
+              <Steps steps={r.progress.steps} label="Where this consultation stands" vertical seenKey={`request.${r.id}`} />
             </div>
           )}
           {r.resolution && !r.resolution.startsWith("Routed to") && (

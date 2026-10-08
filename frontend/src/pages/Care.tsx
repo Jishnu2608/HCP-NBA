@@ -271,6 +271,7 @@ export default function CareRequestsPage() {
             columns={columns}
             rows={list.data.items}
             rowKey={(r) => r.id}
+            motionSig={(r) => `${r.status}:${r.overdue}`}
             onRowClick={(r) => navigate(`/patients/${r.patient_id}`)}
             mobileAside={(r) => (r.overdue ? <Badge tone="bad">Overdue</Badge> : <StatusChip status={r.status} staff />)}
           />

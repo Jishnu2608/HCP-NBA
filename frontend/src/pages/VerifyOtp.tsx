@@ -1,5 +1,6 @@
 import { MailCheck, MailX, TerminalSquare, TimerReset } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { DUR, gsap, reducedMotion, useGSAP } from "../motion";
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
@@ -22,14 +23,49 @@ function CodeInput({
   onChange,
   invalid,
   disabled,
+  failures,
+  verified,
 }: {
   value: string;
   onChange: (code: string) => void;
   invalid: boolean;
   disabled: boolean;
+  /** Increments on each rejected code: the row gives one small shake. */
+  failures: number;
+  /** The code was accepted: the boxes turn green left to right. */
+  verified: boolean;
 }) {
   const boxes = useRef<Array<HTMLInputElement | null>>([]);
+  const group = useRef<HTMLDivElement>(null);
   const digits = Array.from({ length: LENGTH }, (_, i) => value[i] ?? "");
+  const before = useRef(value);
+  // A box that just received a digit settles with a very small pop.
+  useGSAP(
+    () => {
+      const was = before.current;
+      before.current = value;
+      if (reducedMotion() || value.length <= was.length) return;
+      const filled = boxes.current.slice(was.length, value.length).filter(Boolean);
+      if (filled.length) gsap.fromTo(filled, { scale: 1.08 }, { scale: 1, duration: DUR.micro, stagger: 0.02, clearProps: "transform" });
+    },
+    { dependencies: [value] },
+  );
+  // A rejected code: one short, small shake of the row only (none under reduced motion).
+  useGSAP(
+    () => {
+      if (!failures || !group.current || reducedMotion()) return;
+      gsap.fromTo(group.current, { x: 0 }, { keyframes: { x: [-4, 4, -3, 3, 0] }, duration: 0.25, ease: "none", clearProps: "transform" });
+    },
+    { dependencies: [failures] },
+  );
+  // Accepted: a quick left-to-right confirmation across the boxes.
+  useGSAP(
+    () => {
+      if (!verified || reducedMotion()) return;
+      gsap.fromTo(boxes.current.filter(Boolean), { scale: 1 }, { keyframes: { scale: [1, 1.06, 1] }, duration: 0.24, stagger: 0.03 });
+    },
+    { dependencies: [verified] },
+  );
   const focus = (i: number) => boxes.current[Math.max(0, Math.min(LENGTH - 1, i))]?.focus();
 
   function write(index: number, raw: string) {
@@ -69,7 +105,7 @@ function CodeInput({
   }
 
   return (
-    <div role="group" aria-label="Verification code" className="flex justify-between gap-2 sm:gap-3">
+    <div ref={group} role="group" aria-label="Verification code" className="flex justify-between gap-2 sm:gap-3">
       {digits.map((d, i) => (
         <input
           key={i}
@@ -92,7 +128,7 @@ function CodeInput({
           className={cx(
             "tabular h-14 w-full min-w-0 max-w-14 rounded-lg border bg-surface text-center text-2xl font-semibold text-ink shadow-card",
             "transition-[border-color,box-shadow] focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/20",
-            invalid ? "border-bad" : d ? "border-primary-line" : "border-line-strong",
+            verified ? "border-ok bg-ok-soft text-ok" : invalid ? "border-bad" : d ? "border-primary-line" : "border-line-strong",
           )}
         />
       ))}
@@ -109,6 +145,8 @@ export default function VerifyOtp() {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<"verify" | "resend" | null>(null);
   const [sent, setSent] = useState(false);
+  const [failures, setFailures] = useState(0);
+  const [verified, setVerified] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -131,10 +169,14 @@ export default function VerifyOtp() {
     setError(null);
     try {
       const user = await verify(code);
+      // A brief confirmation on the boxes before the workspace opens (at most 250 ms).
+      setVerified(true);
+      await new Promise((resolve) => window.setTimeout(resolve, reducedMotion() ? 0 : 250));
       toast(`Email verified. Welcome, ${user.name.split(" ")[0]}.`);
       navigate(user.home, { replace: true });
     } catch (e) {
       setError(e);
+      setFailures((n) => n + 1);
       setCode("");
     } finally {
       setBusy(null);
@@ -158,6 +200,7 @@ export default function VerifyOtp() {
 
   return (
     <AuthLayout
+      step={2}
       title="Check your email"
       subtitle={
         <>
@@ -218,7 +261,9 @@ export default function VerifyOtp() {
             setError(null);
           }}
           invalid={Boolean(error)}
-          disabled={busy === "verify" || failed}
+          disabled={busy === "verify" || failed || verified}
+          failures={failures}
+          verified={verified}
         />
         <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-subtle" aria-live="polite">
           <span className={cx("tabular", expiresIn === 0 && !failed && "font-medium text-bad")}>
@@ -246,7 +291,7 @@ export default function VerifyOtp() {
           busy={busy === "verify"}
           disabled={code.length !== LENGTH || failed}
         >
-          {busy === "verify" ? "Verifying" : "Verify and continue"}
+          {verified ? "Verified" : busy === "verify" ? "Verifying" : "Verify and continue"}
         </Button>
       </form>
 

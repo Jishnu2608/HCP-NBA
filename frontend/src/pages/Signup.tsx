@@ -51,6 +51,7 @@ export default function Signup() {
 
   return (
     <AuthLayout
+      step={1}
       wide
       title="Create your patient account"
       subtitle="See your medications, messages from your care team and your contact preferences in one place."

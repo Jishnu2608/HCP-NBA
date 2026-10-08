@@ -280,6 +280,7 @@ export default function Invite() {
   return (
     <AuthLayout
       wide
+      step={1}
       title="Accept your invitation"
       subtitle={
         info?.patient

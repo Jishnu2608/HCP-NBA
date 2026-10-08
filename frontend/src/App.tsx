@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { gsap, playExit, reducedMotion, useGSAP } from "./motion";
 import type { ReactNode } from "react";
 import { NavLink, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router-dom";
 import { ROLE_LABEL, useAuth } from "./auth";
@@ -19,7 +20,6 @@ import LegalPage from "./pages/LegalPage";
 import Reaccept from "./pages/Reaccept";
 
 const RestrictedPrivacy = lazy(() => import("./pages/Privacy"));
-import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import VerifyOtp from "./pages/VerifyOtp";
@@ -31,6 +31,9 @@ import { preferences } from "./session";
 import { ThemeToggle } from "./theme";
 import { Avatar, IconButton, Loading, PersonName, cx } from "./ui";
 
+// The landing page carries the scroll-storytelling code (ScrollTrigger); it loads on its own.
+const Landing = lazy(() => import("./pages/Landing"));
+
 const PUBLIC_PATHS = ["/", "/login", "/signup", "/signup/verify"];
 
 /** True for an address that is a real page of the signed-in app (so a signed-out visitor
@@ -38,12 +41,50 @@ const PUBLIC_PATHS = ["/", "/login", "/signup", "/signup/verify"];
 const isAppPath = (path: string) => path === "/denied" || ROUTES.some((r) => matchPath(r.path, path));
 
 /** Menu entries come from the route table, filtered by the account's permissions. */
+/**
+ * One indicator for the whole menu that glides to the active destination, so a change of
+ * page reads as a move rather than one marker vanishing and another appearing. Position is
+ * read once per navigation (no layout reads while animating) and moved with quickTo.
+ */
+function useNavIndicator(list: React.RefObject<HTMLDivElement | null>, bar: React.RefObject<HTMLSpanElement | null>, deps: unknown[]) {
+  const placed = useRef(false);
+  useGSAP(
+    () => {
+      const root = list.current;
+      const el = bar.current;
+      if (!root || !el) return;
+      const active = root.querySelector<HTMLElement>('a[aria-current="page"]');
+      if (!active) {
+        gsap.set(el, { opacity: 0 });
+        placed.current = false;
+        return;
+      }
+      const y = active.offsetTop + 8;
+      const height = active.offsetHeight - 16;
+      if (!placed.current || reducedMotion()) {
+        gsap.set(el, { y, height, opacity: 1 });
+        placed.current = true;
+        return;
+      }
+      gsap.set(el, { height });
+      gsap.to(el, { y, opacity: 1, duration: 0.28, ease: "power3.out", overwrite: true });
+    },
+    { dependencies: deps },
+  );
+}
+
 function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const { can } = useAuth();
   const attention = useAttention();
+  const location = useLocation();
+  const list = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLSpanElement>(null);
   const items = ROUTES.filter((r) => r.label && can(...r.anyOf));
+  useNavIndicator(list, bar, [location.pathname, collapsed, items.length]);
   return (
     <nav aria-label="Main" className="scroll-quiet flex-1 overflow-y-auto px-3 py-2">
+      <div ref={list} className="relative">
+      <span ref={bar} aria-hidden className="pointer-events-none absolute left-0 top-0 w-[3px] rounded-r-full bg-nav-indicator opacity-0" />
       {NAV_GROUPS.map((group) => {
         const entries = items.filter((r) => groupOf(r, can) === group.key);
         if (!entries.length) return null;
@@ -76,12 +117,6 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
                     >
                       {({ isActive }) => (
                         <>
-                          {isActive && (
-                            <span
-                              aria-hidden
-                              className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-nav-indicator"
-                            />
-                          )}
                           <span className={cx("shrink-0", isActive ? "text-nav-indicator" : "text-nav-ink-muted group-hover:text-nav-ink")}>
                             {item.icon}
                           </span>
@@ -107,6 +142,7 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
           </div>
         );
       })}
+      </div>
     </nav>
   );
 }
@@ -175,10 +211,13 @@ function AccountMenu() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const hide = () => playExit([menu.current], () => setOpen(false), { y: -4 });
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node))
+        playExit([menu.current], () => setOpen(false), { y: -4 });
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", close);
@@ -195,7 +234,7 @@ function AccountMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Account menu for ${user.name}`}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? hide() : setOpen(true))}
         className="flex min-h-10 items-center gap-2.5 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-subtle"
       >
         <Avatar name={user.name} size="sm" />
@@ -203,10 +242,11 @@ function AccountMenu() {
           <span className="block max-w-44 truncate text-sm font-semibold text-ink">{user.name}</span>
           <span className="block max-w-44 truncate text-xs text-ink-subtle">{ROLE_LABEL[user.role]}</span>
         </span>
-        <ChevronDown className="h-4 w-4 text-ink-subtle" aria-hidden />
+        <ChevronDown className={cx("h-4 w-4 text-ink-subtle transition-transform duration-200", open && "rotate-180")} aria-hidden />
       </button>
       {open && (
         <div
+          ref={menu}
           role="menu"
           className="animate-rise absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line bg-surface shadow-overlay"
           style={{ zIndex: "var(--z-drawer)" }}
@@ -248,6 +288,12 @@ function Shell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(preferences.navCollapsed);
   const [drawer, setDrawer] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
+  const drawerPanel = useRef<HTMLElement>(null);
+  const drawerBackdrop = useRef<HTMLDivElement>(null);
+  const closeDrawer = () => {
+    if (drawerBackdrop.current && !reducedMotion()) gsap.to(drawerBackdrop.current, { opacity: 0, duration: 0.18 });
+    playExit([drawerPanel.current], () => setDrawer(false), { x: -32 });
+  };
 
   // Close the mobile drawer and move focus to the page on every navigation.
   useEffect(() => {
@@ -257,7 +303,7 @@ function Shell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!drawer) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeDrawer();
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
@@ -283,7 +329,7 @@ function Shell({ children }: { children: ReactNode }) {
       <aside
         aria-label="Application"
         className={cx(
-          "sticky top-0 hidden h-dvh shrink-0 flex-col bg-nav transition-[width] duration-200 lg:flex",
+          "sticky top-0 hidden h-dvh shrink-0 flex-col bg-nav lg:flex",
           collapsed ? "w-[76px]" : "w-64",
         )}
         style={{ zIndex: "var(--z-nav)" }}
@@ -311,8 +357,9 @@ function Shell({ children }: { children: ReactNode }) {
       {/* Mobile and tablet drawer */}
       {drawer && (
         <div className="lg:hidden" style={{ zIndex: "var(--z-drawer)", position: "relative" }}>
-          <div className="animate-fade fixed inset-0 bg-black/45" aria-hidden onClick={() => setDrawer(false)} />
+          <div ref={drawerBackdrop} className="animate-fade fixed inset-0 bg-black/45" aria-hidden onClick={closeDrawer} />
           <aside
+            ref={drawerPanel}
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
@@ -324,7 +371,7 @@ function Shell({ children }: { children: ReactNode }) {
                 type="button"
                 aria-label="Close navigation"
                 autoFocus
-                onClick={() => setDrawer(false)}
+                onClick={closeDrawer}
                 className="grid h-10 w-10 place-items-center rounded-lg text-nav-ink hover:bg-nav-raised"
               >
                 <X className="h-5 w-5" aria-hidden />
@@ -422,7 +469,14 @@ export default function App() {
     // address asked for is remembered so sign-in can return there if the role allows it.
     return (
       <Routes>
-        <Route path="/" element={<Landing />} />
+        <Route
+          path="/"
+          element={
+            <Suspense fallback={<div className="min-h-dvh bg-canvas" />}>
+              <Landing />
+            </Suspense>
+          }
+        />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/signup/verify" element={<VerifyOtp />} />

@@ -25,10 +25,14 @@ import {
   Table2,
 } from "lucide-react";
 import { createContext, useCallback, useContext, useRef, useState } from "react";
+import type { RefObject } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { api } from "./api";
+import { preferences } from "./session";
 import type { Json } from "./api";
+import { useAuth } from "./auth";
 import { BentoCard } from "./layout";
+import { DUR, changedSinceSeen, gsap, isTouch, reducedMotion, useGSAP } from "./motion";
 import { EmptyState, ErrorState, LoadingRows, cx, fmtDate, num, toDate } from "./ui";
 
 /* ------------------------------------------------------------------ data */
@@ -105,9 +109,67 @@ const tipText = (t: Tip) => [t.title, ...(t.lines ?? []).filter(Boolean)].join("
 type TipState = { tip: Tip; x: number; y: number } | null;
 const TipContext = createContext<(tip: Tip | null, el?: Element) => void>(() => {});
 
-/** Positions one small tooltip for every mark inside it. */
+/**
+ * A chart draws itself in once, the first time it is on screen: bars grow from their
+ * baseline, lines draw, points and cells fade in. Values and labels are final from the
+ * start, so nothing ever shows a false number; later data changes use the marks' own
+ * transitions and never replay this. Marks opt in with `data-draw`:
+ *   "x" / "y"  bars that grow along that axis (at most 12 move; the rest are already there)
+ *   "line"     an SVG path that draws
+ *   "fade"     a group (for example all scatter points) that fades in as one
+ *   "cells"    a row of small cells revealed left to right in one short sweep
+ * Charts already in view at mount animate before the first paint; others wait for an
+ * IntersectionObserver (no ScrollTrigger on app pages).
+ */
+function useDrawIn(scope: RefObject<HTMLDivElement | null>) {
+  useGSAP(
+    () => {
+      const root = scope.current;
+      if (!root || reducedMotion()) return;
+      const play = () => {
+        const max = isTouch() ? 6 : 12;
+        const tl = gsap.timeline({ defaults: { duration: 0.42, ease: "power2.out" } });
+        const xs = Array.from(root.querySelectorAll<HTMLElement>('[data-draw="x"]')).slice(0, max);
+        const ys = Array.from(root.querySelectorAll<HTMLElement>('[data-draw="y"]')).slice(0, max);
+        // Bars keep their own inline scale as the end state; their CSS transition (used for
+        // later value changes) is paused during the draw so the two never fight.
+        const bars = [...xs, ...ys];
+        if (bars.length) gsap.set(bars, { transition: "none" });
+        if (xs.length) tl.from(xs, { scaleX: 0, transformOrigin: "0% 50%", stagger: 0.03 }, 0);
+        if (ys.length) tl.from(ys, { scaleY: 0, transformOrigin: "50% 100%", stagger: 0.03 }, 0);
+        if (bars.length) tl.eventCallback("onComplete", () => gsap.set(bars, { clearProps: "transition" }));
+        root.querySelectorAll<SVGPathElement>('[data-draw="line"]').forEach((path) => {
+          const length = path.getTotalLength();
+          tl.fromTo(path, { strokeDasharray: length, strokeDashoffset: length }, { strokeDashoffset: 0, duration: 0.5, clearProps: "strokeDasharray,strokeDashoffset" }, 0);
+        });
+        const fades = root.querySelectorAll('[data-draw="fade"]');
+        if (fades.length) tl.from(fades, { opacity: 0, duration: 0.3, clearProps: "opacity" }, 0.1);
+        root.querySelectorAll<HTMLElement>('[data-draw="cells"]').forEach((row) => {
+          tl.from(row.children, { opacity: 0, duration: 0.2, stagger: { amount: 0.4 }, clearProps: "opacity" }, 0);
+        });
+      };
+      const r = root.getBoundingClientRect();
+      if (r.top < window.innerHeight && r.bottom > 0) return play();
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            io.disconnect();
+            play();
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+      return () => io.disconnect();
+    },
+    { scope },
+  );
+}
+
+/** Positions one small tooltip for every mark inside it, and draws its chart in once. */
 export function ChartFrame({ children, className }: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  useDrawIn(ref);
   const [state, setState] = useState<TipState>(null);
   const show = useCallback((tip: Tip | null, el?: Element) => {
     if (!tip || !el || !ref.current) return setState(null);
@@ -278,7 +340,8 @@ export function StackedBar({ segments, unit, onSelect }: { segments: Segment[]; 
         {shown.map((s) => (
           <div
             key={s.key + s.label}
-            className={cx("h-full first:rounded-l-full last:rounded-r-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus", FILL[s.tone])}
+            data-draw="x"
+            className={cx("h-full transition-[width] duration-300 first:rounded-l-full last:rounded-r-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus", FILL[s.tone])}
             style={{ width: `${(s.value / Math.max(total, 1)) * 100}%` }}
             {...mark(
               { title: s.label, lines: [`${num(s.value)} ${unit}${s.value === 1 ? "" : "s"}`, total ? `${Math.round((s.value / total) * 100)}% of ${num(total)}` : null, s.hint] },
@@ -343,8 +406,9 @@ export function BarList({ items, max }: { items: BarItem[]; max?: number }) {
             {...mark(i.tip, i.onOpen)}
           >
             <div
-              className={cx("animate-grow h-full origin-left rounded-full", FILL[i.tone ?? "brand"])}
-              style={{ width: `${Math.max(i.value > 0 ? 2 : 0, Math.min(1, i.value / top) * 100)}%` }}
+              data-draw="x"
+              className={cx("h-full w-full origin-left rounded-full transition-transform duration-300", FILL[i.tone ?? "brand"])}
+              style={{ transform: `scaleX(${Math.max(i.value > 0 ? 0.02 : 0, Math.min(1, i.value / top))})` }}
             />
           </div>
           {i.sub && <div className="mt-1 text-xs text-ink-subtle">{i.sub}</div>}
@@ -368,11 +432,18 @@ export function Columns({ items, height = 120 }: { items: Column[]; height?: num
         {items.map((i) => (
           <div key={i.key} className="flex h-full min-w-0 flex-1 flex-col justify-end">
             <span className="tabular mb-1 text-center text-xs font-semibold text-ink">{num(i.value)}</span>
+            {/* The bar's track is full height; the coloured bar scales inside it. */}
             <div
-              className={cx("rounded-t-[4px] outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus", FILL[i.tone ?? "brand"])}
-              style={{ height: `${Math.max(i.value > 0 ? 3 : 1, (i.value / top) * (height - 22))}px`, opacity: i.value ? 1 : 0.35 }}
+              className="relative outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"
+              style={{ height: height - 22 }}
               {...mark(i.tip)}
-            />
+            >
+              <div
+                data-draw="y"
+                className={cx("absolute inset-x-0 bottom-0 h-full origin-bottom rounded-t-[4px] transition-transform duration-300", FILL[i.tone ?? "brand"])}
+                style={{ transform: `scaleY(${Math.max(i.value > 0 ? 3 : 1, (i.value / top) * (height - 22)) / (height - 22)})`, opacity: i.value ? 1 : 0.35 }}
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -398,7 +469,7 @@ export function DayStrip({ days, label }: { days: DayCell[]; label: string }) {
   const mark = useMark();
   return (
     <div>
-      <div className="grid gap-[2px]" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }} aria-label={label} role="group">
+      <div data-draw="cells" className="grid gap-[2px]" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }} aria-label={label} role="group">
         {days.map((d) => (
           <div
             key={d.date}
@@ -441,13 +512,15 @@ export function Sparkline({
   return (
     <svg viewBox={`0 0 ${W} ${height}`} className="h-auto w-full overflow-visible" role="group" aria-label={label}>
       <line x1={pad} x2={W - pad} y1={height - pad} y2={height - pad} stroke="var(--chart-grid)" />
-      <path d={path} fill="none" stroke="var(--series-1)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      <path data-draw="line" d={path} fill="none" stroke="var(--series-1)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      <g data-draw="fade">
       {points.map((p, i) => (
         <circle
           key={p.key}
           cx={x(i)}
           cy={y(p.value)}
           r={i === points.length - 1 ? 4 : 3}
+          data-last={i === points.length - 1 ? "" : undefined}
           fill="var(--series-1)"
           stroke="var(--surface)"
           strokeWidth={2}
@@ -455,6 +528,7 @@ export function Sparkline({
           {...mark(p.tip)}
         />
       ))}
+      </g>
     </svg>
   );
 }
@@ -541,6 +615,7 @@ export function Scatter({
       >
         {yLabel}
       </text>
+      <g data-draw="fade">
       {points.map((p) => (
         <circle
           key={p.key}
@@ -554,6 +629,7 @@ export function Scatter({
           {...mark(p.tip, p.onOpen, false)}
         />
       ))}
+      </g>
     </svg>
   );
 }
@@ -585,7 +661,7 @@ export function CalendarStrip({ days, label }: { days: CalendarDay[]; label: str
             >
               <span className="text-[11px] text-ink-subtle">{day.toLocaleDateString("en-US", { weekday: "short" })}</span>
               <span className={cx("tabular text-sm font-semibold", i === 0 ? "text-primary-ink" : "text-ink")}>{day.getDate()}</span>
-              <span className="mt-auto flex flex-wrap gap-0.5 pt-1" aria-hidden>
+              <span key={total} className={cx("mt-auto flex flex-wrap gap-0.5 pt-1", total > 0 && "animate-pop")} aria-hidden>
                 {d.parts.flatMap((p) => Array.from({ length: Math.min(p.value, 6) }, (_, k) => <span key={p.label + k} className={cx("h-2 w-2 rounded-full", FILL[p.tone])} />))}
               </span>
             </li>
@@ -630,6 +706,7 @@ export function WindowChart({ rows, today, days = 21, label }: { rows: WindowRow
                 {r.label}
               </span>
               <div
+                data-draw="x"
                 className="relative flex h-4 gap-[2px] overflow-hidden rounded outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"
                 {...mark(r.tip, r.onOpen)}
               >
@@ -662,15 +739,40 @@ const STEP_TONE = {
 };
 const STEP_WORD = { done: "Done", current: "Now", todo: "Next", skipped: "Not needed" };
 
+/**
+ * When the current step moved since this viewer last saw it (`seenKey`, for example the
+ * request id), the steps reached since then fill in and the new current step pops, once.
+ */
+function useStepAdvance(scope: RefObject<HTMLOListElement | null>, steps: Step[], seenKey?: string) {
+  const { user } = useAuth();
+  const reached = steps.filter((s) => s.state === "done" || s.state === "current").length;
+  useGSAP(
+    () => {
+      const root = scope.current;
+      if (!root || !seenKey || !user) return;
+      const key = `steps.${user.id}.${seenKey}`;
+      const before = Number(preferencesSafe(key));
+      const moved = changedSinceSeen(key, String(reached));
+      if (!moved || reducedMotion() || !(reached > before)) return;
+      const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-step-node]")).slice(Math.max(0, before - 1), reached);
+      if (!nodes.length) return;
+      gsap.from(nodes, { scale: 0.6, opacity: 0.3, duration: DUR.standard, stagger: 0.12, ease: "back.out(2)", clearProps: "transform,opacity" });
+    },
+    { scope, dependencies: [reached, seenKey] },
+  );
+}
+
 /** Where a request stands: one step per stage, with the date it happened. Horizontal from
- *  640px unless `vertical` (narrow columns). */
-export function Steps({ steps, label, vertical }: { steps: Step[]; label: string; vertical?: boolean }) {
+ *  640px unless `vertical` (narrow columns). `seenKey` animates a step change once. */
+export function Steps({ steps, label, vertical, seenKey }: { steps: Step[]; label: string; vertical?: boolean; seenKey?: string }) {
+  const ref = useRef<HTMLOListElement>(null);
+  useStepAdvance(ref, steps, seenKey);
   if (vertical)
     return (
-      <ol aria-label={label} className="space-y-1.5">
+      <ol ref={ref} aria-label={label} className="space-y-1.5">
         {steps.map((s) => (
           <li key={s.key} className="flex items-center gap-2">
-            <span className={cx("grid h-5 w-5 shrink-0 place-items-center rounded-full [&>svg]:h-3 [&>svg]:w-3", STEP_TONE[s.state])} aria-hidden>
+            <span data-step-node className={cx("grid h-5 w-5 shrink-0 place-items-center rounded-full [&>svg]:h-3 [&>svg]:w-3", STEP_TONE[s.state])} aria-hidden>
               {STEP_ICON[s.state]}
             </span>
             <span className={cx("min-w-0 flex-1 text-[13px] leading-5", s.state === "current" ? "font-semibold text-ink" : s.state === "todo" ? "text-ink-subtle" : "text-ink-muted")}>
@@ -685,12 +787,12 @@ export function Steps({ steps, label, vertical }: { steps: Step[]; label: string
       </ol>
     );
   return (
-    <ol aria-label={label} className="flex flex-col gap-2 sm:flex-row sm:gap-0">
+    <ol ref={ref} aria-label={label} className="flex flex-col gap-2 sm:flex-row sm:gap-0">
       {steps.map((s, i) => (
         <li key={s.key} className="flex min-w-0 items-start gap-2 sm:flex-1 sm:flex-col sm:items-center sm:text-center">
           <div className="flex w-full items-center sm:justify-center">
             <span className={cx("hidden h-0.5 flex-1 sm:block", i === 0 ? "invisible" : s.state === "todo" ? "bg-line" : "bg-ok-fill")} aria-hidden />
-            <span className={cx("grid h-6 w-6 shrink-0 place-items-center rounded-full", STEP_TONE[s.state])} aria-hidden>
+            <span data-step-node className={cx("grid h-6 w-6 shrink-0 place-items-center rounded-full", STEP_TONE[s.state])} aria-hidden>
               {STEP_ICON[s.state]}
             </span>
             <span className={cx("hidden h-0.5 flex-1 sm:block", i === steps.length - 1 ? "invisible" : steps[i + 1].state === "todo" ? "bg-line" : "bg-ok-fill")} aria-hidden />
@@ -713,6 +815,24 @@ export function Steps({ steps, label, vertical }: { steps: Step[]; label: string
 /** A streak, with its exact definition always one hover or focus away. */
 export function StreakCard({ streak, label, empty }: { streak: Json | null | undefined; label: string; empty: string }) {
   const [open, setOpen] = useState(false);
+  const { user } = useAuth();
+  const figure = useRef<HTMLSpanElement>(null);
+  const tile = useRef<HTMLSpanElement>(null);
+  const current = streak ? String(streak.value) : null;
+  // A change since this viewer last saw the streak: the new number slides in (up when it
+  // grew, a plain fade when it restarted). First sight, reloads and no change: static.
+  useGSAP(
+    () => {
+      if (current === null || !user || !figure.current) return;
+      const key = `streak.${user.id}.${label}`;
+      const before = Number(preferencesSafe(key));
+      if (!changedSinceSeen(key, current) || reducedMotion()) return;
+      const grew = Number(current) > before;
+      gsap.from(figure.current, { yPercent: grew ? 60 : 0, opacity: 0, duration: DUR.standard, clearProps: "transform,opacity" });
+      if (grew && tile.current) gsap.from(tile.current, { scale: 0.85, duration: DUR.standard, ease: "back.out(2)", clearProps: "transform" });
+    },
+    { dependencies: [current, label] },
+  );
   if (!streak) {
     return (
       <div className="flex items-center gap-3 rounded-lg bg-subtle px-4 py-3 text-sm text-ink-muted">
@@ -725,13 +845,17 @@ export function StreakCard({ streak, label, empty }: { streak: Json | null | und
   return (
     <div className="rounded-lg bg-subtle px-4 py-3">
       <div className="flex items-center gap-3">
-        <span className={cx("grid h-9 w-9 shrink-0 place-items-center rounded-lg", streak.value ? "bg-ok-soft text-ok" : "bg-sunken text-ink-subtle")} aria-hidden>
+        <span ref={tile} className={cx("grid h-9 w-9 shrink-0 place-items-center rounded-lg", streak.value ? "bg-ok-soft text-ok" : "bg-sunken text-ink-subtle")} aria-hidden>
           <Repeat className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[13px] text-ink-muted">{label}</p>
-          <p className="tabular text-lg font-semibold leading-6 text-ink">
-            {value} <span className="text-sm font-normal text-ink-muted">{streak.unit}</span>
+          <p className="tabular overflow-hidden text-lg font-semibold leading-6 text-ink">
+            <span ref={figure} className="inline-block">
+              {value}
+            </span>{" "}
+            <span className="text-sm font-normal text-ink-muted">{streak.unit}</span>
+            {!streak.value && <span className="ml-2 text-xs font-normal text-ink-muted">Starts again with the next one</span>}
           </p>
         </div>
         <button
@@ -749,6 +873,11 @@ export function StreakCard({ streak, label, empty }: { streak: Json | null | und
 }
 
 /* ------------------------------------------------------------------ helpers */
+
+/** The last value seen under a key, read before `changedSinceSeen` records the new one. */
+function preferencesSafe(key: string) {
+  return preferences.lastSeen(key) ?? "0";
+}
 
 /** "Oct 8" style label for axis ticks. */
 export const shortDate = (d: string | null | undefined) => (d ? fmtDate(d).replace(/, \d{4}$/, "") : "");

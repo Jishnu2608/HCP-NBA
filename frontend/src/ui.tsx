@@ -10,6 +10,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CalendarX2,
+  Check,
   CheckCheck,
   CheckCircle2,
   ChevronDown,
@@ -52,6 +53,7 @@ import { Children, useEffect, useId, useLayoutEffect, useRef, useState } from "r
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "./api";
+import { DUR, Morph, gsap, playExit, reducedMotion as motionReduced, useChangeHighlight, useEntrance, useGSAP } from "./motion";
 import { useAuth } from "./auth";
 
 export function cx(...parts: Array<string | false | null | undefined>) {
@@ -183,15 +185,27 @@ const SIZE: Record<Size, string> = {
   lg: "min-h-12 px-5 text-[15px] gap-2",
 };
 
+/**
+ * A button. `busy` shows a spinner while an action runs; `done` (set when the action
+ * succeeded, e.g. `mutation.isSuccess`) shows a check for a moment: idle -> working -> done.
+ */
 export function Button({
   variant = "secondary",
   size = "md",
   busy,
+  done,
   children,
   className,
   type = "button",
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; busy?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; busy?: boolean; done?: boolean }) {
+  const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => {
+    if (!done) return;
+    setConfirmed(true);
+    const t = window.setTimeout(() => setConfirmed(false), 1600);
+    return () => window.clearTimeout(t);
+  }, [done]);
   return (
     <button
       {...rest}
@@ -207,8 +221,13 @@ export function Button({
         className,
       )}
     >
-      {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+      {busy ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+      ) : (
+        confirmed && <Check className="animate-pop h-4 w-4" aria-hidden />
+      )}
       {children}
+      {confirmed && !busy && <span className="sr-only">Done</span>}
     </button>
   );
 }
@@ -291,11 +310,11 @@ export const NBA_STATUS: Record<string, { tone: Tone; label: string; icon: React
 export function StatusBadge({ status }: { status: string }) {
   const s = NBA_STATUS[status] ?? { tone: "neutral" as Tone, label: titleCase(status), icon: null };
   return (
-    <span key={status} className="animate-pop inline-flex max-w-full">
+    <Morph value={status}>
       <Badge tone={s.tone} icon={s.icon}>
         {s.label}
       </Badge>
-    </span>
+    </Morph>
   );
 }
 
@@ -379,12 +398,11 @@ export function ConsentBadge({ granted }: { granted: boolean }) {
 
 /* ----------------------------------------------------------------- figures */
 
-const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-
 /**
- * A figure that counts up to its value when it first appears or changes ("1,087",
- * "72.2%", "16 days"). Prefix, suffix, grouping and decimals are kept. Anything that is not
- * a plain figure is shown as it is. No animation under reduced motion.
+ * A figure ("1,087", "72.2%", "16 days") that moves from its old value to its new one when it
+ * changes. On first appearance it simply shows the value: counting up on every load would
+ * misstate the current figure for a moment. GSAP writes the text directly, so the tween never
+ * re-renders React. Anything that is not a plain figure is shown as it is.
  */
 export function AnimatedNumber({ value }: { value: ReactNode }) {
   const text = typeof value === "number" ? value.toLocaleString("en-US") : typeof value === "string" ? value : null;
@@ -392,42 +410,40 @@ export function AnimatedNumber({ value }: { value: ReactNode }) {
   const target = match ? Number(match[2].replace(/,/g, "")) : NaN;
   const decimals = match?.[2].split(".")[1]?.length ?? 0;
   const grouped = match?.[2].includes(",") ?? false;
-  const [shown, setShown] = useState(target);
-  const from = useRef(0);
+  const ref = useRef<HTMLSpanElement>(null);
+  const last = useRef<number | null>(null);
+  const format = (n: number) =>
+    grouped ? n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : n.toFixed(decimals);
 
-  useEffect(() => {
-    if (Number.isNaN(target)) return;
-    if (reducedMotion()) {
-      setShown(target);
-      return;
-    }
-    const start = performance.now();
-    const origin = from.current;
-    let frame = 0;
-    const step = (now: number) => {
-      const k = Math.min(1, (now - start) / 650);
-      const eased = 1 - (1 - k) ** 3;
-      setShown(origin + (target - origin) * eased);
-      if (k < 1) frame = requestAnimationFrame(step);
-      else from.current = target;
-    };
-    frame = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frame);
-  }, [target]);
+  useGSAP(
+    () => {
+      const el = ref.current;
+      if (!el || Number.isNaN(target)) return;
+      const previous = last.current;
+      last.current = target;
+      if (previous === null || previous === target || motionReduced()) {
+        el.textContent = format(target);
+        return;
+      }
+      const counter = { v: previous };
+      gsap.to(counter, {
+        v: target,
+        duration: 0.5,
+        onUpdate: () => {
+          el.textContent = format(counter.v);
+        },
+      });
+    },
+    { dependencies: [target] },
+  );
 
   if (!match || Number.isNaN(target)) return <>{value}</>;
-  // Before the first frame (the value was "—" while loading) there is no figure yet: start
-  // from where the count starts, never from NaN.
-  const current = Number.isFinite(shown) ? shown : from.current;
-  const number = grouped
-    ? current.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-    : current.toFixed(decimals);
   return (
     <>
       {/* Screen readers get the final value once, not every frame. */}
       <span aria-hidden>
         {match[1]}
-        {number}
+        <span ref={ref} />
         {match[3]}
       </span>
       <span className="sr-only">{text}</span>
@@ -540,6 +556,9 @@ export const Stat = KpiCard;
  * On two-column phones an odd last card spans the full width.
  */
 export function KpiGrid({ children, className }: { children: ReactNode; className?: string }) {
+  const kpiRef = useRef<HTMLDivElement>(null);
+  // The figures come in right after the page heading, before the panels below them.
+  useEntrance(kpiRef, { delay: 0.04 });
   const items = Children.toArray(children).filter(Boolean);
   const n = items.length;
   const grid =
@@ -556,7 +575,7 @@ export function KpiGrid({ children, className }: { children: ReactNode; classNam
     return undefined;
   };
   return (
-    <div className={cx("stagger mb-8 grid gap-4", grid, className)}>
+    <div ref={kpiRef} className={cx("mb-8 grid gap-4", grid, className)}>
       {items.map((item, i) => (
         <div key={i} className={cx("min-w-0", span(i))}>
           {item}
@@ -596,8 +615,8 @@ export function Meter({
       className={cx("h-2 overflow-hidden rounded-full bg-sunken", className)}
     >
       <div
-        className={cx("animate-grow h-full origin-left rounded-full transition-[width] duration-500", fill[tone])}
-        style={{ width: `${v * 100}%` }}
+        className={cx("animate-grow h-full w-full origin-left rounded-full transition-transform duration-500", fill[tone])}
+        style={{ transform: `scaleX(${v})` }}
       />
     </div>
   );
@@ -1036,11 +1055,11 @@ export function EmptyState({
   };
   return (
     <div className={cx("flex flex-col items-center text-center", compact ? "px-4 py-6" : "px-6 py-12")}>
-      <span className={cx("grid h-11 w-11 place-items-center rounded-xl", iconTone[tone])} aria-hidden>
+      <span className={cx("animate-pop grid h-11 w-11 place-items-center rounded-xl", iconTone[tone])} aria-hidden>
         {icon ?? <Inbox className="h-5 w-5" />}
       </span>
-      <p className="mt-3 text-[15px] font-semibold text-ink">{title}</p>
-      {children && <p className="mt-1 max-w-md text-sm text-ink-subtle">{children}</p>}
+      <p className="animate-fade mt-3 text-[15px] font-semibold text-ink">{title}</p>
+      {children && <p className="animate-fade mt-1 max-w-md text-sm text-ink-subtle">{children}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
@@ -1119,7 +1138,11 @@ export function DataTable<T>({
   caption,
   mobileAside,
   tableFrom = "3xl",
+  motionSig,
 }: {
+  /** A summary of a row's state (for example its status). A row whose summary changes, or
+   *  a new row, lifts in once; other rows never move. */
+  motionSig?: (row: T) => string;
   /** Container width from which the table layout is used; below it, stacked cards. */
   tableFrom?: "2xl" | "3xl" | "4xl" | "5xl";
   columns: Column<T>[];
@@ -1140,8 +1163,11 @@ export function DataTable<T>({
     }
   };
   const show = TABLE_FROM[tableFrom];
+  const box = useRef<HTMLDivElement>(null);
+  useChangeHighlight(box, [motionSig ? rows.map((r) => `${rowKey(r)}:${motionSig(r)}`).join("|") : null]);
+  const motion = (row: T) => (motionSig ? { "data-motion-id": String(rowKey(row)), "data-motion-sig": motionSig(row) } : {});
   return (
-    <div className="@container">
+    <div ref={box} className="@container">
       <div className={cx("scroll-quiet hidden overflow-x-auto", show.table)}>
         <table className="w-full border-collapse text-left text-sm">
           <caption className="sr-only">{caption}</caption>
@@ -1166,6 +1192,7 @@ export function DataTable<T>({
             {rows.map((row) => (
               <tr
                 key={rowKey(row)}
+                {...motion(row)}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
                 onKeyDown={onRowClick ? keyActivate(row) : undefined}
                 tabIndex={onRowClick ? 0 : undefined}
@@ -1197,6 +1224,7 @@ export function DataTable<T>({
         {rows.map((row) => (
           <li
             key={rowKey(row)}
+            {...motion(row)}
             onClick={onRowClick ? () => onRowClick(row) : undefined}
             onKeyDown={onRowClick ? keyActivate(row) : undefined}
             tabIndex={onRowClick ? 0 : undefined}
@@ -1678,10 +1706,22 @@ export function fmtDateTime(value: string | null | undefined) {
  *  the sticky top bar. */
 export function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
+  const backdrop = useRef<HTMLDivElement>(null);
+  const closing = useRef(false);
+  // Slide out, then let the owner unmount it (Escape, backdrop and the close button). A
+  // drawer the page closes itself (after a save) leaves at once.
+  const close = () => {
+    if (closing.current) return;
+    closing.current = true;
+    playExit([panel.current], onClose, { x: 32 });
+    if (backdrop.current && !motionReduced()) gsap.to(backdrop.current, { opacity: 0, duration: DUR.micro });
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
@@ -1692,7 +1732,7 @@ export function Drawer({ title, onClose, children }: { title: string; onClose: (
   }, [onClose]);
   return createPortal(
     <div style={{ zIndex: "var(--z-drawer)", position: "relative" }}>
-      <div className="animate-fade fixed inset-0 bg-black/40" aria-hidden onClick={onClose} />
+      <div ref={backdrop} className="animate-fade fixed inset-0 bg-black/40" aria-hidden onClick={close} />
       <div
         ref={panel}
         role="dialog"
@@ -1703,7 +1743,7 @@ export function Drawer({ title, onClose, children }: { title: string; onClose: (
       >
         <div className="flex h-16 shrink-0 items-center justify-between border-b border-line px-5 sm:px-6">
           <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
-          <IconButton label="Close" onClick={onClose}>
+          <IconButton label="Close" onClick={close}>
             <X className="h-5 w-5" aria-hidden />
           </IconButton>
         </div>

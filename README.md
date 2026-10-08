@@ -355,6 +355,7 @@ scripts/                setup and run
 21. Routing a consultation never makes an HCP a prescriber, and an HCP sees a patient's clinical details only while a consultation is with them.
 22. A representative contacts an HCP only through the engine's safeguards; HCP work follows the current assignment; an HCP's intent is a signal and a task, never a way around a safeguard.
 23. Every chart figure is computed on the server within the reader's own scope; small samples are labelled instead of charted, charts add no clinical, compliance or commercial claim, and streaks count only finished work from records.
+24. Motion explains a change and never decorates: transform and opacity only, no loops on working pages, nothing animates on first load, reduced motion turns it off.
 
 ## Path to production
 

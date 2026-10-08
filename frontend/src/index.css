@@ -313,23 +313,19 @@ p {
   top: 12px;
 }
 
-/* Skeleton shimmer for loading states. */
+/* Skeletons pulse in opacity only (composited, no repaint each frame); they disappear,
+   and the pulse with them, as soon as the content arrives. */
 .skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--subtle) 0%,
-    color-mix(in srgb, var(--subtle) 55%, var(--surface)) 50%,
-    var(--subtle) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+  background: var(--sunken);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
 }
-@keyframes shimmer {
-  from {
-    background-position: 200% 0;
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
   }
-  to {
-    background-position: -200% 0;
+  50% {
+    opacity: 0.55;
   }
 }
 
@@ -418,17 +414,47 @@ p {
 .stagger > :nth-child(11) { animation-delay: 300ms; }
 .stagger > :nth-child(n + 12) { animation-delay: 330ms; }
 
-/* Proportion bars grow from the left when they first appear. */
+/* Proportion bars grow from the left when they first appear, to the bar's own scale (set
+   inline as scaleX(value)); later changes of value use the bar's transform transition.
+   Only a "from" frame, filled backwards: the end state is always the element's own. */
 @keyframes grow {
   from {
     transform: scaleX(0);
   }
-  to {
-    transform: scaleX(1);
-  }
 }
 .animate-grow {
-  animation: grow 600ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: grow 600ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+@keyframes grow-up {
+  from {
+    transform: scaleY(0);
+  }
+}
+.animate-grow-up {
+  animation: grow-up 450ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+/* Landing role cards: a soft light under the pointer (motion.useSpotlight writes the
+   position). Desktop pointers only; nothing is drawn until the pointer is over a card. */
+.spotlight {
+  position: relative;
+  isolation: isolate;
+}
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+  background: radial-gradient(260px circle at var(--spot-x, 50%) var(--spot-y, 50%), var(--primary-soft), transparent 70%);
+  pointer-events: none;
+}
+@media (pointer: fine) {
+  .spotlight:hover::before {
+    opacity: 1;
+  }
 }
 
 /* A status badge that changes in place pops once, so the change is noticed. */
@@ -455,6 +481,20 @@ p {
 /* A waiting period in a chart: neutral diagonal hatching, readable without colour. */
 .chart-hatch {
   background: repeating-linear-gradient(135deg, var(--line-strong) 0 2px, var(--sunken) 2px 6px);
+}
+
+/* An operation in flight (engine page): a bar travels across, transform only. It exists only
+   while the request runs, so it never loops in the background. */
+@keyframes engine-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.engine-progress {
+  animation: engine-progress 1.4s ease-in-out infinite;
 }
 
 /* Chart marks (charts.tsx) that open something show it on hover. */

@@ -95,4 +95,11 @@ export const preferences = {
   setNavCollapsed: (collapsed: boolean) => writeLocal(NAV_KEY, collapsed ? "1" : "0"),
   profileSkipped: (accountId: number) => readLocal(`${PROFILE_SKIP_KEY}.${accountId}`) === "1",
   setProfileSkipped: (accountId: number) => writeLocal(`${PROFILE_SKIP_KEY}.${accountId}`, "1"),
+  /**
+   * The last value of something this viewer has already seen (a streak, a consultation's
+   * step), so a change is animated once and never again on reload. Used only to decide
+   * whether to animate; the server stays the source of truth for the value itself.
+   */
+  lastSeen: (key: string): string | null => readLocal(`nba.seen.${key}`),
+  setLastSeen: (key: string, value: string) => writeLocal(`nba.seen.${key}`, value),
 };
