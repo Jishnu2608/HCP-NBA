@@ -33,6 +33,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, query } from "../api";
+import { BarList, ChartFrame, ChartPanel, ChartTable, Sparkline, shortDate, useInsights } from "../charts";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
 import { BarRow, BentoCard, BentoGrid, InsightRow, SectionHeader } from "../layout";
@@ -132,6 +133,117 @@ function StatusBar({ rows, target, label }: { rows: Json[]; target: string; labe
 
 function Empty({ children }: { children: ReactNode }) {
   return <p className="rounded-lg bg-subtle px-4 py-5 text-sm leading-6 text-ink-muted">{children}</p>;
+}
+
+/** One small line per series, each on its own scale from zero, with its total: never two
+ *  measures on one axis. */
+function SmallMultiples({ series, unit }: { series: Json[]; unit: string }) {
+  return (
+    <ul className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+      {series.map((sr) => {
+        const top = Math.max(1, ...sr.points.map((p: Json) => p.value));
+        return (
+          <li key={sr.key ?? sr.role} className="min-w-0">
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="min-w-0 text-ink">{sr.label}</span>
+              <span className="tabular shrink-0 font-semibold text-ink">{num(sr.total ?? sr.points.reduce((n: number, p: Json) => n + p.value, 0))}</span>
+            </div>
+            <ChartFrame className="mt-1">
+              <Sparkline
+                height={44}
+                domain={[0, top]}
+                label={`${sr.label} per day`}
+                points={sr.points.map((p: Json) => ({
+                  key: p.date,
+                  value: p.value,
+                  tip: { title: fmtDate(p.date), lines: [`${p.value} ${unit}`] },
+                }))}
+              />
+            </ChartFrame>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Platform health for administrators (GET /api/insights/operations): open work per staff
+ *  account, failures per day and sign-ins per role. Counts only, no health information. */
+function PlatformOperations() {
+  const q = useInsights("operations");
+  const d: Json | undefined = q.data;
+  const workload: Json[] = d?.workload ?? [];
+  const failures: Json[] = d?.failures ?? [];
+  const roles: Json[] = d?.active_users.roles ?? [];
+  const range = d ? `${shortDate(d.active_users.dates[0])} to ${shortDate(d.active_users.dates[d.active_users.dates.length - 1])}` : "";
+  return (
+    <>
+      <SectionHeader title="Platform operations" description="Open work per account, failures and sign-ins. Counts only; no health information." />
+      <BentoGrid>
+        <ChartPanel
+          span="half"
+          title="Open work per account"
+          question="Each staff account's open work, by the same definitions as its own menu counts. Select an account to manage it."
+          query={q}
+          link={{ to: "/users", label: "Users" }}
+          empty={d && !workload.length ? "No staff account has a work queue." : false}
+          table={
+            <ChartTable
+              caption="Open work per account"
+              head={["Account", "Role", "Open work"]}
+              rows={workload.map((w) => [w.name, w.role_label, w.open_work])}
+            />
+          }
+        >
+          <BarList
+            items={workload.slice(0, 10).map((w) => ({
+              key: String(w.user_id),
+              label: w.name,
+              sub: w.role_label,
+              value: w.open_work,
+              tone: "info",
+              tip: { title: `${w.name} · ${w.role_label}`, lines: w.parts.map((p: Json) => `${p.label}: ${p.value}`) },
+            }))}
+          />
+        </ChartPanel>
+        <ChartPanel
+          span="half"
+          title="Sign-ins per day by role"
+          question={`Accounts that signed in each day, ${range}.`}
+          query={q}
+          empty={d && !roles.length ? "No sign-in recorded in the last 14 days." : false}
+          table={
+            d && (
+              <ChartTable
+                caption="Sign-ins per day by role"
+                head={["Day", ...roles.map((r) => r.label)]}
+                rows={d.active_users.dates.map((day: string, i: number) => [fmtDate(day), ...roles.map((r) => r.points[i].value)])}
+              />
+            )
+          }
+        >
+          <SmallMultiples series={roles} unit="accounts signed in" />
+        </ChartPanel>
+        <ChartPanel
+          span="full"
+          title="Failures and safeguard stops per day"
+          question={`Each on its own scale, ${range}. A rise is worth a look; a single event is not a trend.`}
+          query={q}
+          table={
+            d && (
+              <ChartTable
+                caption="Failures per day"
+                head={["Day", ...failures.map((f) => f.label)]}
+                rows={d.active_users.dates.map((day: string, i: number) => [fmtDate(day), ...failures.map((f) => f.points[i].value)])}
+              />
+            )
+          }
+        >
+          <SmallMultiples series={failures} unit="events" />
+        </ChartPanel>
+      </BentoGrid>
+    </>
+  );
 }
 
 export default function Dashboard() {
@@ -491,7 +603,10 @@ export default function Dashboard() {
         </BentoCard>
       </BentoGrid>
 
-      {/* 6. Recent activity */}
+      {/* 6. Platform operations (administrators) */}
+      {can(P.USER_MANAGE) && <PlatformOperations />}
+
+      {/* 7. Recent activity */}
       {can(P.AUDIT_READ) && (
         <>
           <SectionHeader title="Recent activity" description="The latest entries in the audit log." />

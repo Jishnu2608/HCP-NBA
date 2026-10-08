@@ -428,6 +428,12 @@ class CareRequest(Base):
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     due_date: Mapped[date | None] = mapped_column(Date)
     visible_to_patient: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # Set only through `clinical.care.set_status`: the latest routing to an HCP, that HCP's
+    # answer, and the closing. They time the consultation for the patient, the HCP and the
+    # care manager's insights.
+    routed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

@@ -13,6 +13,7 @@ from app.commercial import contact, tasks
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can
+from app.insights import care as care_insights
 from app.models import (
     Consent,
     Content,
@@ -198,6 +199,8 @@ def patient_360(
         **out.patient_brief(p),
         "preferred_channel": p.preferred_channel,
         "risk_segment": p.risk_segment,
+        # The risk score on each snapshot date: the same readers already see it per therapy.
+        "risk_history": care_insights.risk_history(db, p.patient_id),
         "as_of_date": today,
         "therapies": [out.therapy_out(db, t, today, with_risk=True) for t in therapies],
         "fills": [

@@ -452,6 +452,16 @@ p {
   scrollbar-color: var(--line-strong) transparent;
 }
 
+/* A waiting period in a chart: neutral diagonal hatching, readable without colour. */
+.chart-hatch {
+  background: repeating-linear-gradient(135deg, var(--line-strong) 0 2px, var(--sunken) 2px 6px);
+}
+
+/* Chart marks (charts.tsx) that open something show it on hover. */
+[data-mark][role="button"] {
+  cursor: pointer;
+}
+
 /* Recharts: inherit the product font and keep focus outlines off SVG surfaces. */
 .recharts-wrapper,
 .recharts-text {

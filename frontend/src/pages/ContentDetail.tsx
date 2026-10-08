@@ -429,6 +429,68 @@ function MessageBox({ placeholder, onSend, busy }: { placeholder: string; onSend
   );
 }
 
+const VERSION_DECISION: Record<string, string> = {
+  approve: "Approved",
+  request_changes: "Changes requested",
+  reject: "Rejected",
+  withdraw: "Withdrawn",
+  request_revision: "New version requested",
+};
+
+/** The lineage as a path: each version, then the decisions taken on it, so a reviewer sees
+ *  how the material reached its current state. Every step carries its status in words. */
+function VersionTimeline({ versions, reviews, current }: { versions: Json[]; reviews: Json[]; current: string }) {
+  const ordered = [...versions].sort((a, b) => a.version - b.version);
+  return (
+    <ol className="relative space-y-4 before:absolute before:inset-y-2 before:left-[11px] before:w-0.5 before:bg-line" aria-label="Version history">
+      {ordered.map((v) => {
+        const decisions = reviews.filter((r) => r.content_id === v.content_id && r.kind === "review");
+        const here = v.content_id === current;
+        return (
+          <li key={v.content_id} className="relative pl-9">
+            <span
+              className={cx(
+                "absolute left-0 top-0.5 grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold",
+                here ? "bg-primary text-on-primary ring-4 ring-primary-soft" : "border-2 border-line-strong bg-surface text-ink-muted",
+              )}
+              aria-hidden
+            >
+              {v.version}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link to={`/content/${v.content_id}`} className={cx("text-sm font-semibold hover:underline", here ? "text-ink" : "text-primary-ink")}>
+                Version {v.version} · {v.content_id}
+              </Link>
+              <MlrBadge status={v.status} />
+              {here && <span className="text-xs text-ink-subtle">(this page)</span>}
+            </div>
+            <p className="tabular mt-0.5 text-xs text-ink-subtle">
+              {[
+                v.submitted_at && `Submitted ${fmtDate(v.submitted_at)}`,
+                v.decided_at && `Decided ${fmtDate(v.decided_at)}`,
+                v.expiry_date && v.status === "approved" && `Valid until ${fmtDate(v.expiry_date)}`,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Not submitted"}
+            </p>
+            {decisions.length > 0 && (
+              <ul className="mt-1.5 space-y-1">
+                {decisions.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
+                    <span className="font-semibold text-ink">{VERSION_DECISION[r.decision] ?? r.decision}</span>
+                    <span className="tabular text-xs text-ink-subtle">{fmtDate(r.ts)}</span>
+                    {r.feedback && <span className="line-clamp-1 min-w-0 text-ink-muted">“{r.feedback}”</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function History({ c, onPosted }: { c: Json; onPosted: (d: Json) => void }) {
   const send = useMutation({
     mutationFn: (v: { body: string; interaction_id?: number }) => post(`/content/${c.content_id}/messages`, v),
@@ -769,17 +831,8 @@ export default function ContentDetail() {
         </div>
         <div className="space-y-4 lg:col-span-5">
           {reviewer && <DecisionPanel key={`${c.content_id}-${c.mlr_status}`} c={c} onDone={decisionDone} />}
-          <Card title="Versions">
-            <ol className="space-y-2 text-sm">
-              {c.versions.map((v: Json) => (
-                <li key={v.content_id} className="flex flex-wrap items-center justify-between gap-2">
-                  <Link to={`/content/${v.content_id}`} className={cx("font-semibold hover:underline", v.content_id === c.content_id ? "text-ink" : "text-primary-ink")}>
-                    v{v.version} · {v.content_id}
-                  </Link>
-                  <MlrBadge status={v.status} />
-                </li>
-              ))}
-            </ol>
+          <Card title="Version history" description="Each version of this material and the MLR decisions on it, oldest first.">
+            <VersionTimeline versions={c.versions} reviews={c.reviews} current={c.content_id} />
           </Card>
           {reviewer && c.recommendations_waiting > 0 && (
             <Alert tone="warn" title="Recommendations waiting">

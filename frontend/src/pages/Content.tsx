@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ClipboardCheck, Clock3, FilePlus2, Hourglass, MessageSquareReply, Undo2 } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
+import { BarList, ChartPanel, ChartTable, Columns, useInsights } from "../charts";
+import { BentoGrid, SectionHeader } from "../layout";
 import { P } from "../permissions";
 import {
   Badge,
@@ -120,6 +122,165 @@ function ContentRow({ c, reviewer }: { c: Json; reviewer: boolean }) {
   );
 }
 
+const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+const dayText = (n: number) => (n < 1 ? "under 1 day" : days(n));
+
+/** What needs the reviewer first: submissions by how long they have waited, and approvals
+ *  about to end (GET /api/insights/content). No review-time target exists, so nothing is
+ *  marked late. */
+function ReviewAttention({ q }: { q: ReturnType<typeof useInsights> }) {
+  const navigate = useNavigate();
+  const d: Json | undefined = q.data;
+  const waiting: Json[] = d?.waiting ?? [];
+  const expiring: Json[] = d?.expiring ?? [];
+  return (
+    <BentoGrid className="mb-6">
+      <ChartPanel
+        span="half"
+        title="Waiting for a decision"
+        question="Submitted versions by how long they have waited, longest first. Select one to open it."
+        query={q}
+        empty={d && !waiting.length ? "Nothing is waiting for review." : false}
+        table={
+          <ChartTable
+            caption="Submissions waiting for a decision"
+            head={["Content", "Submitted", "Days waiting"]}
+            rows={waiting.map((w) => [`${w.content_id} v${w.version}`, fmtDate(w.submitted_at), w.days_waiting ?? "—"])}
+          />
+        }
+      >
+        <BarList
+          items={waiting.slice(0, 8).map((w) => ({
+            key: w.content_id,
+            label: `${w.content_id} v${w.version}`,
+            sub: `${w.title}${w.claimed ? " · in review" : " · not started"}${w.submitted_at ? "" : " · submission date not recorded"}`,
+            value: w.days_waiting ?? 0,
+            figure: w.days_waiting != null ? days(Math.round(w.days_waiting)) : "—",
+            tone: "warn",
+            tip: { title: w.title, lines: [`${w.content_id} version ${w.version}`, `Submitted ${fmtDate(w.submitted_at)}`, w.claimed ? "A reviewer has started" : "No reviewer has started"] },
+            onOpen: () => navigate(`/content/${w.content_id}`),
+          }))}
+        />
+      </ChartPanel>
+      <ChartPanel
+        span="half"
+        title="Approvals ending soon"
+        question={`Approved material whose approval ends within ${d?.expiry_window_days ?? 60} days. Days remaining, not a percentage.`}
+        query={q}
+        empty={d && !expiring.length ? `No approval ends in the next ${d.expiry_window_days} days.` : false}
+        table={
+          <ChartTable
+            caption="Approvals ending soon"
+            head={["Content", "Audience", "Ends", "Days left"]}
+            rows={expiring.map((e) => [`${e.content_id} v${e.version}`, e.audience, fmtDate(e.expiry_date), e.days_remaining])}
+          />
+        }
+      >
+        <BarList
+          max={d?.expiry_window_days}
+          items={expiring.slice(0, 8).map((e) => ({
+            key: e.content_id,
+            label: `${e.content_id} v${e.version}`,
+            sub: e.title,
+            value: e.days_remaining,
+            figure: `${days(e.days_remaining)} left`,
+            tone: e.days_remaining <= 14 ? "bad" : "warn",
+            tip: {
+              title: e.title,
+              lines: [
+                `${e.content_id} version ${e.version} · ${e.audience} audience`,
+                `Approved ${fmtDate(e.approved_at)}, ends ${fmtDate(e.expiry_date)}`,
+                e.jurisdictions?.length ? `Countries: ${e.jurisdictions.join(", ")}` : "Not restricted by country",
+              ],
+            },
+            onOpen: () => navigate(`/content/${e.content_id}`),
+          }))}
+        />
+      </ChartPanel>
+    </BentoGrid>
+  );
+}
+
+/** How reviews went: time from submission to decision, and which perspective raised
+ *  concerns (last 90 days). */
+function ReviewHistory({ q }: { q: ReturnType<typeof useInsights> }) {
+  const d: Json | undefined = q.data;
+  const t: Json | undefined = d?.turnaround;
+  const c: Json | undefined = d?.concerns;
+  return (
+    <>
+      <SectionHeader title="Review history" description={`Decisions in the last ${t?.window_days ?? 90} days.`} />
+      <BentoGrid>
+        <ChartPanel
+          span="half"
+          title="Time to decision"
+          question="Days from submission to the MLR decision, per decided version."
+          query={q}
+          empty={t && !t.items.length ? "No version was decided in this period." : false}
+          note={
+            t &&
+            (t.summary.median != null
+              ? `Median ${dayText(t.summary.median)} (range ${dayText(t.summary.min)} to ${dayText(t.summary.max)}) over ${t.summary.n} decisions.`
+              : `${t.summary.n} decision${t.summary.n === 1 ? "" : "s"} so far; a median appears from 3.`)
+          }
+          table={
+            t && (
+              <ChartTable
+                caption="Time to decision per version"
+                head={["Content", "Decision", "Submitted", "Decided", "Days"]}
+                rows={t.items.map((i: Json) => [`${i.content_id} v${i.version}`, i.status, fmtDate(i.submitted_at), fmtDate(i.decided_at), i.days])}
+              />
+            )
+          }
+        >
+          {t && (
+            <Columns
+              items={t.bins.map((b: Json) => ({
+                key: b.key,
+                label: b.label,
+                value: b.value,
+                tone: "info",
+                tip: { title: b.label, lines: [`${b.value} decision${b.value === 1 ? "" : "s"}`] },
+              }))}
+            />
+          )}
+        </ChartPanel>
+        <ChartPanel
+          span="half"
+          title="Concerns by perspective"
+          question="How often each perspective recorded a concern in a decision."
+          query={q}
+          empty={c && !c.assessed_reviews ? "No decision recorded the medical, legal and regulatory perspectives in this period." : false}
+          note={c && `Out of ${c.assessed_reviews} decision${c.assessed_reviews === 1 ? "" : "s"} with the perspectives recorded.`}
+          table={
+            c && (
+              <ChartTable
+                caption="Concerns by perspective"
+                head={["Perspective", "Concerns", "Content"]}
+                rows={c.perspectives.map((p: Json) => [p.label, p.value, p.content_ids.join(", ") || "—"])}
+              />
+            )
+          }
+        >
+          {c && (
+            <BarList
+              max={c.assessed_reviews}
+              items={c.perspectives.map((p: Json) => ({
+                key: p.key,
+                label: p.label,
+                value: p.value,
+                figure: `${p.value} of ${c.assessed_reviews}`,
+                tone: p.value ? "warn" : "neutral",
+                tip: { title: `${p.label}: ${p.value} concern${p.value === 1 ? "" : "s"}`, lines: [p.content_ids.length ? `On ${p.content_ids.slice(0, 4).join(", ")}${p.content_ids.length > 4 ? "…" : ""}` : "No concerns"] },
+              }))}
+            />
+          )}
+        </ChartPanel>
+      </BentoGrid>
+    </>
+  );
+}
+
 export default function ContentLibrary() {
   const { can } = useAuth();
   const reviewer = can(P.CONTENT_APPROVE);
@@ -128,6 +289,7 @@ export default function ContentLibrary() {
   const [view, setView] = useState<ReviewView>(reviewer ? "review" : "all");
   const [repView, setRepView] = useState<RepView>("approved");
   const list = useQuery({ queryKey: ["content"], queryFn: () => api<Json[]>("/content"), refetchInterval: 60_000 });
+  const insights = useInsights("content", reviewer);
 
   if (list.isLoading) return <Loading label="Loading content" />;
   if (list.error) return <ErrorState error={list.error} retry={() => void list.refetch()} variant="page" title="Content could not be loaded" />;
@@ -178,6 +340,7 @@ export default function ContentLibrary() {
               icon={<Clock3 className="h-4 w-4" aria-hidden />}
             />
           </KpiGrid>
+          {reviewer && <ReviewAttention q={insights} />}
           <Toolbar>
             <Segmented
               label="Content view"
@@ -234,6 +397,7 @@ export default function ContentLibrary() {
           </ul>
         )}
       </Card>
+      {reviewer && <ReviewHistory q={insights} />}
     </>
   );
 }

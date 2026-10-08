@@ -6,7 +6,7 @@ for the engine only once the care team confirms it, and an HCP is linked only wh
 manager chooses one. Synthetic demo records are read-only here; their history is generated.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from app.clinical import activity, records, vocabulary
 from app.clinical import hcps as hcp_records
 from app.core import age, clock, jurisdiction
 from app.engagement import simulator
+from app.insights.patient import request_progress
 from app.models import (
     CareNote,
     CareRequest,
@@ -219,6 +220,8 @@ def request_out(db: Session, r: CareRequest, *, for_patient: bool = False) -> di
         "entry_pending": entry_unresolved(db, r) if r.status != CareRequestStatus.CLOSED else False,
         "created_at": r.created_at,
         "updated_at": r.updated_at,
+        # A consultation's steps with the date each happened (insights.patient).
+        "progress": request_progress(r),
     }
     if not for_patient:
         patient = db.get(Patient, r.patient_id)
@@ -631,6 +634,20 @@ def add_condition(
     return condition
 
 
+def set_status(request: CareRequest, status: str, now: datetime | None = None) -> None:
+    """The only way a care request changes status: the status and the moment it happened
+    move together (routed, answered by the HCP, closed), so timings shown to the patient,
+    the HCP and the care manager come from the record itself."""
+    now = now or utcnow()
+    request.status = status
+    if status == CareRequestStatus.AWAITING_HCP:
+        request.routed_at, request.responded_at = now, None
+    elif status == CareRequestStatus.HCP_RESPONDED:
+        request.responded_at = now
+    elif status == CareRequestStatus.CLOSED:
+        request.closed_at = now
+
+
 def _close_linked(db: Session, cm: User, *, condition_id=None, therapy_id=None, note: str) -> None:
     column = CareRequest.condition_id if condition_id else CareRequest.therapy_id
     for r in db.scalars(
@@ -638,7 +655,8 @@ def _close_linked(db: Session, cm: User, *, condition_id=None, therapy_id=None, 
             column == (condition_id or therapy_id), CareRequest.status != CareRequestStatus.CLOSED
         )
     ):
-        r.status, r.resolution, r.handled_by_user_id = CareRequestStatus.CLOSED, note, cm.id
+        set_status(r, CareRequestStatus.CLOSED)
+        r.resolution, r.handled_by_user_id = note, cm.id
 
 
 def set_condition_status(
@@ -985,16 +1003,17 @@ def assign_hcp(
             request.condition_id = condition.id if condition else None
             # Routing starts the consultation; it stays open until the HCP has answered and
             # the care manager has closed it.
-            request.status = CareRequestStatus.AWAITING_HCP
+            set_status(request, CareRequestStatus.AWAITING_HCP)
             request.resolution = f"Routed to {out.hcp_name(hcp)}."
         elif not entry_unresolved(db, request):
             # A review request closes only once its entry is confirmed or dismissed.
-            request.status = CareRequestStatus.CLOSED
+            set_status(request, CareRequestStatus.CLOSED)
             request.resolution = request.resolution or f"Routed to {out.hcp_name(hcp)}."
     db.flush()
     _audit(
         db, cm, "hcp_assigned", patient.patient_id, hcp=hcp.hcp_id, specialties=sorted(held),
         condition=condition.condition if condition else None,
+        request=request.id if request is not None else None,
     )  # fmt: skip
 
 
@@ -1035,7 +1054,7 @@ def respond_consultation(
                     request_id=request.id, created_at=now,
                 )
             )  # fmt: skip
-        request.status = CareRequestStatus.HCP_RESPONDED
+        set_status(request, CareRequestStatus.HCP_RESPONDED, now)
         request.resolution = f"{out.hcp_name(hcp)} responded."
     elif response == "decline":
         why = _text(note_to_care_team or message, "reason", 500, required=True)
@@ -1048,7 +1067,7 @@ def respond_consultation(
                 request_id=request.id, created_at=now,
             )
         )  # fmt: skip
-        request.status = CareRequestStatus.OPEN
+        set_status(request, CareRequestStatus.OPEN, now)
         request.resolution = (
             f"{out.hcp_name(hcp)} could not take this consultation. Your care manager will "
             "arrange another healthcare professional."
@@ -1126,7 +1145,8 @@ def return_unsuited_consultations(
     hcp = db.get(Hcp, hcp_id)
     count = 0
     for r in unsuited_consultations(db, hcp_id, specialties):
-        r.status, r.assigned_hcp_id = CareRequestStatus.OPEN, None
+        set_status(r, CareRequestStatus.OPEN)
+        r.assigned_hcp_id = None
         r.resolution = (
             f"{out.hcp_name(hcp)} can no longer take this consultation. Your care manager will "
             "arrange another healthcare professional."
@@ -1157,7 +1177,8 @@ def return_consultations(db: Session, actor: User, hcp_id: str) -> int:
             CareRequest.status == CareRequestStatus.AWAITING_HCP,
         )
     ):
-        r.status, r.assigned_hcp_id = CareRequestStatus.OPEN, None
+        set_status(r, CareRequestStatus.OPEN)
+        r.assigned_hcp_id = None
         r.resolution = (
             f"{out.hcp_name(hcp)} is no longer available; your care manager will arrange another."
         )
@@ -1220,7 +1241,7 @@ def update_request(
             request.resolution = outcome
     elif resolution is not None:
         request.resolution = _text(resolution, "resolution", 500)
-    request.status = status
+    set_status(request, status)
     request.handled_by_user_id = cm.id
     request.updated_at = utcnow()
     _audit(db, cm, "care_request_updated", request.patient_id, request=request.id, status=status)

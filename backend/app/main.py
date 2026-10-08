@@ -13,6 +13,7 @@ from app.api import (
     commercial,
     content,
     governance,
+    insights,
     invitations,
     me,
     nba,
@@ -72,7 +73,7 @@ app = FastAPI(
 
 ROUTERS = (
     system, auth, invitations, users, nba, people, care, content, governance, me, analytics,
-    commercial,
+    commercial, insights,
 )  # fmt: skip
 for module in ROUTERS:
     app.include_router(module.router)

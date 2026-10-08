@@ -20,6 +20,8 @@ import { Link } from "react-router-dom";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
 import { useAttention } from "../attention";
+import { BarList, ChartFrame, ChartPanel, ChartTable, DayStrip, StackedBar, StreakCard, duration, shortDate, useInsights } from "../charts";
+import { BentoGrid } from "../layout";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
 import { preferences } from "../session";
@@ -80,7 +82,53 @@ function AdherenceBadge({ therapy }: { therapy: Json }) {
   );
 }
 
-function MedicationCard({ m, onRefill, refilling }: { m: Json; onRefill?: () => void; refilling?: boolean }) {
+const DAY_WORD = { covered: "Medicine on hand", gap: "No supply recorded", before: "Not started yet" } as const;
+
+/** The last 30 days of one medication: covered by a recorded refill, or not. Supply on hand,
+ *  not doses taken (figures from GET /api/insights/patient). */
+function SupplyStrip({ coverage }: { coverage: Json }) {
+  return (
+    <div className="mb-5">
+      <div className="flex items-baseline justify-between text-[13px] text-ink-subtle">
+        <span>Last {coverage.days.length} days</span>
+        <span className="tabular">
+          <span className="font-semibold text-ink">{coverage.covered_days}</span> of {coverage.counted_days} days covered
+        </span>
+      </div>
+      <ChartFrame className="mt-1.5">
+        <DayStrip
+          label={`Supply on hand each day for ${titleCase(coverage.drug_name)}`}
+          days={coverage.days.map((d: Json) => ({
+            date: d.date,
+            state: d.state,
+            tip: { title: fmtDate(d.date), lines: [DAY_WORD[d.state as keyof typeof DAY_WORD]] },
+          }))}
+        />
+      </ChartFrame>
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-subtle">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-[3px] bg-ok-fill" aria-hidden /> On hand
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-[3px] border border-bad-line bg-bad-soft" aria-hidden /> No supply recorded
+        </span>
+        {coverage.supply_until && <span>Current supply lasts until {fmtDate(coverage.supply_until)}</span>}
+      </div>
+    </div>
+  );
+}
+
+function MedicationCard({
+  m,
+  coverage,
+  onRefill,
+  refilling,
+}: {
+  m: Json;
+  coverage?: Json;
+  onRefill?: () => void;
+  refilling?: boolean;
+}) {
   const confirmed = m.review_status === "confirmed";
   return (
     <Card
@@ -111,6 +159,7 @@ function MedicationCard({ m, onRefill, refilling }: { m: Json; onRefill?: () => 
           <div className="mt-1 text-xs text-ink-subtle">The marker shows the 80% goal.</div>
         </div>
       )}
+      {confirmed && coverage && <SupplyStrip coverage={coverage} />}
       {confirmed ? (
         <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div>
@@ -162,6 +211,7 @@ export function MyMedications() {
     queryFn: () => api("/me/health"),
     enabled: can(P.SELF_HEALTH_MANAGE),
   });
+  const insights = useInsights("patient", can(P.SELF_HEALTH_MANAGE));
   const [panel, setPanel] = useState<Panel>(null);
   const close = useCallback(() => setPanel(null), []);
   const [skipped, setSkipped] = useState(() => (user ? preferences.profileSkipped(user.id) : false));
@@ -206,6 +256,8 @@ export function MyMedications() {
   const empty = !h.conditions.length && !h.medications.length;
   const outOfSupply = h.medications.filter((m: Json) => m.review_status === "confirmed" && m.gap_days > 0);
   const openRequests = h.requests.filter((r: Json) => r.status !== "closed").length;
+  const coverage = new Map<number, Json>((insights.data?.medicines ?? []).map((c: Json) => [c.therapy_id, c]));
+  const hasConfirmed = h.medications.some((m: Json) => m.review_status === "confirmed");
 
   return (
     <>
@@ -296,6 +348,13 @@ export function MyMedications() {
               )}
             </div>
             <ErrorNote error={refill.error} />
+            {hasConfirmed && insights.data && (
+              <StreakCard
+                streak={insights.data.streak}
+                label="Days in a row with your medicine on hand"
+                empty="Your streak starts once a confirmed medication has a recorded refill."
+              />
+            )}
             {!h.medications.length && (
               <Card>
                 <EmptyState title="No medications on record" icon={<Pill className="h-5 w-5" />} compact>
@@ -307,6 +366,7 @@ export function MyMedications() {
               <MedicationCard
                 key={m.therapy_id}
                 m={m}
+                coverage={coverage.get(m.therapy_id)}
                 onRefill={editable ? () => refill.mutate(m.therapy_id) : undefined}
                 refilling={refill.isPending && refill.variables === m.therapy_id}
               />
@@ -724,6 +784,79 @@ export function MyConsents() {
   );
 }
 
+/** The HCP's own consultation figures (GET /api/insights/hcp): where their consultations
+ *  are, how long answers took, and their answered-in-a-row streak. Speed is information, not
+ *  a score. */
+function ConsultationInsights({ onGroup }: { onGroup: (group: string) => void }) {
+  const q = useInsights("hcp");
+  const d: Json | undefined = q.data;
+  const times: Json[] = d?.response_times.items ?? [];
+  const summary: Json | undefined = d?.response_times.summary;
+  const recent = times.slice(-8);
+  return (
+    <BentoGrid className="mb-4">
+      <ChartPanel
+        span="wide"
+        title="Your consultations"
+        question="Where every consultation routed to you stands now. Select a part to go to it."
+        query={q}
+        empty={d && !d.workload.total ? "No consultations have been routed to you yet." : false}
+        table={
+          d && (
+            <ChartTable
+              caption="Consultations by state"
+              head={["State", "Consultations"]}
+              rows={d.workload.segments.map((s: Json) => [s.label, s.value])}
+            />
+          )
+        }
+      >
+        {d && <StackedBar segments={d.workload.segments} unit="consultation" onSelect={(s) => onGroup(s.key)} />}
+      </ChartPanel>
+      <ChartPanel
+        span="narrow"
+        title="Time to answer"
+        question="From routing to your answer, latest consultations."
+        query={q}
+        empty={d && !times.length ? "No answered consultations yet." : false}
+        note={
+          summary &&
+          (summary.median != null
+            ? `Typical: ${duration(summary.median)} (median of ${summary.n}).`
+            : `${summary.n} answered so far; a typical time appears from 3 answers.`)
+        }
+        table={
+          <ChartTable
+            caption="Time to answer per consultation"
+            head={["Routed", "Answered", "Time"]}
+            rows={times.map((t) => [fmtDateTime(t.routed_at), fmtDateTime(t.responded_at), duration(t.hours)])}
+          />
+        }
+      >
+        <BarList
+          items={recent.map((t) => ({
+            key: String(t.request_id),
+            label: `Routed ${shortDate(t.routed_at)}`,
+            value: t.hours,
+            figure: duration(t.hours),
+            tone: "info",
+            tip: { title: `Answered in ${duration(t.hours)}`, lines: [`Routed ${fmtDateTime(t.routed_at)}`, `Answered ${fmtDateTime(t.responded_at)}`] },
+          }))}
+        />
+      </ChartPanel>
+      {d && (
+        <div className="md:col-span-2 xl:col-span-12">
+          <StreakCard
+            streak={d.streak}
+            label="Consultations answered in a row"
+            empty="Your streak starts with your first answered consultation."
+          />
+        </div>
+      )}
+    </BentoGrid>
+  );
+}
+
 const CONSULTATION_STATE: Record<string, { tone: "info" | "warn" | "ok" | "neutral"; label: string }> = {
   awaiting_hcp: { tone: "warn", label: "Waiting for your response" },
   hcp_responded: { tone: "info", label: "Answered, with the care manager" },
@@ -760,6 +893,14 @@ function RoutedConsultations() {
         {list.data.waiting > 0 && <Badge tone="warn">{list.data.waiting} waiting for you</Badge>}
         {list.data.with_care_manager > 0 && <Badge tone="info">{list.data.with_care_manager} answered, with the care manager</Badge>}
       </div>
+      {items.length > 0 && (
+        <ConsultationInsights
+          onGroup={(group) => {
+            if (group === "history") setShowHistory(true);
+            document.getElementById("consultation-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+        />
+      )}
       {!items.length ? (
         <Card>
           <EmptyState title="No consultations yet" icon={<Stethoscope className="h-5 w-5" />} compact>
@@ -775,7 +916,7 @@ function RoutedConsultations() {
             </EmptyState>
           </Card>
         )}
-        <ul className="space-y-3">
+        <ul id="consultation-list" className="scroll-mt-20 space-y-3">
           {[...active, ...(showHistory ? history : [])].map((c) => {
             // A care manager who takes a consultation back says so; it never just disappears.
             const withdrawn = c.status_label === "Withdrawn by the care manager";
@@ -826,7 +967,7 @@ function RoutedConsultations() {
                   </dl>
                   )}
                   <p className="mt-3 text-[13px] text-ink-subtle">
-                    Routed {fmtDate(c.updated_at)} by {c.care_managers.join(", ") || "the care manager"}
+                    Routed {fmtDate(c.progress?.steps.find((s: Json) => s.key === "hcp")?.date ?? c.updated_at)} by {c.care_managers.join(", ") || "the care manager"}
                   </p>
                   {(c.notes ?? []).length > 0 && (
                     <div className="mt-3">

@@ -16,6 +16,8 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { ChartFrame, ChartPanel, ChartTable, Scatter, Sparkline, ToneKey, shortDate, useInsights } from "../charts";
+import type { ChartTone } from "../charts";
 import { BentoCard, BentoCell, BentoGrid } from "../layout";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, query } from "../api";
@@ -60,8 +62,120 @@ const WINDOW_DAYS = 365;
 
 type RiskFilter = "" | "high" | "medium" | "low";
 
+const SEGMENT_TONE: Record<string, ChartTone> = { high: "bad", medium: "warn", low: "ok" };
+const X_MAX_DAYS = 180;
+
+/** Who on the care manager's panel may need attention: adherence risk against days since
+ *  the last contact (GET /api/insights/care). High risk and long silence sit top right. */
+function AttentionScatter() {
+  const navigate = useNavigate();
+  const q = useInsights("care");
+  const a: Json | undefined = q.data?.attention;
+  const points: Json[] = a?.points ?? [];
+  const cut: Json = a?.cutoffs ?? {};
+  return (
+    <BentoGrid className="mb-6">
+      <ChartPanel
+        title="Who may need attention"
+        question="Each point is a patient on your panel: adherence risk against days since the last contact. Select a point to open the patient."
+        query={q}
+        empty={a && !points.length ? "No patient on your panel has both a risk score and a recorded contact yet." : false}
+        note={
+          a &&
+          [
+            `${num(points.length)} of ${num(a.panel_size)} patients shown.`,
+            a.no_contact_on_record ? `${num(a.no_contact_on_record)} with no contact on record are not placed.` : null,
+            points.some((p) => p.days_since_contact > X_MAX_DAYS) ? `Contacts older than ${X_MAX_DAYS} days sit on the right edge.` : null,
+          ]
+            .filter(Boolean)
+            .join(" ")
+        }
+        table={
+          <ChartTable
+            caption="Patients by risk and days since last contact"
+            head={["Patient", "Risk score", "Days since contact"]}
+            rows={points.map((p) => [
+              <Link key={p.patient_id} to={`/patients/${p.patient_id}`} className="font-semibold text-primary-ink hover:underline">
+                {p.name}
+              </Link>,
+              p.risk_score,
+              p.days_since_contact,
+            ])}
+          />
+        }
+      >
+        <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+          {(["high", "medium", "low"] as const).map((r) => (
+            <span key={r} className="inline-flex items-center gap-1.5">
+              <ToneKey tone={SEGMENT_TONE[r]} /> {RISK[r].label}
+            </span>
+          ))}
+        </div>
+        <Scatter
+          label="Patients by adherence risk and days since last contact"
+          xLabel="Days since the last contact"
+          yLabel="Risk score"
+          xMax={X_MAX_DAYS}
+          yMax={100}
+          xGuides={[{ value: 30, label: "30 days" }]}
+          yGuides={[
+            ...(cut.high != null ? [{ value: cut.high, label: `High risk from ${cut.high}` }] : []),
+            ...(cut.medium != null ? [{ value: cut.medium, label: `Medium from ${cut.medium}` }] : []),
+          ]}
+          points={points.map((p) => ({
+            key: p.patient_id,
+            x: p.days_since_contact,
+            y: p.risk_score,
+            tone: SEGMENT_TONE[p.risk_segment] ?? "neutral",
+            tip: {
+              title: p.name,
+              lines: [
+                `Risk score ${p.risk_score}${p.risk_segment ? ` (${p.risk_segment})` : ""}`,
+                `Last contact ${p.days_since_contact} days ago (${shortDate(p.last_contact)})`,
+              ],
+            },
+            onOpen: () => navigate(`/patients/${p.patient_id}`),
+          }))}
+        />
+      </ChartPanel>
+    </BentoGrid>
+  );
+}
+
+/** The patient's adherence risk score on each cycle date, once there are three. */
+function RiskTrend({ history }: { history: Json[] }) {
+  if ((history ?? []).length < 3) return null;
+  const last = history[history.length - 1];
+  return (
+    <section
+      aria-label="Adherence risk over time"
+      className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-5 py-4 shadow-card sm:px-6"
+    >
+      <div className="min-w-0">
+        <p className="text-[13px] text-ink-subtle">Adherence risk score over time</p>
+        <p className="tabular text-lg font-semibold text-ink">
+          {last.risk_score} <span className="text-sm font-normal text-ink-muted">of 100 on {shortDate(last.date)}</span>
+        </p>
+      </div>
+      <ChartFrame className="w-full max-w-sm flex-1">
+        <Sparkline
+          label="Risk score on each cycle date"
+          domain={[0, 100]}
+          points={history.map((h) => ({
+            key: h.date,
+            value: h.risk_score,
+            tip: { title: fmtDate(h.date), lines: [`Risk score ${h.risk_score} of 100`] },
+          }))}
+        />
+      </ChartFrame>
+      <p className="text-xs text-ink-subtle">One point per engine cycle, worst therapy that day.</p>
+    </section>
+  );
+}
+
 export function PatientList() {
   const navigate = useNavigate();
+  const { can } = useAuth();
   const [risk, setRisk] = useState<RiskFilter>("");
   const [q, setQ] = useState("");
   const list = useQuery({
@@ -146,6 +260,7 @@ export function PatientList() {
           />
         ))}
       </KpiGrid>
+      {can(P.PATIENT_CARE_MANAGE) && <AttentionScatter />}
       <Toolbar>
         <Segmented
           label="Filter by risk"
@@ -598,6 +713,7 @@ export function PatientProfile() {
           icon={<ShieldCheck className="h-4 w-4" aria-hidden />}
         />
       </KpiGrid>
+      <RiskTrend history={p.risk_history} />
 
       {/* A real patient's care: managed by their care manager, read-only for other staff. */}
       {p.origin !== "synthetic" &&

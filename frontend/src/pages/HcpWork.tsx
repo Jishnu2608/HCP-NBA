@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, patch, post, query } from "../api";
 import type { Json } from "../api";
+import { BarList, CalendarStrip, ChartPanel, ChartTable, StackedBar, StreakCard, WindowChart, useInsights } from "../charts";
+import { BentoGrid, SectionHeader } from "../layout";
 import { useToast } from "../toast";
 import {
   Alert,
@@ -434,6 +436,183 @@ export function EngagePanel({ hcp }: { hcp: Json }) {
   );
 }
 
+/* ------------------------------------------------------------------ insights */
+
+const WINDOW_ROWS = 10;
+
+/** The representative's figures over their assigned HCPs (GET /api/insights/rep): the next
+ *  14 days, the on-time streak, when each HCP may next be contacted (the frequency rules,
+ *  shown, never bypassed), where each HCP stands, and what the last 90 days produced. */
+function RepInsights({ onView }: { onView: (v: View) => void }) {
+  const navigate = useNavigate();
+  const q = useInsights("rep");
+  const [allWindows, setAllWindows] = useState(false);
+  const d: Json | undefined = q.data;
+  const windows: Json[] = d?.contact_windows.items ?? [];
+  const shownWindows = allWindows ? windows : windows.slice(0, WINDOW_ROWS);
+  const engagement: Json | undefined = d?.engagement;
+  const activity: Json | undefined = d?.activity;
+  return (
+    <>
+      <SectionHeader title="Coming up" description="Your HCP work over the next two weeks." />
+      <BentoGrid>
+        <ChartPanel
+          span="wide"
+          title="Next 14 days"
+          question="Follow-ups, meetings and requests falling on each day."
+          query={q}
+          note={
+            d &&
+            (d.upcoming.overdue ? (
+              <button type="button" onClick={() => onView("overdue")} className="font-semibold text-bad hover:underline">
+                {d.upcoming.overdue} overdue item{d.upcoming.overdue === 1 ? "" : "s"}: open the Overdue view
+              </button>
+            ) : (
+              "Nothing overdue."
+            ))
+          }
+          table={
+            d && (
+              <ChartTable
+                caption="HCP work per day"
+                head={["Day", "Follow-ups", "Meetings", "Requests"]}
+                rows={d.upcoming.days.map((x: Json) => [fmtDate(x.date), x.follow_ups, x.meetings, x.requests])}
+              />
+            )
+          }
+        >
+          {d && (
+            <CalendarStrip
+              label="HCP work per day for the next 14 days"
+              days={d.upcoming.days.map((x: Json) => ({
+                date: x.date,
+                parts: [
+                  { label: `follow-up${x.follow_ups === 1 ? "" : "s"}`, value: x.follow_ups, tone: "warn" as const },
+                  { label: `meeting${x.meetings === 1 ? "" : "s"}`, value: x.meetings, tone: "info" as const },
+                  { label: `request${x.requests === 1 ? "" : "s"}`, value: x.requests, tone: "brand" as const },
+                ],
+              }))}
+            />
+          )}
+        </ChartPanel>
+        <div className="flex min-w-0 flex-col gap-4 md:col-span-2 xl:col-span-4">
+          {d && (
+            <StreakCard
+              streak={d.streak}
+              label="Follow-ups and meetings completed on time, in a row"
+              empty="Your streak starts with your first completed follow-up or meeting."
+            />
+          )}
+        </div>
+      </BentoGrid>
+
+      <SectionHeader title="Your HCPs" description="Contact limits and where each assigned HCP stands." />
+      <BentoGrid>
+        <ChartPanel
+          span="half"
+          title="When you may next contact each HCP"
+          question="The contact limits decide this: hatched days are a cool-down, blue days are open. Select an HCP to open their profile."
+          query={q}
+          empty={d && !windows.length ? "No assigned HCP is open to engagement." : false}
+          note={
+            windows.length > WINDOW_ROWS ? (
+              <button type="button" onClick={() => setAllWindows((v) => !v)} className="font-semibold text-primary-ink hover:underline">
+                {allWindows ? "Show the first 10" : `Show all ${windows.length} HCPs`}
+              </button>
+            ) : undefined
+          }
+          table={
+            <ChartTable
+              caption="Next allowed contact per HCP"
+              head={["HCP", "Last contact", "Next allowed"]}
+              rows={windows.map((w) => [w.name, w.last_contact ? fmtDate(w.last_contact) : "None", w.allowed_now ? "Now" : fmtDate(w.next_allowed)])}
+            />
+          }
+        >
+          {d && (
+            <WindowChart
+              today={d.today}
+              label="Days until each HCP may next be contacted"
+              rows={shownWindows.map((w) => ({
+                key: w.hcp_id,
+                label: w.name,
+                from: w.next_allowed,
+                tip: {
+                  title: w.name,
+                  lines: [
+                    w.allowed_now ? "Contact allowed now" : `Next contact allowed ${fmtDate(w.next_allowed)}`,
+                    w.last_contact ? `Last contact ${fmtDate(w.last_contact)}` : "No contact on record",
+                    `Minimum gap ${w.min_gap_days} days`,
+                  ],
+                },
+                onOpen: () => navigate(`/hcps/${w.hcp_id}`),
+              }))}
+            />
+          )}
+        </ChartPanel>
+        <ChartPanel
+          span="half"
+          title="Where your HCPs stand"
+          question="Each assigned HCP once: open work first, then their latest signal in 90 days."
+          query={q}
+          empty={engagement && !engagement.total ? "No HCP is assigned to you." : false}
+          table={
+            engagement && (
+              <ChartTable
+                caption="Assigned HCPs by state"
+                head={["State", "HCPs", "Who"]}
+                rows={engagement.segments
+                  .filter((s: Json) => s.value)
+                  .map((s: Json) => [s.label, s.value, s.hcps.map((h: Json) => h.name).join(", ")])}
+              />
+            )
+          }
+        >
+          {engagement && (
+            <StackedBar
+              unit="HCP"
+              segments={engagement.segments.map((s: Json) => ({
+                key: s.key,
+                label: s.label,
+                value: s.value,
+                tone: s.tone,
+                hint: s.hcps.length ? s.hcps.slice(0, 3).map((h: Json) => h.name).join(", ") + (s.hcps.length > 3 ? "…" : "") : undefined,
+              }))}
+            />
+          )}
+        </ChartPanel>
+        <ChartPanel
+          span="full"
+          title="Your last 90 days"
+          question="What your own work produced, as counts. These are separate counts, not a funnel: a meeting can come from an HCP's own request."
+          query={q}
+          note={
+            activity &&
+            (activity.response_rate != null
+              ? `Responses recorded on ${Math.round(activity.response_rate * 100)}% of your sends.`
+              : `A response rate appears from ${activity.min_rate_n} sends.`)
+          }
+          table={
+            activity && <ChartTable caption="Your last 90 days" head={["Measure", "Count"]} rows={activity.stages.map((s: Json) => [s.label, s.value])} />
+          }
+        >
+          {activity && (
+            <BarList
+              items={activity.stages.map((s: Json) => ({
+                key: s.key,
+                label: s.label,
+                value: s.value,
+                tone: "info",
+                tip: { title: s.label, lines: [`${s.value} in the last ${activity.window_days} days`] },
+              }))}
+            />
+          )}
+        </ChartPanel>
+      </BentoGrid>
+    </>
+  );
+}
+
 /* ------------------------------------------------------------------ page */
 
 type View = "today" | "requests" | "follow_ups" | "meetings" | "overdue" | "done_today";
@@ -510,6 +689,7 @@ export default function HcpWork() {
           </p>
         </Card>
       </div>
+      <RepInsights onView={setView} />
     </>
   );
 }

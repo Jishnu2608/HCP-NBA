@@ -1,6 +1,7 @@
 // Forms and lists shared by the patient's "My health" page and the care manager's views:
 // conditions, medications, care requests, instructions and the care team. What the server
 // accepts is checked there; these only collect and display.
+import { Steps } from "../charts";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Clock3, HeartPulse, MessageSquareText, Pill, Stethoscope, UserRound } from "lucide-react";
 import { useId, useState } from "react";
@@ -622,6 +623,11 @@ export function RequestList({ items, staff, actions }: { items: Json[]; staff?: 
                 </span>
               )}
             </p>
+          )}
+          {r.progress && (
+            <div className="mt-2 rounded-lg bg-subtle px-3 py-2.5">
+              <Steps steps={r.progress.steps} label="Where this consultation stands" vertical />
+            </div>
           )}
           {r.resolution && !r.resolution.startsWith("Routed to") && (
             <p className="mt-1 text-[13px] text-ink-muted">{r.resolution}</p>

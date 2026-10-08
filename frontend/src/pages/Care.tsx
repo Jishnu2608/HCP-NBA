@@ -23,6 +23,8 @@ import type { FormEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, patch, post, put, query } from "../api";
 import type { Json } from "../api";
+import { BarList, ChartPanel, ChartTable, StackedBar, StreakCard, useInsights } from "../charts";
+import { BentoGrid, SectionHeader } from "../layout";
 import { ResidenceFields } from "../legal";
 import { useToast } from "../toast";
 import {
@@ -81,6 +83,69 @@ const reviewPending = (q: Json) => Boolean(q.entry_pending);
 /* ------------------------------------------------------------------ request queue */
 
 type StatusFilter = "active" | "awaiting_hcp" | "hcp_responded" | "closed" | "";
+
+/** Dated work by when it is due, consultations waiting for an HCP, and the no-overdue
+ *  streak, over the care manager's panel (GET /api/insights/care). */
+function CareWorkInsights({ onFilter }: { onFilter: (status: StatusFilter) => void }) {
+  const navigate = useNavigate();
+  const q = useInsights("care");
+  const d: Json | undefined = q.data;
+  const waiting: Json[] = d?.waiting_with_hcp ?? [];
+  return (
+    <>
+      <SectionHeader title="Due dates and waiting time" description="Work on your panel by due date, and how long consultations have been with an HCP." />
+      <BentoGrid>
+        <ChartPanel
+          span="half"
+          title="Follow-ups and dated requests"
+          question="When your open dated work falls due. Select a part to show the active list."
+          query={q}
+          empty={d && !d.follow_ups.open && !d.follow_ups.closed_last_7_days ? "No dated work on your panel." : false}
+          note={d && `${num(d.follow_ups.closed_last_7_days)} dated item${d.follow_ups.closed_last_7_days === 1 ? "" : "s"} closed in the last 7 days.`}
+          table={
+            d && (
+              <ChartTable caption="Dated work by due date" head={["Due", "Items"]} rows={d.follow_ups.segments.map((s: Json) => [s.label, s.value])} />
+            )
+          }
+        >
+          {d && <StackedBar segments={d.follow_ups.segments} unit="item" onSelect={() => onFilter("active")} />}
+        </ChartPanel>
+        <ChartPanel
+          span="half"
+          title="Waiting for an HCP"
+          question="Consultations routed to an HCP and not answered yet, longest wait first."
+          query={q}
+          empty={d && !waiting.length ? "No consultation is waiting for an HCP." : false}
+          table={
+            <ChartTable
+              caption="Consultations waiting for an HCP"
+              head={["Patient", "HCP", "Routed", "Days waiting"]}
+              rows={waiting.map((w) => [w.patient, w.hcp ?? "—", fmtDate(w.routed_on), w.days_waiting])}
+            />
+          }
+        >
+          <BarList
+            items={waiting.slice(0, 8).map((w) => ({
+              key: String(w.request_id),
+              label: w.patient,
+              sub: w.hcp ? `With ${w.hcp}` : undefined,
+              value: w.days_waiting,
+              figure: `${num(w.days_waiting)} day${w.days_waiting === 1 ? "" : "s"}`,
+              tone: "warn",
+              tip: { title: w.patient, lines: [w.hcp ? `With ${w.hcp}` : null, `Routed ${fmtDate(w.routed_on)}`, `${w.days_waiting} days waiting`] },
+              onOpen: () => navigate(`/patients/${w.patient_id}`),
+            }))}
+          />
+        </ChartPanel>
+        {d && (
+          <div className="md:col-span-2 xl:col-span-12">
+            <StreakCard streak={d.streak} label="Days in a row without an overdue item" empty="Your streak starts once your panel has dated work." />
+          </div>
+        )}
+      </BentoGrid>
+    </>
+  );
+}
 
 export default function CareRequestsPage() {
   const navigate = useNavigate();
@@ -188,7 +253,7 @@ export default function CareRequestsPage() {
           ]}
         />
       </div>
-      <Card flush>
+      <Card flush className="scroll-mt-20" id="care-request-list">
         {list.isLoading ? (
           <div className="p-5">
             <LoadingRows rows={6} label="Loading care requests" />
@@ -211,6 +276,12 @@ export default function CareRequestsPage() {
           />
         )}
       </Card>
+      <CareWorkInsights
+        onFilter={(next) => {
+          setStatus(next);
+          document.getElementById("care-request-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}
+      />
       {creating && (
         <Drawer title="New clinic patient" onClose={close}>
           <ClinicPatientForm onCreated={(pid) => navigate(`/patients/${pid}`)} />
