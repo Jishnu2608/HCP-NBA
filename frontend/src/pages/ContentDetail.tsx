@@ -45,6 +45,8 @@ import {
   fmtDateTime,
   num,
   titleCase,
+  TemplateText,
+  hasFields,
 } from "../ui";
 
 const DECISION: Record<string, { label: string; tone: "ok" | "warn" | "bad" | "neutral" | "brand" }> = {
@@ -687,8 +689,14 @@ function Deliveries({ d }: { d: Json }) {
                   <div className="text-[12px] text-ink-subtle">
                     v{w.version} · {channelName(w.channel)} · sent {w.times} time{w.times === 1 ? "" : "s"}
                   </div>
-                  {w.subject && <div className="font-semibold">{w.subject}</div>}
-                  <p className="whitespace-pre-line text-ink-muted">{w.body}</p>
+                  {w.subject && (
+                    <div className="font-semibold">
+                      <TemplateText text={w.subject} />
+                    </div>
+                  )}
+                  <p className="whitespace-pre-line text-ink-muted">
+                    <TemplateText text={w.body} />
+                  </p>
                 </li>
               ))}
             </ul>
@@ -815,7 +823,14 @@ export default function ContentDetail() {
       <div className="grid gap-4 lg:grid-cols-12">
         <div className="space-y-4 lg:col-span-7">
           <Card title="What the recipient reads" description="Delivered exactly as written; never edited at send.">
-            <p className="whitespace-pre-line text-sm leading-6 text-ink">{c.body}</p>
+            <p className="whitespace-pre-line text-sm leading-6 text-ink">
+              <TemplateText text={c.body} />
+            </p>
+            {hasFields(c.body) && (
+              <p className="mt-2 text-xs text-ink-subtle">
+                Highlighted fields are filled in for each recipient when the message is sent: their own first name and the medicine the message is about.
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-ink-subtle">
               {c.channels.map((ch: string) => (
                 <span key={ch} className="inline-flex items-center gap-1">

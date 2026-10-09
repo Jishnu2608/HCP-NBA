@@ -4,6 +4,8 @@ Needs no key and no network, so the demo always works, and it is the fallback wh
 real model's output fails validation.
 """
 
+import re
+
 from app.llm.base import DraftOutput, DraftRequest, DraftResult, MessageVariant
 from app.models.enums import ActionType, Channel, TargetType
 from app.nba.rationale import ACTION_LABEL, CHANNEL_LABEL
@@ -30,11 +32,38 @@ def _sentence(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+# The only placeholders approved content may contain, written {{ first_name }} or
+# {{first_name}} (any spacing or case). Anything else stays as it is, so the validator
+# refuses the draft rather than sending an unfilled field.
+PLACEHOLDER = re.compile(r"\{\{\s*(first_name|drug_name)\s*\}\}", re.IGNORECASE)
+
+
+def personalize(text: str, first_name: str, drug_name: str | None) -> str:
+    """The approved wording as one recipient reads it: their first name and the medicine the
+    message is about ("your medication" when it is about no particular medicine). The one
+    place placeholders are filled, for sending and for showing a recipient's version."""
+    values = {"first_name": first_name, "drug_name": drug_name or "medication"}
+    return PLACEHOLDER.sub(lambda m: values[m.group(1).lower()], text)
+
+
 def render(text: str, request: DraftRequest) -> str:
     """Fills the only two placeholders approved content may contain."""
-    return text.replace("{{ first_name }}", request.first_name).replace(
-        "{{ drug_name }}", request.drug_name or "medication"
-    )
+    return personalize(text, request.first_name, request.drug_name)
+
+
+def deidentify(
+    text: str, first_name: str | None, last_name: str | None, drug_name: str | None
+) -> str:
+    """Sent wording with the recipient taken out again: their names and the medicine become
+    placeholders, so reviewers can read what was sent without learning who received it."""
+    out = text
+    if drug_name:
+        for variant in {drug_name, drug_name.lower(), drug_name.capitalize()}:
+            out = re.sub(rf"\b{re.escape(variant)}\b", "{{ drug_name }}", out)
+    for name, field in ((last_name, "last_name"), (first_name, "first_name")):
+        if name and len(name) > 1:
+            out = re.sub(rf"\b{re.escape(name)}\b", f"{{{{ {field} }}}}", out)
+    return out
 
 
 def summarize(request: DraftRequest) -> str:

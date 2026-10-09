@@ -236,6 +236,17 @@ def interaction_out(i: Interaction, contents: dict[str, Content] | None = None) 
     }
 
 
+def _for_recipient(db: Session, nba: Nba, content: Content) -> str:
+    from app.llm.template import personalize
+
+    if nba.target_type == TargetType.PATIENT:
+        person = db.get(Patient, nba.target_id)
+        therapy = db.get(PatientTherapy, nba.therapy_id) if nba.therapy_id else None
+        return personalize(content.body, person.first_name, therapy.drug_name if therapy else None)
+    person = db.get(Hcp, nba.target_id)
+    return personalize(content.body, person.first_name or "", None)
+
+
 def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True) -> dict:
     out = nba_summary(db, nba, with_identity=with_identity)
     content = db.get(Content, nba.content_id)
@@ -257,7 +268,13 @@ def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True
             if nba.withheld
             else None
         ),
-        content=content_out(content, today),
+        content=content_out(content, today)
+        | {
+            # The approved wording as this recipient will read it (their first name and
+            # medicine), from the same function that fills it at send. The identity-free
+            # view keeps the placeholders.
+            "body_for_recipient": _for_recipient(db, nba, content) if with_identity else None,
+        },
         candidates=[
             {
                 "rank": c.rank,

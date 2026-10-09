@@ -192,14 +192,24 @@ function DataToAction() {
         if (reduce) return;
         const nodes = gsap.utils.toArray<HTMLElement>("[data-strip-node]");
         const glows = gsap.utils.toArray<HTMLElement>("[data-strip-glow]");
-        const links = gsap.utils.toArray<HTMLElement>("[data-strip-link]");
-        gsap.set(links, wide ? { scaleX: 0, transformOrigin: "0% 50%" } : { scaleY: 0, transformOrigin: "50% 0%" });
+        const step = 0.22;
         const tl = gsap.timeline({ paused: true, defaults: { duration: 0.28 } });
         nodes.forEach((node, i) => {
-          tl.from(node, { opacity: 0.35, y: 6 }, i * 0.22);
-          tl.fromTo(glows[i], { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1 }, i * 0.22);
-          if (links[i]) tl.to(links[i], wide ? { scaleX: 1 } : { scaleY: 1 }, i * 0.22 + 0.12);
+          tl.from(node, { opacity: 0.35, y: 6 }, i * step);
+          tl.fromTo(glows[i], { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1 }, i * step);
         });
+        if (wide) {
+          // One continuous line from the first step to the last, filling as each lights up.
+          tl.fromTo(
+            "[data-strip-fill]",
+            { scaleX: 0 },
+            { scaleX: 1, duration: step * (nodes.length - 1), ease: "none", transformOrigin: "0% 50%" },
+            0.05,
+          );
+        } else {
+          const links = gsap.utils.toArray<HTMLElement>("[data-strip-vlink]");
+          links.forEach((link, i) => tl.fromTo(link, { scaleY: 0 }, { scaleY: 1, transformOrigin: "50% 0%" }, i * step + 0.12));
+        }
         ScrollTrigger.create({ trigger: ref.current, start: "top 85%", once: true, onEnter: () => tl.play() });
       });
       return () => mm.revert();
@@ -207,21 +217,22 @@ function DataToAction() {
     { scope: ref },
   );
   return (
-    <ol ref={ref} aria-label="From a patient signal to an outcome" className="flex flex-col gap-0 sm:flex-row sm:items-start">
+    <ol ref={ref} aria-label="From a patient signal to an outcome" className="relative flex flex-col gap-0 sm:flex-row sm:items-start">
+      {/* Desktop: a single track behind the steps, from the centre of the first (10%) to the
+          centre of the last (90%) of five equal columns, vertically through the icons. */}
+      <span aria-hidden className="pointer-events-none absolute left-[10%] right-[10%] top-5 hidden h-0.5 -translate-y-1/2 rounded-full bg-line sm:block">
+        <span data-strip-fill className="block h-full w-full rounded-full bg-primary-line" />
+      </span>
       {STRIP.map(({ icon: Icon, name, text }, i) => (
-        <li key={name} className="flex gap-3 sm:flex-1 sm:flex-col sm:items-center sm:gap-0 sm:text-center">
-          <div className="flex flex-col items-center sm:w-full sm:flex-row">
-            <span className={cx("hidden h-0.5 flex-1 sm:block", i === 0 && "invisible")} aria-hidden>
-              {i > 0 && <span data-strip-link className="block h-full w-full bg-primary-line" />}
-            </span>
+        <li key={name} className="relative flex gap-3 sm:flex-1 sm:flex-col sm:items-center sm:gap-0 sm:text-center">
+          <div className="flex flex-col items-center">
             <span data-strip-node className="relative grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface text-primary-ink ring-1 ring-line">
               <span data-strip-glow aria-hidden className="absolute inset-0 rounded-xl bg-primary-soft ring-2 ring-primary-line" />
               <Icon className="relative h-[18px] w-[18px]" aria-hidden />
             </span>
-            <span className="hidden h-0.5 flex-1 sm:block" aria-hidden />
             {i < STRIP.length - 1 && (
-              <span className="my-1 block h-6 w-0.5 sm:hidden" aria-hidden>
-                <span data-strip-link className="block h-full w-full bg-primary-line" />
+              <span className="my-1 block h-6 w-0.5 rounded-full bg-line sm:hidden" aria-hidden>
+                <span data-strip-vlink className="block h-full w-full rounded-full bg-primary-line" />
               </span>
             )}
           </div>

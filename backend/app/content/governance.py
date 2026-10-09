@@ -699,6 +699,20 @@ def hcp_labels(db: Session, interactions: list[Interaction]) -> dict[str, dict]:
     return labels
 
 
+def _deidentified(db: Session, i: Interaction, draft: MessageDraft) -> tuple[str | None, str]:
+    from app.llm.template import deidentify
+    from app.models import Hcp, Patient, PatientTherapy
+
+    person = db.get(Patient if i.target_type == TargetType.PATIENT else Hcp, i.target_id)
+    first, last = (person.first_name, person.last_name) if person else (None, None)
+    therapy = db.get(PatientTherapy, i.therapy_id) if i.therapy_id else None
+    drug = therapy.drug_name if therapy else None
+    return (
+        deidentify(draft.subject, first, last, drug) if draft.subject else None,
+        deidentify(draft.body, first, last, drug),
+    )
+
+
 def deliveries(db: Session, lineage_id: str) -> dict:
     """What happened to every version of this material once approved."""
     rows = versions(db, lineage_id)
@@ -726,15 +740,18 @@ def deliveries(db: Session, lineage_id: str) -> dict:
         channels[i.channel] = channels.get(i.channel, 0) + 1
         draft = db.get(MessageDraft, i.draft_id) if i.draft_id else None
         if draft is not None:
-            key = hash((draft.subject, draft.body))
+            # Reviewers see the wording, never who received it: the recipient's names and
+            # medicine go back to placeholders, and identical wordings are counted together.
+            subject, body = _deidentified(db, i, draft)
+            key = hash((subject, body, i.content_id, i.channel))
             wording.setdefault(
                 key,
                 {
                     "version": by_version.get(i.content_id),
                     "content_id": i.content_id,
                     "channel": i.channel,
-                    "subject": draft.subject,
-                    "body": draft.body,
+                    "subject": subject,
+                    "body": body,
                     "times": 0,
                 },
             )["times"] += 1

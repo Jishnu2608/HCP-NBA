@@ -406,6 +406,47 @@ export function ConsentBadge({ granted }: { granted: boolean }) {
   );
 }
 
+/* ---------------------------------------------------------------- templates */
+
+const FIELD_LABEL: Record<string, string> = {
+  first_name: "first name",
+  last_name: "last name",
+  drug_name: "medicine name",
+};
+const FIELD = /(\{\{\s*\w+\s*\}\})/g;
+
+/** Whether approved wording contains personalisation fields. */
+export const hasFields = (text: string | null | undefined) => Boolean(text && /\{\{\s*\w+\s*\}\}/.test(text));
+
+/**
+ * Approved wording as a template: each personalisation field ({{ first_name }},
+ * {{ drug_name }}) is shown as a labelled chip, never as raw braces. The real values are
+ * filled in for each recipient when the message is drafted and sent (server side,
+ * llm/template.personalize); a recipient-specific view passes already-filled text.
+ */
+export function TemplateText({ text }: { text: string | null | undefined }) {
+  if (!text) return null;
+  return (
+    <>
+      {text.split(FIELD).map((part, i) => {
+        const m = part.match(/^\{\{\s*(\w+)\s*\}\}$/);
+        if (!m) return part;
+        const key = m[1].toLowerCase();
+        return (
+          <span
+            key={i}
+            title="Filled in for each recipient when the message is sent"
+            className="mx-0.5 inline-flex items-center rounded-md bg-primary-soft px-1.5 text-[0.92em] font-medium leading-5 text-primary-ink ring-1 ring-inset ring-primary-line"
+          >
+            {FIELD_LABEL[key] ?? key.replace(/_/g, " ")}
+            <span className="sr-only"> (filled in for each recipient)</span>
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 /* ----------------------------------------------------------------- figures */
 
 /**

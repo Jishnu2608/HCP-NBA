@@ -26,6 +26,8 @@ import {
   cx,
   fmtDate,
   num,
+  TemplateText,
+  hasFields,
   titleCase,
 } from "../ui";
 
@@ -95,7 +97,12 @@ function ContentRow({ c, reviewer }: { c: Json; reviewer: boolean }) {
           {c.delivered_by_you && !c.mine && <Badge>Delivered to your HCPs</Badge>}
           {c.product && <Badge tone="info">{c.product}</Badge>}
         </div>
-        <p className="mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-ink-muted">{c.body}</p>
+        <p className="mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-ink-muted">
+          <TemplateText text={c.body} />
+        </p>
+        {hasFields(c.body) && (
+          <p className="mt-1 text-xs text-ink-subtle">Highlighted fields are filled in for each patient when the message is sent.</p>
+        )}
         {last && last.decision !== "approve" && last.feedback && (
           <p className="mt-2 max-w-3xl text-[13px] text-ink">
             <span className="font-semibold">{DECISION_WORD[last.decision] ?? last.decision}:</span> {last.feedback}

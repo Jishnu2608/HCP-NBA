@@ -58,6 +58,7 @@ import {
   fmtDateTime,
   pct,
   titleCase,
+  TemplateText,
 } from "../ui";
 
 const KIND: Record<string, { label: string; icon: ReactNode }> = {
@@ -331,7 +332,11 @@ export default function NbaDetail() {
         </div>
         <MlrBadge status={n.content.mlr_status} expired={n.content.is_expired} />
       </div>
-      <p className="mt-3 text-sm leading-6 text-ink-muted">{n.content.body}</p>
+      {/* The approved wording as this recipient will read it (filled on the server); the
+          identity-free view keeps the fields as labelled chips. */}
+      <p className="mt-3 text-sm leading-6 text-ink-muted">
+        <TemplateText text={n.content.body_for_recipient ?? n.content.body} />
+      </p>
       <Link to={`/content/${n.content.content_id}`} className="mt-2 inline-block text-[13px] font-semibold text-primary-ink hover:underline">
         Claims, evidence and MLR history
       </Link>
