@@ -98,7 +98,8 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
             <ul className="space-y-0.5">
               {entries.map((item) => {
                 const label = item.label!(can);
-                const count = item.badge ? attention[item.badge] ?? 0 : 0;
+                const badge = typeof item.badge === "function" ? item.badge(can) : item.badge;
+                const count = badge ? attention[badge] ?? 0 : 0;
                 return (
                   <li key={item.path}>
                     <NavLink

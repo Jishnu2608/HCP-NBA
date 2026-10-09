@@ -219,3 +219,63 @@ def on_time_streak(db: Session, user: User) -> dict | None:
     ).all()
     pairs = [(t.completed_at, d) for t in done if (d := task_day(t)) is not None]
     return streaks.on_time_completions(pairs)
+
+
+OUTCOME_GROUPS = (
+    ("interested", "Interested or asked for more", "ok"),
+    ("meeting", "Asked for a meeting", "info"),
+    ("not_now", "Not now", "warn"),
+    ("declined", "Not interested", "neutral"),
+    ("done", "Visit or call completed", "brand"),
+    ("waiting", "No answer yet", "neutral"),
+)
+
+
+def _outcome_group(i: Interaction) -> str:
+    if i.intent == "request_meeting" or i.outcome_reason == "another_meeting":
+        return "meeting"
+    if i.intent in ("interested", "need_info", "need_evidence") or i.outcome_reason in (
+        "interested",
+        "need_info",
+    ):
+        return "interested"
+    if i.intent == "not_now" or i.outcome_reason == "not_now":
+        return "not_now"
+    if i.intent == "decline" or i.outcome == Outcome.DECLINED:
+        return "declined"
+    if i.outcome in (Outcome.PENDING, Outcome.NO_RESPONSE):
+        return "waiting"
+    return "done"
+
+
+def week_outcomes(db: Session, user: User, today: date) -> dict:
+    """This week (Monday to today) across the assigned HCPs: what each delivery, visit and
+    call led to, by the day it happened. Actual recorded outcomes only."""
+    start = today - timedelta(days=today.weekday())
+    ids = [h.hcp_id for h in _assigned(db, user)]
+    rows = db.scalars(
+        select(Interaction).where(
+            Interaction.target_type == TargetType.HCP,
+            Interaction.target_id.in_(ids),
+            Interaction.source.in_(("nba", "rep")),
+            Interaction.int_ts >= datetime.combine(start, datetime.min.time()),
+        )
+    ).all()
+    days = []
+    for k in range((today - start).days + 1):
+        d = start + timedelta(days=k)
+        on = [i for i in rows if i.int_ts.date() == d]
+        days.append(
+            {
+                "date": d,
+                **{
+                    key: sum(1 for i in on if _outcome_group(i) == key)
+                    for key, _, _ in OUTCOME_GROUPS
+                },
+            }
+        )
+    return {
+        "groups": [{"key": k, "label": label, "tone": tone} for k, label, tone in OUTCOME_GROUPS],
+        "days": days,
+        "total": len(rows),
+    }

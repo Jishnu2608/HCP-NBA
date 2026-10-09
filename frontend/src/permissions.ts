@@ -31,6 +31,7 @@ export const P = {
   PATIENT_CARE_MANAGE: "patient:care:manage",
   SELF_PROFILE_READ: "self:profile:read",
   SELF_INBOX: "self:inbox",
+  SELF_COMMERCIAL_INBOX: "self:inbox:commercial",
   SELF_CONSENT_MANAGE: "self:consent:manage",
   SELF_PATIENTS_READ: "self:patients:read",
   SELF_HEALTH_MANAGE: "self:health:manage",

@@ -18,6 +18,7 @@ from app.api import (
     me,
     nba,
     people,
+    plan,
     privacy,
     system,
     users,
@@ -73,7 +74,7 @@ app = FastAPI(
 
 ROUTERS = (
     system, auth, invitations, users, nba, people, care, content, governance, me, analytics,
-    commercial, insights,
+    commercial, insights, plan,
 )  # fmt: skip
 for module in ROUTERS:
     app.include_router(module.router)

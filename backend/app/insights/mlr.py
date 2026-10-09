@@ -137,3 +137,27 @@ def expiring(db: Session, today: date, within: int = EXPIRY_WINDOW_DAYS) -> list
         )
     items.sort(key=lambda i: i["days_remaining"])
     return items
+
+
+PIPELINE = (
+    ("draft", "Draft"),
+    ("pending", "In MLR review"),
+    ("changes_requested", "Changes requested"),
+    ("approved", "Approved, in date"),
+    ("expired", "Approval expired"),
+    ("rejected", "Rejected"),
+    ("withdrawn", "Withdrawn"),
+    ("superseded", "Superseded"),
+)
+
+
+def pipeline(db: Session, today: date) -> list[dict]:
+    """Every content version by its current MLR status; approved versions are split by
+    whether their approval is still in date (`usable`, as everywhere)."""
+    counts = {key: 0 for key, _ in PIPELINE}
+    for c in db.scalars(select(Content)):
+        if c.mlr_status == MlrStatus.APPROVED:
+            counts["approved" if out.content_out(c, today)["usable"] else "expired"] += 1
+        elif c.mlr_status in counts:
+            counts[c.mlr_status] += 1
+    return [{"key": k, "label": label, "value": counts[k]} for k, label in PIPELINE]

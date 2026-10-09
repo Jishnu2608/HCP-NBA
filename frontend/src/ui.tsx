@@ -53,7 +53,17 @@ import { Children, useEffect, useId, useLayoutEffect, useRef, useState } from "r
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "./api";
-import { DUR, Morph, gsap, playExit, reducedMotion as motionReduced, useChangeHighlight, useEntrance, useGSAP } from "./motion";
+import {
+  DUR,
+  Morph,
+  gsap,
+  playExit,
+  reducedMotion as motionReduced,
+  useChangeHighlight,
+  useEntrance,
+  useGSAP,
+  useSpotlightGrid,
+} from "./motion";
 import { useAuth } from "./auth";
 
 export function cx(...parts: Array<string | false | null | undefined>) {
@@ -534,16 +544,18 @@ export function KpiCard({
     </>
   );
   const shell = cx(
-    "group flex h-full min-w-0 flex-col rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5",
+    "spotlight group flex h-full min-w-0 flex-col rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5",
     to && "lift",
     className,
   );
   return to ? (
-    <Link to={to} className={shell} aria-label={`${label}: ${typeof value === "string" || typeof value === "number" ? value : ""}${hint ? `, ${hint}` : ""}`}>
+    <Link to={to} data-spot className={shell} aria-label={`${label}: ${typeof value === "string" || typeof value === "number" ? value : ""}${hint ? `, ${hint}` : ""}`}>
       {body}
     </Link>
   ) : (
-    <div className={shell}>{body}</div>
+    <div data-spot className={shell}>
+      {body}
+    </div>
   );
 }
 
@@ -559,6 +571,7 @@ export function KpiGrid({ children, className }: { children: ReactNode; classNam
   const kpiRef = useRef<HTMLDivElement>(null);
   // The figures come in right after the page heading, before the panels below them.
   useEntrance(kpiRef, { delay: 0.04 });
+  useSpotlightGrid(kpiRef);
   const items = Children.toArray(children).filter(Boolean);
   const n = items.length;
   const grid =

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -730,6 +731,95 @@ class HcpTask(Base):
     outcome_reason: Mapped[str | None] = mapped_column(String(24))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class CarePlan(Base):
+    """A patient's health goal plan, set by their care manager: the daily check-in quota and
+    whether the daily "took my medicines" confirmation is part of it. The measurements it
+    tracks are `care_plan_measure` rows. Clinical targets are the care team's, never the
+    patient's own."""
+
+    __tablename__ = "care_plan"
+
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), primary_key=True)
+    checkin_quota: Mapped[int] = mapped_column(Integer, default=1)
+    medication_check: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class CarePlanMeasure(Base):
+    """One measurement a patient's plan tracks (a key of the catalogue in
+    `clinical.measures`), with optional target ranges per component, for example
+    {"systolic": {"low": 90, "high": 130}}. No target means readings are shown without a band."""
+
+    __tablename__ = "care_plan_measure"
+    __table_args__ = (UniqueConstraint("patient_id", "measure", name="uq_care_plan_measure"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), index=True)
+    measure: Mapped[str] = mapped_column(String(32))
+    targets: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class HealthReading(Base):
+    """A measurement the patient recorded: one value per component of the measure (a blood
+    pressure has systolic and diastolic), in the catalogue's unit."""
+
+    __tablename__ = "health_reading"
+    __table_args__ = (Index("ix_health_reading_patient_taken", "patient_id", "taken_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"))
+    measure: Mapped[str] = mapped_column(String(32))
+    values: Mapped[dict[str, Any]] = mapped_column(JSON)
+    taken_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CheckIn(Base):
+    """One plan item the patient completed on a day: a tracked measurement or the medicines
+    confirmation. At most one per item per day, so logging the same thing twice never
+    counts twice toward the quota."""
+
+    __tablename__ = "checkin"
+    __table_args__ = (UniqueConstraint("patient_id", "day", "item", name="uq_checkin_item_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    item: Mapped[str] = mapped_column(String(32))
+    reading_id: Mapped[int | None] = mapped_column(ForeignKey("health_reading.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CoinLedger(Base):
+    """A check-in coin: one per day on which the patient completed the plan's quota. The
+    unique day makes a second award for the same day impossible, whatever the caller does."""
+
+    __tablename__ = "coin_ledger"
+    __table_args__ = (UniqueConstraint("patient_id", "day", name="uq_coin_patient_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    amount: Mapped[int] = mapped_column(Integer, default=1)
+    reason: Mapped[str] = mapped_column(String(32), default="daily_quota")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LeaderboardProfile(Base):
+    """A patient's opt-in to the monthly check-in board, under a random healthcare-themed
+    alias. Private by default: no row, or opted_in false, means the patient is not listed."""
+
+    __tablename__ = "leaderboard_profile"
+
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patient.patient_id"), primary_key=True)
+    alias: Mapped[str] = mapped_column(String(48), unique=True)
+    opted_in: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 

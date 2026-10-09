@@ -806,7 +806,14 @@ def attention(user: User = Depends(get_current_user), db: Session = Depends(get_
         )
     if can(user, Permission.SELF_INBOX) and (user.patient_id or user.hcp_id):
         target_type, target_id = _me(user)
-        counts["messages"] = db.scalar(
+        # A patient's messages; for an HCP, what their representative delivered (the
+        # "Medical representative" tab), kept apart from consultations (the inbox).
+        key = (
+            "rep_messages"
+            if user.hcp_id and can(user, Permission.SELF_COMMERCIAL_INBOX)
+            else "messages"
+        )
+        counts[key] = db.scalar(
             select(func.count())
             .select_from(Interaction)
             .where(
@@ -847,9 +854,9 @@ def attention(user: User = Depends(get_current_user), db: Session = Depends(get_
                 )
             )
             counts["content"] = unseen + unread
-        elif user.hcp_id and "messages" in counts:
-            # Replies about delivered material.
-            counts["messages"] += unread
+        elif user.hcp_id and "rep_messages" in counts:
+            # Replies from MLR about delivered material belong with the representative tab.
+            counts["rep_messages"] += unread
     if can(user, Permission.NBA_REVIEW_HCP) and can(user, Permission.HCP_READ_ASSIGNED):
         # A representative: recommendations to review or send and visits awaiting an outcome
         # (the queue), and the HCP work owed (requests, follow-ups and meetings due).

@@ -53,6 +53,9 @@ class Permission(StrEnum):
     # A person's own record
     SELF_PROFILE_READ = "self:profile:read"
     SELF_INBOX = "self:inbox"
+    # An HCP's representative channel: content delivered by their representative and the
+    # MLR replies about it, kept apart from patient work (consultations) in the inbox.
+    SELF_COMMERCIAL_INBOX = "self:inbox:commercial"
     SELF_CONSENT_MANAGE = "self:consent:manage"
     SELF_PATIENTS_READ = "self:patients:read"
     # A patient's own health profile: report conditions and medications, log refills of
@@ -154,6 +157,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
         {
             P.SELF_PROFILE_READ,
             P.SELF_INBOX,
+            P.SELF_COMMERCIAL_INBOX,
             P.SELF_PATIENTS_READ,
             P.INVITE_MEDICAL_REP,
             P.INVITE_CARE_MANAGER,

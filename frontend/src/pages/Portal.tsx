@@ -20,8 +20,21 @@ import { Link } from "react-router-dom";
 import { api, post, put } from "../api";
 import type { Json } from "../api";
 import { useAttention } from "../attention";
-import { BarList, ChartFrame, ChartPanel, ChartTable, DayStrip, StackedBar, StreakCard, duration, shortDate, useInsights } from "../charts";
+import {
+  BarList,
+  ChartFrame,
+  ChartPanel,
+  ChartTable,
+  DayStrip,
+  PairedColumns,
+  StackedBar,
+  StreakCard,
+  duration,
+  shortDate,
+  useInsights,
+} from "../charts";
 import { BentoGrid } from "../layout";
+import { HealthPlanSection } from "./HealthPlan";
 import { useChangeHighlight } from "../motion";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
@@ -200,7 +213,7 @@ function MedicationCard({
   );
 }
 
-type Panel = "condition" | "medication" | "consult" | null;
+type Panel = "condition" | "medication" | "consult" | "plan" | null;
 
 /** The patient's own health profile: what they reported, what their care team confirmed,
  *  who looks after them, and a way to ask for a consultation. */
@@ -327,6 +340,8 @@ export function MyMedications() {
         )
       )}
 
+      {can(P.SELF_HEALTH_MANAGE) && <HealthPlanSection onContact={() => setPanel("plan")} />}
+
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-6">
           <Card
@@ -399,7 +414,13 @@ export function MyMedications() {
       {panel && (
         <Drawer
           title={
-            panel === "condition" ? "Add a condition" : panel === "medication" ? "Add a medication" : "Consult a HCP"
+            panel === "condition"
+              ? "Add a condition"
+              : panel === "medication"
+                ? "Add a medication"
+                : panel === "plan"
+                  ? "Contact your care manager"
+                  : "Consult a HCP"
           }
           onClose={close}
         >
@@ -415,6 +436,15 @@ export function MyMedications() {
           )}
           {panel === "consult" && (
             <ConsultForm busy={consult.isPending} error={consult.error} onSubmit={(r) => consult.mutate(r)} />
+          )}
+          {panel === "plan" && (
+            // Goes to the care manager's request queue like any request from the patient.
+            <ConsultForm
+              busy={consult.isPending}
+              error={consult.error}
+              initial="I would like help setting up my health goal plan: what to track and my daily check-ins."
+              onSubmit={(r) => consult.mutate(r)}
+            />
           )}
         </Drawer>
       )}
@@ -532,7 +562,80 @@ function ContentQuestion({ item }: { item: Json }) {
   );
 }
 
+/**
+ * The inbox. A patient: messages from their care team. An HCP: their patient work, the
+ * consultations care managers routed to them; what representatives send is on its own tab.
+ */
 export function MyInbox() {
+  const { can } = useAuth();
+  if (!can(P.SELF_COMMERCIAL_INBOX)) return <MessageInbox />;
+  return (
+    <>
+      <PageHeader
+        title="Inbox"
+        subtitle="Consultations care managers routed to you: the patient's question, their condition and medication while it is with you, and your answer. Material from representatives is under Medical representative."
+      />
+      <RoutedConsultations />
+    </>
+  );
+}
+
+/** An HCP's representative channel: delivered material, their answers and MLR's replies. */
+export function RepresentativeInbox() {
+  return <MessageInbox />;
+}
+
+const PRODUCT_PARTS = [
+  { key: "interested", label: "Interested or asked for more", tone: "ok" as const },
+  { key: "answered", label: "Answered otherwise", tone: "info" as const },
+  { key: "declined", label: "Not interested", tone: "neutral" as const },
+  { key: "waiting", label: "No answer yet", tone: "warn" as const },
+];
+
+/** What representatives delivered to this HCP, by the product each item names, and what the
+ *  HCP did with it (GET /api/insights/hcp, by_product). */
+function ReachedByProduct() {
+  const q = useInsights("hcp");
+  const d: Json | undefined = q.data?.by_product;
+  const products: Json[] = d?.products ?? [];
+  return (
+    <BentoGrid className="mb-6">
+      <ChartPanel
+        title="What reached me, by product"
+        question="Approved material delivered to you, grouped by product, with what you did with each item."
+        query={q}
+        empty={d && !d.delivered ? "Nothing has been delivered to you yet." : false}
+        table={
+          <ChartTable
+            caption="Delivered material by product"
+            head={["Product", "Delivered", ...PRODUCT_PARTS.map((p) => p.label)]}
+            rows={products.map((p) => [p.product, p.delivered, ...PRODUCT_PARTS.map((k) => p[k.key])])}
+          />
+        }
+      >
+        <div className="space-y-5">
+          {products.map((p) => (
+            <div key={p.product}>
+              <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate font-semibold text-ink" title={p.titles.join(", ")}>
+                  {p.product}
+                </span>
+                <span className="tabular shrink-0 text-ink-muted">{p.delivered} delivered</span>
+              </div>
+              <StackedBar
+                unit="item"
+                segments={PRODUCT_PARTS.map((k) => ({ key: k.key, label: k.label, value: p[k.key], tone: k.tone }))}
+              />
+            </div>
+          ))}
+        </div>
+      </ChartPanel>
+    </BentoGrid>
+  );
+}
+
+/** Patient messages, or (for an HCP) what their representative delivered and MLR's replies. */
+function MessageInbox() {
   const { can } = useAuth();
   const client = useQueryClient();
   const toast = useToast();
@@ -560,7 +663,7 @@ export function MyInbox() {
   return (
     <>
       <PageHeader
-        title={isPatient ? "Messages from your care team" : "Inbox"}
+        title={isPatient ? "Messages from your care team" : "Medical representative"}
         meta={unreadCount > 0 && <Badge tone="accent">{unreadCount} new</Badge>}
         subtitle={
           isPatient
@@ -569,9 +672,10 @@ export function MyInbox() {
         }
       />
       <ErrorNote error={respond.error} className="mb-4" />
+      {!isPatient && can(P.SELF_CONSULTATIONS_MANAGE) && <ReachedByProduct />}
       {waitingConsultations > 0 && (
         <Alert tone="warn" title="Patients are waiting for you" className="mb-4">
-          <Link to="/my-patients" className="font-semibold text-primary-ink underline">
+          <Link to="/inbox" className="font-semibold text-primary-ink underline">
             {waitingConsultations} consultation{waitingConsultations === 1 ? "" : "s"} waiting for your response
           </Link>
           .
@@ -597,7 +701,7 @@ export function MyInbox() {
           <EmptyState title="No messages yet" icon={<InboxIcon className="h-5 w-5" />}>
             {isPatient
               ? "Messages from your care team will appear here."
-              : "Approved content your representative sends you will appear here. Consultations care managers route to you are under My patients."}
+              : "Approved content your representative sends you will appear here. Consultations care managers route to you are in your Inbox."}
           </EmptyState>
         </Card>
       ) : (
@@ -847,6 +951,39 @@ function ConsultationInsights({ onGroup }: { onGroup: (group: string) => void })
             tip: { title: `Answered in ${duration(t.hours)}`, lines: [`Routed ${fmtDateTime(t.routed_at)}`, `Answered ${fmtDateTime(t.responded_at)}`] },
           }))}
         />
+      </ChartPanel>
+      <ChartPanel
+        span="full"
+        title="Consult requests per week"
+        question="Consultations routed to you against those you answered, by week (Monday start), last 8 weeks."
+        query={q}
+        empty={d && !d.per_week.routed && !d.per_week.answered ? "No consultation was routed to you in the last 8 weeks." : false}
+        note={d && `${d.per_week.routed} routed, ${d.per_week.answered} answered in 8 weeks. A consultation you returned counts in the week you returned it.`}
+        table={
+          d && (
+            <ChartTable
+              caption="Consult requests per week"
+              head={["Week of", "Routed", "Answered"]}
+              rows={d.per_week.weeks.map((w: Json) => [fmtDate(w.week), w.routed, w.answered])}
+            />
+          )
+        }
+      >
+        {d && (
+          <PairedColumns
+            label="Consultations routed and answered per week"
+            series={[
+              { label: "Routed to you", tone: "info" },
+              { label: "Answered", tone: "ok" },
+            ]}
+            columns={d.per_week.weeks.map((w: Json) => ({
+              key: w.week,
+              label: shortDate(w.week),
+              values: [w.routed, w.answered] as [number, number],
+              tip: { title: `Week of ${fmtDate(w.week)}`, lines: [`${w.routed} routed to you`, `${w.answered} answered`] },
+            }))}
+          />
+        )}
       </ChartPanel>
       {d && (
         <div className="md:col-span-2 xl:col-span-12">
@@ -1131,9 +1268,8 @@ export function MyPatients() {
     <>
       <PageHeader
         title="My patients"
-        subtitle="Consultations routed to you, and the adherence of patients in your care who agreed to share it with their doctors."
+        subtitle="The adherence of patients in your care who agreed to share it with their doctors. Consultations routed to you are in your Inbox."
       />
-      <RoutedConsultations />
       <h2 className="mb-3 text-[17px] font-semibold text-ink">Adherence of patients who share it with you</h2>
       <Card flush>
         {!rows.length ? (

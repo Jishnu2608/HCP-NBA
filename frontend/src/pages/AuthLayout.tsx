@@ -1,6 +1,7 @@
 import { Activity, Lock, ShieldCheck, Sparkles } from "lucide-react";
 import { useRef } from "react";
 import type { ReactNode } from "react";
+import { CareNetwork } from "../ambient";
 import { gsap, reducedMotion, useEntrance, useGSAP } from "../motion";
 import { Link } from "react-router-dom";
 import { LegalLinks } from "../legal";
@@ -101,6 +102,9 @@ export default function AuthLayout({
   return (
     <div className="min-h-dvh bg-canvas lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
       <aside className="relative hidden overflow-hidden bg-nav lg:flex lg:flex-col lg:justify-between lg:p-10 xl:p-14">
+        <div aria-hidden className="ambient-on-dark pointer-events-none absolute inset-0">
+          <CareNetwork density={0.8} />
+        </div>
         <div className="relative flex items-center justify-between">
           <Brand light />
         </div>

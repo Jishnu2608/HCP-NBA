@@ -872,6 +872,325 @@ export function StreakCard({ streak, label, empty }: { streak: Json | null | und
   );
 }
 
+/* ------------------------------------------------------------------ trend lines */
+
+export type TrendPoint = { t: number; value: number; tip: Tip };
+export type TrendSeries = { key: string; label: string; tone: ChartTone; points: TrendPoint[]; dashed?: boolean };
+
+const SERIES_STROKE: Record<ChartTone, string> = {
+  brand: "var(--series-1)",
+  info: "var(--series-1)",
+  warn: "var(--series-2)",
+  ok: "var(--series-3)",
+  bad: "var(--bad-fill)",
+  neutral: "var(--series-baseline)",
+};
+
+/**
+ * One or more series over time on one scale (never two y axes). Points sit at their real
+ * time, so gaps between readings stay visible; an optional band marks a target range.
+ * Every point is a mark with its own tooltip; the newest point of each series is larger.
+ */
+export function TrendLines({
+  series,
+  from,
+  to,
+  unit,
+  bands = [],
+  label,
+  height = 200,
+  xTicks,
+}: {
+  series: TrendSeries[];
+  from: number;
+  to: number;
+  unit?: string;
+  bands?: Array<{ low?: number | null; high?: number | null; label: string }>;
+  label: string;
+  height?: number;
+  xTicks: Array<{ t: number; label: string }>;
+}) {
+  const mark = useMark();
+  const W = 640;
+  const H = height;
+  const L = 44;
+  const R = 14;
+  const T = 12;
+  const B = 26;
+  const values = series.flatMap((s) => s.points.map((p) => p.value));
+  bands.forEach((b) => {
+    if (b.low != null) values.push(b.low);
+    if (b.high != null) values.push(b.high);
+  });
+  let lo = Math.min(...values);
+  let hi = Math.max(...values);
+  if (lo === hi) {
+    lo -= 1;
+    hi += 1;
+  }
+  const pad = (hi - lo) * 0.12;
+  lo = lo - pad;
+  hi = hi + pad;
+  const x = (t: number) => L + ((t - from) / Math.max(1, to - from)) * (W - L - R);
+  const y = (v: number) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const ticks = [0, 0.5, 1].map((f) => lo + f * (hi - lo));
+  const fmt = (v: number) => (Math.abs(hi - lo) < 10 ? v.toFixed(1) : String(Math.round(v)));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full overflow-visible" role="group" aria-label={label}>
+      {bands.length > 0 && (
+        <g data-draw="fade">
+          {bands.map((b) => (
+            <g key={b.label}>
+              <rect
+                x={L}
+                width={W - L - R}
+                y={y(b.high ?? hi)}
+                height={Math.max(0, y(b.low ?? lo) - y(b.high ?? hi))}
+                fill="var(--ok-soft)"
+                fillOpacity={0.7}
+                stroke="var(--ok-line)"
+                strokeDasharray="3 3"
+              />
+              <text x={W - R - 4} y={y(b.high ?? hi) + 13} textAnchor="end" fontSize={11} fill="var(--ok)">
+                {b.label}
+              </text>
+            </g>
+          ))}
+        </g>
+      )}
+      {ticks.map((v) => (
+        <g key={v}>
+          <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="var(--chart-grid)" />
+          <text x={L - 6} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--chart-text)">
+            {fmt(v)}
+          </text>
+        </g>
+      ))}
+      {unit && (
+        <text x={4} y={T + 2} fontSize={10} fill="var(--chart-text)">
+          {unit}
+        </text>
+      )}
+      {xTicks.map((tk) => (
+        <text key={tk.t} x={x(tk.t)} y={H - 6} textAnchor="middle" fontSize={11} fill="var(--chart-text)">
+          {tk.label}
+        </text>
+      ))}
+      {series.map((s) => (
+        <path
+          key={s.key}
+          data-draw="line"
+          d={s.points.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)} ${y(p.value).toFixed(1)}`).join("")}
+          fill="none"
+          stroke={SERIES_STROKE[s.tone]}
+          strokeWidth={2}
+          strokeDasharray={s.dashed ? "5 4" : undefined}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      ))}
+      <g data-draw="fade">
+        {series.map((s) =>
+          s.points.map((p, i) => (
+            <circle
+              key={`${s.key}-${p.t}-${i}`}
+              cx={x(p.t)}
+              cy={y(p.value)}
+              r={i === s.points.length - 1 ? 4.5 : 3.5}
+              fill={SERIES_STROKE[s.tone]}
+              stroke="var(--surface)"
+              strokeWidth={2}
+              className="focus-visible:outline-none"
+              {...mark(p.tip, undefined, s.points.length * series.length <= 40)}
+            />
+          )),
+        )}
+      </g>
+    </svg>
+  );
+}
+
+/** Legend for line series: a short line in the series' stroke and its name. */
+export function SeriesLegend({ series }: { series: Array<{ key: string; label: string; tone: ChartTone; dashed?: boolean }> }) {
+  return (
+    <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+      {series.map((s) => (
+        <span key={s.key} className="inline-flex items-center gap-1.5">
+          <svg width="18" height="6" aria-hidden>
+            <line x1="1" x2="17" y1="3" y2="3" stroke={SERIES_STROKE[s.tone]} strokeWidth="2.5" strokeDasharray={s.dashed ? "4 3" : undefined} strokeLinecap="round" />
+          </svg>
+          {s.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ stacked columns */
+
+export type ColumnStack = { key: string; label: string; parts: Array<{ key: string; label: string; value: number; tone: ChartTone }>; tip?: Tip };
+
+/** Columns over a category (a day, a week), each split into parts that add up to the total.
+ *  Bars grow from the baseline; the total sits above each column. */
+export function StackedColumns({ columns, height = 150, label }: { columns: ColumnStack[]; height?: number; label: string }) {
+  const mark = useMark();
+  const max = Math.max(1, ...columns.map((c) => c.parts.reduce((n, p) => n + p.value, 0)));
+  const inner = height - 22;
+  return (
+    <div role="group" aria-label={label}>
+      <div className="flex items-end gap-2" style={{ height }}>
+        {columns.map((c) => {
+          const total = c.parts.reduce((n, p) => n + p.value, 0);
+          return (
+            <div key={c.key} className="flex h-full min-w-0 flex-1 flex-col justify-end">
+              <span className="tabular mb-1 text-center text-xs font-semibold text-ink">{total || ""}</span>
+              <div
+                data-draw="y"
+                className="flex flex-col-reverse gap-[2px] overflow-hidden rounded-t-[4px] outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"
+                style={{ height: total ? Math.max(4, (total / max) * inner) : 2 }}
+                {...mark(
+                  c.tip ?? {
+                    title: c.label,
+                    lines: total ? c.parts.filter((p) => p.value).map((p) => `${p.label}: ${p.value}`) : ["Nothing recorded"],
+                  },
+                )}
+              >
+                {total ? (
+                  c.parts
+                    .filter((p) => p.value)
+                    .map((p) => <div key={p.key} className={FILL[p.tone]} style={{ flexGrow: p.value, flexBasis: 0 }} />)
+                ) : (
+                  <div className="h-full bg-line" />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-1.5 flex gap-2 border-t border-line pt-1.5">
+        {columns.map((c) => (
+          <span key={c.key} className="min-w-0 flex-1 truncate text-center text-[11px] leading-4 text-ink-subtle">
+            {c.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Two measures side by side per category (for example routed and answered per week), on
+ *  one scale. */
+export function PairedColumns({
+  columns,
+  series,
+  height = 140,
+  label,
+}: {
+  columns: Array<{ key: string; label: string; values: [number, number]; tip: Tip }>;
+  series: [{ label: string; tone: ChartTone }, { label: string; tone: ChartTone }];
+  height?: number;
+  label: string;
+}) {
+  const mark = useMark();
+  const max = Math.max(1, ...columns.flatMap((c) => c.values));
+  const inner = height - 8;
+  return (
+    <div role="group" aria-label={label}>
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+        {series.map((s) => (
+          <span key={s.label} className="inline-flex items-center gap-1.5">
+            <ToneKey tone={s.tone} /> {s.label}
+          </span>
+        ))}
+      </div>
+      <div className="flex items-end gap-2" style={{ height }}>
+        {columns.map((c) => (
+          <div
+            key={c.key}
+            className="flex h-full min-w-0 flex-1 items-end justify-center gap-[3px] rounded outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"
+            {...mark(c.tip)}
+          >
+            {c.values.map((v, i) => (
+              <div
+                key={i}
+                data-draw="y"
+                className={cx("w-1/3 max-w-4 rounded-t-[3px]", FILL[series[i].tone])}
+                style={{ height: v ? Math.max(3, (v / max) * inner) : 1, opacity: v ? 1 : 0.35 }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 flex gap-2 border-t border-line pt-1.5">
+        {columns.map((c) => (
+          <span key={c.key} className="min-w-0 flex-1 truncate text-center text-[11px] leading-4 text-ink-subtle">
+            {c.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ heatmap */
+
+/** A grid of counts (rows by columns), darker for more. Every cell has a tooltip and is
+ *  reachable by keyboard when the grid is small enough. */
+export function Heatmap({
+  rows,
+  cols,
+  values,
+  tip,
+  label,
+  tone = "brand",
+}: {
+  rows: string[];
+  cols: string[];
+  values: number[][];
+  tip: (row: number, col: number, value: number) => Tip;
+  label: string;
+  tone?: ChartTone;
+}) {
+  const mark = useMark();
+  const max = Math.max(1, ...values.flat());
+  const focusable = rows.length * cols.length <= 60;
+  return (
+    <div role="group" aria-label={label} className="scroll-quiet overflow-x-auto">
+      <div className="grid min-w-[320px] gap-[3px]" style={{ gridTemplateColumns: `2.5rem repeat(${cols.length}, minmax(0, 1fr))` }}>
+        <span />
+        {cols.map((c) => (
+          <span key={c} className="truncate text-center text-[11px] text-ink-subtle">
+            {c}
+          </span>
+        ))}
+        {rows.map((r, i) => (
+          <div key={r} className="contents">
+            <span className="self-center text-[11px] text-ink-subtle">{r}</span>
+            {cols.map((c, j) => {
+              const v = values[i]?.[j] ?? 0;
+              return (
+                <div
+                  key={c}
+                  className={cx("h-7 rounded-[4px] outline-offset-1 focus-visible:outline-2 focus-visible:outline-focus", v ? FILL[tone] : "bg-sunken")}
+                  style={v ? { opacity: 0.18 + 0.82 * (v / max) } : undefined}
+                  {...mark(tip(i, j, v), undefined, focusable)}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-1.5 text-[11px] text-ink-subtle" aria-hidden>
+        Fewer
+        {[0.2, 0.45, 0.7, 1].map((o) => (
+          <span key={o} className={cx("h-2.5 w-4 rounded-sm", FILL[tone])} style={{ opacity: o }} />
+        ))}
+        More
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ helpers */
 
 /** The last value seen under a key, read before `changedSinceSeen` records the new one. */

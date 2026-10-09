@@ -169,7 +169,9 @@ Tokens: micro 0.18 s (press, small state), standard 0.32 s (cards, panels, drawe
 
 CSS keeps the cheap pieces: `lift` hover, `animate-grow` / `animate-grow-up` (a "from" frame that hands over to the element's own scale), `animate-pop`, `animate-fade`, the skeleton opacity pulse, the engine progress bar (only while an operation runs), `.chart-hatch`, `.spotlight`.
 
-Not used, on purpose: route exit transitions, animated sidebar width, staggering long lists, ScrollTrigger inside the app, count-up on load, celebrations or confetti, particles or canvas, pointer effects on dashboard cards, backdrop blur, pinning or scrubbing, theme cross-fades, shaking whole forms, counting inside chart labels, Recharts animation, character-by-character text, continuous pulses.
+Interactive surfaces (added 2026-10-09 at the owner's request): a 2D canvas care network (`ambient.tsx`) on the landing hero and the sign-in panel only, answering the pointer, drawing only while visible and still under reduced motion; and a pointer spotlight on KPI and bento cards (`useSpotlightGrid`, desktop mouse only, nothing moves). WebGL, WebGPU and Spline scenes were considered and not used: each needs a large download or a GPU context for an effect a 2D canvas gives at a fraction of the cost.
+
+Not used, on purpose: route exit transitions, animated sidebar width, staggering long lists, ScrollTrigger inside the app, count-up on load, celebrations or confetti, particle systems, 3D scenes, backdrop blur, pinning or scrubbing, theme cross-fades, shaking whole forms, counting inside chart labels, Recharts animation, character-by-character text, continuous pulses.
 
 Reduced motion: every GSAP entry point checks `prefers-reduced-motion` (or uses `gsap.matchMedia`), so nothing moves and state changes remain visible as text and icons; the CSS override collapses the rest.
 

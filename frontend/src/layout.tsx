@@ -14,7 +14,7 @@ import { ArrowRight } from "lucide-react";
 import { useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { useEntrance } from "./motion";
+import { useEntrance, useSpotlightGrid } from "./motion";
 import { cx } from "./ui";
 
 type Span = "full" | "wide" | "half" | "narrow";
@@ -55,6 +55,7 @@ export function BentoCell({
 export function BentoGrid({ children, className }: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEntrance(ref, { delay: 0.1 });
+  useSpotlightGrid(ref);
   return (
     <div ref={ref} className={cx("grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12", className)}>
       {children}
@@ -99,8 +100,9 @@ export function BentoCard({
   return (
     <section
       aria-labelledby={headingId}
+      data-spot
       className={cx(
-        "flex min-w-0 flex-col rounded-xl border border-line bg-surface shadow-card",
+        "spotlight flex min-w-0 flex-col rounded-xl border border-line bg-surface shadow-card",
         spanClass(span, pairOnTablet, rows),
         className,
       )}

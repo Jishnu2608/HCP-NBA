@@ -34,7 +34,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, query } from "../api";
-import { BarList, ChartFrame, ChartPanel, ChartTable, Sparkline, shortDate, useInsights } from "../charts";
+import { BarList, ChartFrame, ChartPanel, ChartTable, Heatmap, Sparkline, shortDate, useInsights } from "../charts";
 import { gsap, reducedMotion, useGSAP } from "../motion";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
@@ -245,6 +245,36 @@ function PlatformOperations() {
           }
         >
           <SmallMultiples series={roles} unit="accounts signed in" />
+        </ChartPanel>
+        <ChartPanel
+          span="full"
+          title="Audit activity"
+          question={`Audited events by weekday and time of day (${d?.audit_heatmap.timezone ?? "UTC"}), last ${d?.audit_heatmap.days ?? 30} days. An aid for spotting unusual access times; a busy cell is not evidence of anything by itself.`}
+          query={q}
+          link={{ to: "/audit", label: "Audit log" }}
+          empty={d && !d.audit_heatmap.total ? "No audited events in this period." : false}
+          table={
+            d && (
+              <ChartTable
+                caption="Audited events by weekday and time of day"
+                head={["Weekday", ...d.audit_heatmap.blocks]}
+                rows={d.audit_heatmap.weekdays.map((w: string, i: number) => [w, ...d.audit_heatmap.events[i]])}
+              />
+            )
+          }
+        >
+          {d && (
+            <Heatmap
+              label="Audited events by weekday and time of day"
+              rows={d.audit_heatmap.weekdays}
+              cols={d.audit_heatmap.blocks}
+              values={d.audit_heatmap.events}
+              tip={(r, c, v) => ({
+                title: `${d.audit_heatmap.weekdays[r]} ${d.audit_heatmap.blocks[c]} ${d.audit_heatmap.timezone}`,
+                lines: [`${v} audited event${v === 1 ? "" : "s"}`, `${d.audit_heatmap.signins[r][c]} sign-in attempts`],
+              })}
+            />
+          )}
         </ChartPanel>
         <ChartPanel
           span="full"

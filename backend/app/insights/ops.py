@@ -154,3 +154,29 @@ def active_users(db: Session, today: date, days: int = WINDOW_DAYS) -> dict:
             for r in roles
         ],
     }
+
+
+AUDIT_DAYS = 30
+BLOCKS = ("00-04", "04-08", "08-12", "12-16", "16-20", "20-24")
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def audit_heatmap(db: Session, today: date, days: int = AUDIT_DAYS) -> dict:
+    """Audited events over the last `days` days by weekday and four-hour block (UTC). An aid
+    for spotting unusual access times; a busy cell is not evidence of anything by itself."""
+    since = datetime.combine(today - timedelta(days=days - 1), datetime.min.time())
+    grid = [[0] * len(BLOCKS) for _ in WEEKDAYS]
+    signins = [[0] * len(BLOCKS) for _ in WEEKDAYS]
+    for ts, action in db.execute(select(AuditLog.ts, AuditLog.action).where(AuditLog.ts >= since)):
+        grid[ts.weekday()][ts.hour // 4] += 1
+        if action in ("login_succeeded", "login_failed"):
+            signins[ts.weekday()][ts.hour // 4] += 1
+    return {
+        "days": days,
+        "timezone": "UTC",
+        "weekdays": list(WEEKDAYS),
+        "blocks": list(BLOCKS),
+        "events": grid,
+        "signins": signins,
+        "total": sum(map(sum, grid)),
+    }

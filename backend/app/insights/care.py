@@ -202,3 +202,69 @@ def no_overdue_streak(db: Session, user: User, today: date) -> dict | None:
     return streaks.no_overdue_days(
         ((r.due_date, r.created_at, r.closed_at) for r in _dated(db, user)), today
     )
+
+
+TIERS = (
+    ("high", "High risk"),
+    ("medium", "Medium risk"),
+    ("low", "Low risk"),
+    (None, "No risk score"),
+)
+BURN_DAYS = 30
+
+
+def risk_caseload(db: Session, user: User, today: date, done_days: int = 30) -> dict:
+    """Care requests on the panel by the patient's current risk tier: completed in the last
+    `done_days` days, open, and open past their due date (overdue)."""
+    rows = db.execute(
+        select(CareRequest, Patient.risk_segment)
+        .join(Patient, Patient.patient_id == CareRequest.patient_id)
+        .where(rbac.patient_filter(user, CareRequest.patient_id))
+    ).all()
+    since = today - timedelta(days=done_days)
+    tiers = []
+    for key, label in TIERS:
+        mine = [r for r, seg in rows if seg == key]
+        open_ = [r for r in mine if r.status != CareRequestStatus.CLOSED]
+        overdue = [r for r in open_ if r.due_date and r.due_date < today]
+        done = [
+            r
+            for r in mine
+            if r.status == CareRequestStatus.CLOSED and (r.closed_at or r.updated_at).date() > since
+        ]
+        tiers.append(
+            {
+                "key": key or "none",
+                "label": label,
+                "completed": len(done),
+                "open": len(open_) - len(overdue),
+                "overdue": len(overdue),
+            }
+        )
+    return {
+        "tiers": [t for t in tiers if t["completed"] or t["open"] or t["overdue"]],
+        "done_days": done_days,
+    }
+
+
+def burn_down(db: Session, user: User, today: date, days: int = BURN_DAYS) -> dict:
+    """For each of the last `days` days: requests still open at the end of the day (the
+    backlog) and requests that arrived that day. A shrinking backlog with steady arrivals
+    means work is being closed faster than it comes in."""
+    rows = db.scalars(
+        select(CareRequest).where(rbac.patient_filter(user, CareRequest.patient_id))
+    ).all()
+    out = []
+    for k in range(days):
+        d = today - timedelta(days=days - 1 - k)
+        backlog = sum(
+            1
+            for r in rows
+            if r.created_at.date() <= d
+            and not (
+                r.status == CareRequestStatus.CLOSED and (r.closed_at or r.updated_at).date() <= d
+            )
+        )
+        new = sum(1 for r in rows if r.created_at.date() == d)
+        out.append({"date": d, "open": backlog, "new": new})
+    return {"days": out, "total_new": sum(p["new"] for p in out)}

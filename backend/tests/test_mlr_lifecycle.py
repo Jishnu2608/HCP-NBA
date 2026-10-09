@@ -307,7 +307,9 @@ def test_hcp_question_reaches_mlr_masked_and_the_reply_returns(env):
         json={"body": "Yes, within the approved indication.", "interaction_id": i.id},
     )  # fmt: skip
     assert reply.status_code in (200, 201)
-    assert attention(env, "hcp")["messages"] >= 1
+    # The reply is counted on the HCP's representative tab, not with patient work.
+    assert attention(env, "hcp")["rep_messages"] >= 1
+    assert "messages" not in attention(env, "hcp")
     inbox = call(env, "hcp", "GET", "/api/me/inbox").json()
     item = next(x for x in inbox if x["id"] == i.id)
     assert item["conversation"][-1]["author"] == "Medical, legal and regulatory review"

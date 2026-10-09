@@ -21,6 +21,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useRef } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { CareNetwork } from "../ambient";
 import { DUR, MEDIA, gsap, useGSAP, useMagnetic, useSpotlight } from "../motion";
 import { ThemeToggle } from "../theme";
 import { cx } from "../ui";
@@ -370,7 +371,11 @@ export default function Landing() {
 
       <main id="content">
         {/* Hero */}
-        <section ref={hero} className="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-12 sm:px-6 sm:pt-16 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:pb-24 lg:pt-20">
+        <section ref={hero} className="relative isolate mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-12 sm:px-6 sm:pt-16 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:pb-24 lg:pt-20">
+          {/* The care network: drifts slowly, answers the pointer, stays behind the content. */}
+          <div aria-hidden className="ambient-fade pointer-events-none absolute inset-0 -z-10">
+            <CareNetwork />
+          </div>
           <div data-hero="text" className="max-w-xl">
             <h1 className="text-[44px] font-semibold leading-[1.05] tracking-[-0.03em] text-ink sm:text-[56px] lg:text-[64px]">
               Next Best Action

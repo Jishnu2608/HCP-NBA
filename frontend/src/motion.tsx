@@ -171,6 +171,37 @@ export function useMagnetic(ref: RefObject<HTMLElement | null>, strength = 0.18)
 }
 
 /**
+ * A soft light that follows the pointer across the cards of a grid (`[data-spot]`), so the
+ * dashboard answers the mouse without moving anything. One delegated listener per grid,
+ * one quickSetter pair per card, created on first hover. Desktop mouse only; nothing under
+ * reduced motion or on touch screens.
+ */
+export function useSpotlightGrid(scope: RefObject<HTMLElement | null>) {
+  useGSAP(
+    (_, contextSafe) => {
+      const root = scope.current;
+      if (!root || !desktopFine() || reducedMotion() || !contextSafe) return;
+      const setters = new WeakMap<HTMLElement, [(v: number) => void, (v: number) => void]>();
+      const move = contextSafe((e: PointerEvent) => {
+        const card = (e.target as HTMLElement).closest<HTMLElement>("[data-spot]");
+        if (!card || !root.contains(card)) return;
+        let set = setters.get(card);
+        if (!set) {
+          set = [gsap.quickSetter(card, "--spot-x", "px") as (v: number) => void, gsap.quickSetter(card, "--spot-y", "px") as (v: number) => void];
+          setters.set(card, set);
+        }
+        const r = card.getBoundingClientRect();
+        set[0](e.clientX - r.left);
+        set[1](e.clientY - r.top);
+      });
+      root.addEventListener("pointermove", move);
+      return () => root.removeEventListener("pointermove", move);
+    },
+    { scope },
+  );
+}
+
+/**
  * A soft light under the pointer on marketing cards (landing page only). Writes two CSS
  * variables with quickSetter; the gradient itself is CSS. Desktop with a mouse only.
  */

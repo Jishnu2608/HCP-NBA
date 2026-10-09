@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, patch, post, query } from "../api";
 import type { Json } from "../api";
-import { BarList, CalendarStrip, ChartPanel, ChartTable, StackedBar, StreakCard, WindowChart, useInsights } from "../charts";
+import { BarList, CalendarStrip, ChartPanel, ChartTable, StackedBar, StackedColumns, StreakCard, ToneKey, WindowChart, useInsights } from "../charts";
 import { BentoGrid, SectionHeader } from "../layout";
 import { useChangeHighlight } from "../motion";
 import { useToast } from "../toast";
@@ -581,6 +581,42 @@ function RepInsights({ onView }: { onView: (v: View) => void }) {
                 hint: s.hcps.length ? s.hcps.slice(0, 3).map((h: Json) => h.name).join(", ") + (s.hcps.length > 3 ? "…" : "") : undefined,
               }))}
             />
+          )}
+        </ChartPanel>
+        <ChartPanel
+          span="full"
+          title="This week's outcomes"
+          question="What your HCPs' answers, visits and calls led to this week, by day. Recorded outcomes only."
+          query={q}
+          empty={d && !d.week_outcomes.total ? "No delivery, visit or call with your HCPs yet this week." : false}
+          table={
+            d && (
+              <ChartTable
+                caption="This week's outcomes by day"
+                head={["Day", ...d.week_outcomes.groups.map((g: Json) => g.label)]}
+                rows={d.week_outcomes.days.map((x: Json) => [fmtDate(x.date), ...d.week_outcomes.groups.map((g: Json) => x[g.key])])}
+              />
+            )
+          }
+        >
+          {d && (
+            <>
+              <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+                {d.week_outcomes.groups.map((g: Json) => (
+                  <span key={g.key} className="inline-flex items-center gap-1.5">
+                    <ToneKey tone={g.tone} /> {g.label}
+                  </span>
+                ))}
+              </div>
+              <StackedColumns
+                label="Outcomes per day this week"
+                columns={d.week_outcomes.days.map((x: Json) => ({
+                  key: x.date,
+                  label: new Date(`${x.date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short" }),
+                  parts: d.week_outcomes.groups.map((g: Json) => ({ key: g.key, label: g.label, value: x[g.key], tone: g.tone })),
+                }))}
+              />
+            </>
           )}
         </ChartPanel>
         <ChartPanel

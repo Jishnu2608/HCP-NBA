@@ -3,6 +3,7 @@
 // be linked without being guarded, or guarded differently from how it is linked.
 import {
   BarChart3,
+  BriefcaseMedical,
   ClipboardList,
   Cpu,
   FileCheck2,
@@ -54,6 +55,7 @@ const MyInbox = page(() => import("./pages/Portal").then((m) => ({ default: m.My
 const MyMedications = page(() => import("./pages/Portal").then((m) => ({ default: m.MyMedications })));
 const MyPatients = page(() => import("./pages/Portal").then((m) => ({ default: m.MyPatients })));
 const MyProfile = page(() => import("./pages/Portal").then((m) => ({ default: m.MyProfile })));
+const RepresentativeInbox = page(() => import("./pages/Portal").then((m) => ({ default: m.RepresentativeInbox })));
 const Queue = page(() => import("./pages/Queue"));
 const UnderTheHood = page(() => import("./pages/UnderTheHood"));
 const UsersPage = page(() => import("./pages/Users"));
@@ -78,7 +80,7 @@ export interface AppRoute {
   group?: NavGroup | ((can: Can) => NavGroup);
   /** Key in `GET /api/me/attention` whose count is shown next to the menu item: work that
    *  arrived for this account, so nobody has to know which page to open. */
-  badge?: string;
+  badge?: string | ((can: Can) => string);
 }
 
 export const groupOf = (route: AppRoute, can: Can): NavGroup | undefined =>
@@ -227,7 +229,19 @@ export const ROUTES: AppRoute[] = [
     label: (can) => (can(P.SELF_CONSENT_MANAGE) ? "Messages" : "Inbox"),
     icon: icon(Inbox),
     group: "self",
-    badge: "messages",
+    // A patient's messages; an HCP's inbox is their patient work (routed consultations).
+    badge: (can) => (can(P.SELF_COMMERCIAL_INBOX) ? "consultations" : "messages"),
+  },
+  {
+    // An HCP's commercial channel: material their representative delivered, and MLR's
+    // replies about it, kept apart from patient work.
+    path: "/representative",
+    anyOf: [P.SELF_COMMERCIAL_INBOX],
+    element: <RepresentativeInbox />,
+    label: () => "Medical representative",
+    icon: icon(BriefcaseMedical),
+    group: "self",
+    badge: "rep_messages",
   },
   {
     path: "/consent",
@@ -244,7 +258,6 @@ export const ROUTES: AppRoute[] = [
     label: () => "My patients",
     icon: icon(Users),
     group: "self",
-    badge: "consultations",
   },
   {
     path: "/profile",

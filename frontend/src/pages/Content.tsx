@@ -133,8 +133,37 @@ function ReviewAttention({ q }: { q: ReturnType<typeof useInsights> }) {
   const d: Json | undefined = q.data;
   const waiting: Json[] = d?.waiting ?? [];
   const expiring: Json[] = d?.expiring ?? [];
+  const pipeline: Json[] = d?.pipeline ?? [];
+  const PIPE_TONE: Record<string, "warn" | "info" | "ok" | "bad" | "neutral"> = {
+    draft: "neutral",
+    pending: "warn",
+    changes_requested: "warn",
+    approved: "ok",
+    expired: "bad",
+    rejected: "bad",
+    withdrawn: "neutral",
+    superseded: "neutral",
+  };
   return (
     <BentoGrid className="mb-6">
+      <ChartPanel
+        span="full"
+        title="Review pipeline"
+        question="Every content version by its current MLR status. Approved versions are split by whether their approval is still in date."
+        query={q}
+        empty={d && !pipeline.some((p) => p.value) ? "No content yet." : false}
+        table={<ChartTable caption="Content versions by MLR status" head={["Status", "Versions"]} rows={pipeline.map((p) => [p.label, p.value])} />}
+      >
+        <BarList
+          items={pipeline.map((p) => ({
+            key: p.key,
+            label: p.label,
+            value: p.value,
+            tone: PIPE_TONE[p.key] ?? "info",
+            tip: { title: p.label, lines: [`${p.value} version${p.value === 1 ? "" : "s"}`] },
+          }))}
+        />
+      </ChartPanel>
       <ChartPanel
         span="half"
         title="Waiting for a decision"

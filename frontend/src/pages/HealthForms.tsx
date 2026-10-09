@@ -388,12 +388,15 @@ export function ConsultForm({
   onSubmit,
   busy,
   error,
+  initial = "",
 }: {
   onSubmit: (reason: string) => void;
   busy: boolean;
   error: unknown;
+  /** Text to start from (for example a request to set up a health plan). */
+  initial?: string;
 }) {
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(initial);
   const [tried, setTried] = useState(false);
   return (
     <form

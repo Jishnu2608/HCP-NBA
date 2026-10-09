@@ -42,6 +42,8 @@ def hcp_insights(
         "workload": hcp.consultation_workload(db, hcp_id),
         "response_times": hcp.response_times(db, hcp_id),
         "streak": hcp.answered_streak(db, hcp_id),
+        "by_product": hcp.deliveries_by_product(db, hcp_id),
+        "per_week": hcp.consults_per_week(db, hcp_id, clock.get_today(db)),
     }
 
 
@@ -56,6 +58,8 @@ def care_insights(
         "follow_ups": care.follow_up_load(db, user, today),
         "waiting_with_hcp": care.waiting_with_hcp(db, user, today),
         "streak": care.no_overdue_streak(db, user, today),
+        "risk_caseload": care.risk_caseload(db, user, today),
+        "burn_down": care.burn_down(db, user, today),
     }
 
 
@@ -71,6 +75,7 @@ def content_insights(
         "concerns": mlr.concerns(db, now),
         "expiring": mlr.expiring(db, clock.get_today(db)),
         "expiry_window_days": mlr.EXPIRY_WINDOW_DAYS,
+        "pipeline": mlr.pipeline(db, clock.get_today(db)),
     }
 
 
@@ -86,6 +91,7 @@ def rep_insights(
         "engagement": rep.engagement_states(db, user, today),
         "activity": rep.activity(db, user, today),
         "streak": rep.on_time_streak(db, user),
+        "week_outcomes": rep.week_outcomes(db, user, today),
         "today": today,
     }
 
@@ -100,4 +106,5 @@ def operations_insights(
         "workload": ops.role_workload(db),
         "failures": ops.failures(db, today),
         "active_users": ops.active_users(db, today),
+        "audit_heatmap": ops.audit_heatmap(db, today),
     }

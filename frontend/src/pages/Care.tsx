@@ -23,9 +23,10 @@ import type { FormEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, patch, post, put, query } from "../api";
 import type { Json } from "../api";
-import { BarList, ChartPanel, ChartTable, StackedBar, StreakCard, useInsights } from "../charts";
+import { BarList, ChartPanel, ChartTable, SeriesLegend, StackedBar, StreakCard, TrendLines, shortDate, useInsights } from "../charts";
 import { BentoGrid, SectionHeader } from "../layout";
 import { ResidenceFields } from "../legal";
+import { CarePlanEditor } from "./HealthPlan";
 import { useToast } from "../toast";
 import {
   Alert,
@@ -83,6 +84,42 @@ const reviewPending = (q: Json) => Boolean(q.entry_pending);
 /* ------------------------------------------------------------------ request queue */
 
 type StatusFilter = "active" | "awaiting_hcp" | "hcp_responded" | "closed" | "";
+
+/** The open backlog and the daily arrivals on one scale (counts), with a dated axis. */
+function BurnDown({ days }: { days: Json[] }) {
+  const t = (d: string) => new Date(`${d}T12:00:00`).getTime();
+  const series = [
+    {
+      key: "open",
+      label: "Open at end of day",
+      tone: "brand" as const,
+      points: days.map((p) => ({ t: t(p.date), value: p.open, tip: { title: fmtDate(p.date), lines: [`${p.open} open`, `${p.new} new`] } })),
+    },
+    {
+      key: "new",
+      label: "New that day",
+      tone: "warn" as const,
+      dashed: true,
+      points: days.map((p) => ({ t: t(p.date), value: p.new, tip: { title: fmtDate(p.date), lines: [`${p.new} new`, `${p.open} open`] } })),
+    },
+  ];
+  const first = days[0].date;
+  const mid = days[Math.floor(days.length / 2)].date;
+  const last = days[days.length - 1].date;
+  return (
+    <>
+      <SeriesLegend series={series} />
+      <TrendLines
+        label="Open backlog and new requests per day"
+        series={series}
+        from={t(first)}
+        to={t(last)}
+        xTicks={[first, mid, last].map((d) => ({ t: t(d), label: shortDate(d) }))}
+        height={190}
+      />
+    </>
+  );
+}
 
 /** Dated work by when it is due, consultations waiting for an HCP, and the no-overdue
  *  streak, over the care manager's panel (GET /api/insights/care). */
@@ -142,6 +179,56 @@ function CareWorkInsights({ onFilter }: { onFilter: (status: StatusFilter) => vo
             <StreakCard streak={d.streak} label="Days in a row without an overdue item" empty="Your streak starts once your panel has dated work." />
           </div>
         )}
+        <ChartPanel
+          span="half"
+          title="Caseload by risk tier"
+          question={`Care requests on your panel by the patient's current risk: completed in the last ${d?.risk_caseload.done_days ?? 30} days, open, and overdue.`}
+          query={q}
+          empty={d && !d.risk_caseload.tiers.length ? "No care requests on your panel yet." : false}
+          table={
+            d && (
+              <ChartTable
+                caption="Caseload by risk tier"
+                head={["Risk tier", "Completed", "Open", "Overdue"]}
+                rows={d.risk_caseload.tiers.map((t: Json) => [t.label, t.completed, t.open, t.overdue])}
+              />
+            )
+          }
+        >
+          <div className="space-y-5">
+            {(d?.risk_caseload.tiers ?? []).map((t: Json) => (
+              <div key={t.key}>
+                <p className="mb-1.5 text-sm font-semibold text-ink">{t.label}</p>
+                <StackedBar
+                  unit="request"
+                  segments={[
+                    { key: "completed", label: "Completed", value: t.completed, tone: "ok" },
+                    { key: "open", label: "Open", value: t.open, tone: "info" },
+                    { key: "overdue", label: "Overdue", value: t.overdue, tone: "bad" },
+                  ]}
+                />
+              </div>
+            ))}
+          </div>
+        </ChartPanel>
+        <ChartPanel
+          span="half"
+          title="Open work burn-down"
+          question="Requests still open at the end of each day against requests that arrived that day, last 30 days. A falling line means the backlog is shrinking."
+          query={q}
+          empty={d && !d.burn_down.days.some((p: Json) => p.open || p.new) ? "No care requests on your panel in the last 30 days." : false}
+          table={
+            d && (
+              <ChartTable
+                caption="Open backlog and new requests per day"
+                head={["Day", "Open at end of day", "New"]}
+                rows={[...d.burn_down.days].reverse().map((p: Json) => [fmtDate(p.date), p.open, p.new])}
+              />
+            )
+          }
+        >
+          {d && <BurnDown days={d.burn_down.days} />}
+        </ChartPanel>
       </BentoGrid>
     </>
   );
@@ -565,6 +652,7 @@ export function CarePanel({ patientId }: { patientId: string }) {
         </Card>
       </div>
       <ErrorNote error={call.error} />
+      <CarePlanEditor patientId={patientId} />
 
       {sheet && (
         <Drawer title={sheetTitle[sheet.kind]} onClose={close}>
