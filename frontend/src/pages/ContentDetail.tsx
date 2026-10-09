@@ -1,6 +1,6 @@
 import { Steps } from "../charts";
 import type { Step } from "../charts";
-import { DUR, Morph, gsap, reducedMotion, useGSAP } from "../motion";
+import { DUR, Morph, changedSinceSeen, gsap, reducedMotion, useChangeHighlight, useGSAP } from "../motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
+import type { ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, patch, post } from "../api";
 import type { Json } from "../api";
@@ -546,6 +547,89 @@ function ContentLifecycle({ c }: { c: Json }) {
   );
 }
 
+/**
+ * Version Diff Reveal: each changed field as before and now, side by side, labelled in
+ * words (not only by colour and strike-through). On opening, the earlier wording settles to
+ * its struck state and the new wording follows, once per visit; both are readable from the
+ * first frame.
+ */
+function ChangesCard({ c }: { c: Json }) {
+  const ref = useRef<HTMLUListElement>(null);
+  useGSAP(
+    () => {
+      if (!ref.current || reducedMotion()) return;
+      const tl = gsap.timeline({ defaults: { duration: DUR.standard } });
+      tl.from(ref.current.querySelectorAll("[data-diff-before]"), { opacity: 0.55, x: -6, stagger: 0.06, clearProps: "opacity,transform" }).from(
+        ref.current.querySelectorAll("[data-diff-after]"),
+        { opacity: 0.55, x: 6, stagger: 0.06, clearProps: "opacity,transform" },
+        0.12,
+      );
+    },
+    { scope: ref },
+  );
+  return (
+    <Card title={`Changes since ${c.previous_id}`} description="What the author changed in this version.">
+      <ul ref={ref} className="space-y-4 text-sm">
+        {c.changes.map((ch: Json) => (
+          <li key={ch.field}>
+            <div className="font-semibold text-ink">{FIELD_LABEL[ch.field] ?? ch.field}</div>
+            <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+              <div data-diff-before className="rounded-lg border border-bad-line/60 bg-bad-soft/40 p-2.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-bad">Before</span>
+                <p className="mt-0.5 text-ink-muted line-through decoration-bad/40">{show(ch.before)}</p>
+              </div>
+              <div data-diff-after className="rounded-lg border border-ok-line bg-ok-soft/50 p-2.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-ok">Now</span>
+                <p className="mt-0.5 text-ink">{show(ch.after)}</p>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * Approval Seal: when this viewer sees a content version's MLR status for the first time
+ * after it changed (a decision just recorded, here or by another reviewer), a ring draws
+ * once around the status badge in the colour of the decision. Never on a first visit, never
+ * for an undecided state, so nothing looks approved that is not.
+ */
+const SEAL: Record<string, string> = {
+  approved: "var(--ok-fill)",
+  changes_requested: "var(--warn-fill)",
+  rejected: "var(--bad-fill)",
+  withdrawn: "var(--line-strong)",
+};
+function SealedStatus({ id, status, children }: { id: string; status: string; children: ReactNode }) {
+  const { user } = useAuth();
+  const ref = useRef<HTMLSpanElement>(null);
+  useGSAP(
+    () => {
+      if (!user || !ref.current) return;
+      const moved = changedSinceSeen(`mlr.${user.id}.${id}`, status);
+      const ring = ref.current.querySelector<SVGRectElement>("rect");
+      if (!moved || !SEAL[status] || !ring || reducedMotion()) return;
+      const length = ring.getTotalLength();
+      gsap
+        .timeline()
+        .set(ring.ownerSVGElement, { opacity: 1 })
+        .fromTo(ring, { strokeDasharray: length, strokeDashoffset: length }, { strokeDashoffset: 0, duration: 0.6, ease: "power2.inOut" })
+        .to(ring.ownerSVGElement, { opacity: 0, duration: 0.6, delay: 1.6 });
+    },
+    { dependencies: [status], scope: ref },
+  );
+  return (
+    <span ref={ref} className="relative inline-flex">
+      {children}
+      <svg aria-hidden className="pointer-events-none absolute -inset-1 overflow-visible opacity-0" style={{ width: "calc(100% + 8px)", height: "calc(100% + 8px)" }}>
+        <rect x="1" y="1" rx="9" fill="none" strokeWidth="2" stroke={SEAL[status] ?? "transparent"} style={{ width: "calc(100% - 2px)", height: "calc(100% - 2px)" }} />
+      </svg>
+    </span>
+  );
+}
+
 function History({ c, onPosted }: { c: Json; onPosted: (d: Json) => void }) {
   const send = useMutation({
     mutationFn: (v: { body: string; interaction_id?: number }) => post(`/content/${c.content_id}/messages`, v),
@@ -554,17 +638,22 @@ function History({ c, onPosted }: { c: Json; onPosted: (d: Json) => void }) {
     },
   });
   const events = [...c.reviews, ...c.conversation.general].sort((a: Json, b: Json) => String(a.ts).localeCompare(String(b.ts)));
+  // A decision or message just recorded settles into the history (decision settle).
+  const timeline = useRef<HTMLDivElement>(null);
+  useChangeHighlight(timeline, [events.map((e: Json) => `${e.kind}${e.id}`).join("|")]);
   return (
     <>
       <Card title="Review history and conversation" description="Every decision on every version, and messages between the author and MLR.">
         {!events.length ? (
           <p className="text-sm text-ink-subtle">No decisions or messages yet.</p>
         ) : (
+          <div ref={timeline}>
           <Timeline>
             {events.map((e: Json) =>
               e.kind === "review" ? (
                 <TimelineItem
                   key={`r${e.id}`}
+                  motionId={`r${e.id}`}
                   tone={DECISION[e.decision]?.tone ?? "neutral"}
                   title={
                     <span>
@@ -591,12 +680,13 @@ function History({ c, onPosted }: { c: Json; onPosted: (d: Json) => void }) {
                   {e.comment && <p className="mt-1 text-[13px] text-ink-subtle">Internal note: {e.comment}</p>}
                 </TimelineItem>
               ) : (
-                <TimelineItem key={`m${e.id}`} icon={<MessageSquare className="h-3.5 w-3.5" aria-hidden />} title={<strong>{e.author}</strong>} meta={fmtDateTime(e.ts)}>
+                <TimelineItem key={`m${e.id}`} motionId={`m${e.id}`} icon={<MessageSquare className="h-3.5 w-3.5" aria-hidden />} title={<strong>{e.author}</strong>} meta={fmtDateTime(e.ts)}>
                   <p className="mt-1 whitespace-pre-line text-sm text-ink">{e.body}</p>
                 </TimelineItem>
               ),
             )}
           </Timeline>
+          </div>
         )}
         {c.actions.message && (
           <MessageBox placeholder="Message about this content" busy={send.isPending} onSend={(body) => send.mutateAsync({ body })} />
@@ -766,9 +856,11 @@ export default function ContentDetail() {
         subtitle={`${c.content_id} · version ${c.version}${c.previous_id ? ` (revises ${c.previous_id})` : ""}${c.author ? ` · proposed by ${c.mine ? "you" : c.author}` : c.origin === "library" ? " · library material" : ""}`}
         meta={
           <>
-            <Morph value={c.mlr_status}>
-              <MlrBadge status={c.mlr_status} expired={c.mlr_status === "approved" && c.is_expired} />
-            </Morph>
+            <SealedStatus id={c.content_id} status={c.mlr_status}>
+              <Morph value={c.mlr_status}>
+                <MlrBadge status={c.mlr_status} expired={c.mlr_status === "approved" && c.is_expired} />
+              </Morph>
+            </SealedStatus>
             <Badge tone="sage">{c.audience === "HCP" ? "HCP audience" : "Patient audience"}</Badge>
           </>
         }
@@ -890,21 +982,7 @@ export default function ContentDetail() {
               </div>
             </dl>
           </Card>
-          {c.changes.length > 0 && (
-            <Card title={`Changes since ${c.previous_id}`}>
-              <ul className="space-y-3 text-sm">
-                {c.changes.map((ch: Json) => (
-                  <li key={ch.field}>
-                    <div className="font-semibold text-ink">{FIELD_LABEL[ch.field] ?? ch.field}</div>
-                    <div className="mt-1 grid gap-2 sm:grid-cols-2">
-                      <p className="rounded-lg bg-bad-soft/40 p-2 text-ink-muted line-through decoration-bad/40">{show(ch.before)}</p>
-                      <p className="rounded-lg bg-ok-soft/50 p-2 text-ink">{show(ch.after)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
+          {c.changes.length > 0 && <ChangesCard c={c} />}
           <Card title="Version history" description="Each version of this material and the MLR decisions on it, oldest first.">
             <VersionTimeline versions={c.versions} reviews={c.reviews} current={c.content_id} />
           </Card>
@@ -987,21 +1065,7 @@ export default function ContentDetail() {
               </div>
             </dl>
           </Card>
-          {c.changes.length > 0 && (
-            <Card title={`Changes since ${c.previous_id}`}>
-              <ul className="space-y-3 text-sm">
-                {c.changes.map((ch: Json) => (
-                  <li key={ch.field}>
-                    <div className="font-semibold text-ink">{FIELD_LABEL[ch.field] ?? ch.field}</div>
-                    <div className="mt-1 grid gap-2 sm:grid-cols-2">
-                      <p className="rounded-lg bg-bad-soft/40 p-2 text-ink-muted line-through decoration-bad/40">{show(ch.before)}</p>
-                      <p className="rounded-lg bg-ok-soft/50 p-2 text-ink">{show(ch.after)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
+          {c.changes.length > 0 && <ChangesCard c={c} />}
       </div>
       )}
       {!reviewer && (

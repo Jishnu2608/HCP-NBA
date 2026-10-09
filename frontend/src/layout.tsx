@@ -13,10 +13,10 @@
 // cards: it goes full width, or into a BentoSplit, where each column stacks its own cards
 // and nothing stretches.
 import { ArrowRight } from "lucide-react";
-import { useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { useEntrance, useSpotlightGrid } from "./motion";
+import { gsap, reducedMotion, useEntrance, useGSAP, useSpotlightGrid } from "./motion";
 import { cx } from "./ui";
 
 type Span = "full" | "wide" | "half" | "narrow" | "auto";
@@ -42,13 +42,19 @@ export function BentoCell({
   pairOnTablet = false,
   children,
   className,
+  id,
 }: {
   span?: Span;
   pairOnTablet?: boolean;
   children: ReactNode;
   className?: string;
+  id?: string;
 }) {
-  return <div className={cx("flex min-w-0 flex-col [&>*]:flex-1", spanClass(span, pairOnTablet), className)}>{children}</div>;
+  return (
+    <div id={id} className={cx("flex min-w-0 scroll-mt-32 flex-col [&>*]:flex-1", spanClass(span, pairOnTablet), className)}>
+      {children}
+    </div>
+  );
 }
 
 /** The grid enters after the page heading and figures: first cells lift in, in order, once. */
@@ -130,7 +136,10 @@ export function BentoCard({
   children,
   className,
   bodyClassName,
+  id,
 }: {
+  /** Anchor for in-page navigation (SectionNav). */
+  id?: string;
   span?: Span;
   /** Narrow and half cells sit two-up between 768 and 1279px instead of full width. */
   pairOnTablet?: boolean;
@@ -147,10 +156,11 @@ export function BentoCard({
   const headingId = useId();
   return (
     <section
+      id={id}
       aria-labelledby={headingId}
       data-spot
       className={cx(
-        "spotlight flex min-w-0 flex-col rounded-xl border border-line bg-surface shadow-card",
+        "spotlight flex min-w-0 scroll-mt-32 flex-col rounded-xl border border-line bg-surface shadow-card",
         spanClass(span, pairOnTablet),
         className,
       )}
@@ -268,5 +278,103 @@ export function BarRow({
       </div>
       {sub && <div className="mt-1 text-xs text-ink-subtle">{sub}</div>}
     </li>
+  );
+}
+
+/**
+ * A compact navigator for a long record page (Patient 360): one link per section, sticky
+ * under the top bar. The marker under the active link glides as the reader scrolls, so
+ * it is always clear where on the page they are; selecting a link scrolls there (instantly
+ * under reduced motion). Sections that are not on the page are left out.
+ */
+export function SectionNav({ items, label }: { items: Array<{ id: string; label: string }>; label: string }) {
+  const [present, setPresent] = useState<Array<{ id: string; label: string }>>([]);
+  const [active, setActive] = useState<string | null>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const marker = useRef<HTMLSpanElement>(null);
+  const links = useRef(new Map<string, HTMLAnchorElement>());
+  const signature = items.map((i) => i.id).join("|");
+
+  useEffect(() => {
+    // Sections can arrive after the page (the care panel loads separately), so the list of
+    // sections is refreshed when the page content changes, at most once per frame.
+    const pick = () => {
+      const line = window.innerHeight * 0.3;
+      const targets = items.map((i) => document.getElementById(i.id)).filter(Boolean) as HTMLElement[];
+      let current = targets[0]?.id ?? null;
+      for (const t of targets) if (t.getBoundingClientRect().top - line <= 0) current = t.id;
+      setActive(current);
+    };
+    const io = new IntersectionObserver(pick, { rootMargin: "-20% 0px -60% 0px", threshold: [0, 1] });
+    let ids = "";
+    let frame = 0;
+    const refresh = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const found = items.filter((i) => document.getElementById(i.id));
+        const next = found.map((i) => i.id).join("|");
+        if (next === ids) return;
+        ids = next;
+        setPresent(found);
+        io.disconnect();
+        found.forEach((i) => io.observe(document.getElementById(i.id)!));
+        pick();
+      });
+    };
+    refresh();
+    const mo = new MutationObserver(refresh);
+    mo.observe(document.querySelector("main") ?? document.body, { childList: true, subtree: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      mo.disconnect();
+      io.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
+
+  useGSAP(
+    () => {
+      const el = active ? links.current.get(active) : null;
+      if (!el || !marker.current) return;
+      // Transform only: the marker is 100px wide and scaled to the link's width.
+      const props = { x: el.offsetLeft, scaleX: el.offsetWidth / 100, opacity: 1 };
+      if (reducedMotion()) gsap.set(marker.current, props);
+      else gsap.to(marker.current, { ...props, duration: 0.28, ease: "power3.out", overwrite: true });
+      // Keep the active link in view on narrow screens (horizontal scroll of the bar only).
+      const box = bar.current;
+      if (box && (el.offsetLeft < box.scrollLeft || el.offsetLeft + el.offsetWidth > box.scrollLeft + box.clientWidth))
+        box.scrollTo({ left: el.offsetLeft - 16, behavior: reducedMotion() ? "auto" : "smooth" });
+    },
+    { dependencies: [active, present.length], scope: bar },
+  );
+
+  if (present.length < 2) return null;
+  return (
+    <nav aria-label={label} className="sticky top-16 mb-6 -mx-4 border-b border-line bg-canvas/95 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8" style={{ zIndex: 5 }}>
+      <div ref={bar} className="relative flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {present.map((i) => (
+          <a
+            key={i.id}
+            ref={(el) => {
+              if (el) links.current.set(i.id, el);
+            }}
+            href={`#${i.id}`}
+            aria-current={active === i.id ? "location" : undefined}
+            onClick={(e) => {
+              e.preventDefault();
+              document.getElementById(i.id)?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+              setActive(i.id);
+            }}
+            className={cx(
+              "inline-flex min-h-11 shrink-0 items-center whitespace-nowrap px-3 text-[13px] font-semibold transition-colors",
+              active === i.id ? "text-primary-ink" : "text-ink-muted hover:text-ink",
+            )}
+          >
+            {i.label}
+          </a>
+        ))}
+        <span ref={marker} aria-hidden className="pointer-events-none absolute bottom-0 left-0 h-0.5 w-[100px] origin-left rounded-full bg-primary opacity-0" />
+      </div>
+    </nav>
   );
 }

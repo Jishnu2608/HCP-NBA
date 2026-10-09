@@ -5,17 +5,21 @@ import {
   Check,
   ClipboardList,
   FileCheck2,
+  FlaskConical,
   Gauge,
   HeartPulse,
   ListChecks,
   MessageSquareText,
+  Minus,
   ScrollText,
+  ShieldAlert,
   ShieldCheck,
   Smartphone,
   Stethoscope,
   UserCheck,
   UserRound,
   Users,
+  X,
 } from "lucide-react";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useRef } from "react";
@@ -247,6 +251,108 @@ function DataToAction() {
 }
 
 /**
+ * Gate pipeline: two simulated options for the same patient pass through the same three
+ * deterministic gates. One reaches human review; the other is held back at consent and
+ * kept for audit. Text is visible from the start; when the section first comes into view
+ * the connectors fill and each result settles, in gate order. Played once; still under
+ * reduced motion.
+ */
+const PIPE_GATES = ["MLR approval", "Consent", "Contact frequency"];
+const PIPE_LANES: Array<{ title: string; meta: string; results: Array<"pass" | "fail" | "skip">; outcome: string; note: string; ok: boolean }> = [
+  {
+    title: "Refill reminder",
+    meta: "Text message · approved module v3",
+    results: ["pass", "pass", "pass"],
+    outcome: "Ready for review",
+    note: "A care manager approves before anything is sent.",
+    ok: true,
+  },
+  {
+    title: "Education message",
+    meta: "Email · approved module v2",
+    results: ["pass", "fail", "skip"],
+    outcome: "Held back",
+    note: "No email consent on file. Kept for audit, never sendable.",
+    ok: false,
+  },
+];
+
+function GatePipeline() {
+  const ref = useRef<HTMLDivElement>(null);
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        const tl = gsap.timeline({ paused: true, defaults: { duration: 0.3, ease: "power2.out" } });
+        gsap.utils.toArray<HTMLElement>("[data-pipe-lane]").forEach((lane, li) => {
+          const steps = Array.from(lane.querySelectorAll<HTMLElement>("[data-pipe-step]"));
+          steps.forEach((step, i) => {
+            const at = li * 0.25 + i * 0.28;
+            const link = step.querySelector("[data-pipe-link]");
+            if (link) tl.from(link, { scaleX: 0, transformOrigin: "0% 50%" }, at);
+            tl.from(step.querySelector("[data-pipe-mark]"), { scale: 0.4, opacity: 0, ease: "back.out(2)" }, at + 0.12);
+          });
+        });
+        ScrollTrigger.create({ trigger: ref.current, start: "top 75%", once: true, onEnter: () => tl.play() });
+      });
+      return () => mm.revert();
+    },
+    { scope: ref },
+  );
+  const mark = {
+    pass: { cls: "bg-ok-soft text-ok ring-ok-line", icon: <Check className="h-4 w-4" aria-hidden />, word: "passes" },
+    fail: { cls: "bg-bad-soft text-bad ring-bad-line", icon: <X className="h-4 w-4" aria-hidden />, word: "fails" },
+    skip: { cls: "bg-subtle text-ink-subtle ring-line", icon: <Minus className="h-4 w-4" aria-hidden />, word: "not reached" },
+  };
+  return (
+    <div ref={ref} className="space-y-4">
+      {PIPE_LANES.map((lane) => (
+        <div key={lane.title} data-pipe-lane className="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+          <ol aria-label={`${lane.title}: ${lane.outcome}`} className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,1fr))_minmax(0,1.3fr)] md:items-center md:gap-0">
+            <li className="min-w-0 md:pr-4">
+              <p className="text-[15px] font-semibold text-ink">{lane.title}</p>
+              <p className="text-[13px] text-ink-muted">{lane.meta}</p>
+            </li>
+            {PIPE_GATES.map((gate, i) => {
+              const r = lane.results[i];
+              return (
+                <li key={gate} data-pipe-step className="flex items-center gap-2.5 md:flex-col md:gap-1.5 md:text-center">
+                  <span className="relative flex shrink-0 items-center md:w-full md:justify-center">
+                    <span aria-hidden className="absolute left-0 right-1/2 top-1/2 hidden h-0.5 -translate-y-1/2 bg-line md:block">
+                      <span data-pipe-link className={cx("block h-full w-full", r === "skip" ? "bg-line" : lane.results[i - 1] === "fail" ? "bg-line" : "bg-primary-line")} />
+                    </span>
+                    <span aria-hidden className="absolute left-1/2 right-0 top-1/2 hidden h-0.5 -translate-y-1/2 bg-line md:block" />
+                    <span data-pipe-mark className={cx("relative grid h-9 w-9 place-items-center rounded-full ring-1", mark[r].cls)}>
+                      {mark[r].icon}
+                    </span>
+                  </span>
+                  <span className={cx("text-[13px] leading-5", r === "skip" ? "text-ink-subtle" : "text-ink")}>
+                    <span className="font-semibold">{gate}</span>
+                    <span className="block text-xs text-ink-muted">{mark[r].word}</span>
+                  </span>
+                </li>
+              );
+            })}
+            <li data-pipe-step className="min-w-0 md:pl-4">
+              <span className="flex items-center gap-2">
+                <span
+                  data-pipe-mark
+                  className={cx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold ring-1", lane.ok ? "bg-primary-soft text-primary-ink ring-primary-line" : "bg-warn-soft text-warn ring-warn-line")}
+                >
+                  {lane.ok ? <UserCheck className="h-3.5 w-3.5" aria-hidden /> : <ShieldAlert className="h-3.5 w-3.5" aria-hidden />}
+                  {lane.outcome}
+                </span>
+              </span>
+              <p className="mt-1.5 text-xs leading-5 text-ink-muted">{lane.note}</p>
+            </li>
+          </ol>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * The hero plays once, in reading order: headline, promise, actions, then the example
  * recommendation builds itself the way a reviewer reads one (card, facts, reasons,
  * safeguards passed, decision). Under a second; nothing loops.
@@ -260,7 +366,8 @@ function useHeroIntro(scope: React.RefObject<HTMLElement | null>) {
         const tl = gsap.timeline({ defaults: { duration: DUR.expressive, ease: "power3.out" } });
         tl.from("[data-hero='text'] > *", { opacity: 0, y: 18, stagger: 0.08 })
           .from("[data-hero='card']", { opacity: 0, y: 24, duration: 0.5 }, 0.15)
-          .from("[data-hero='back']", { opacity: 0, rotation: 0, duration: 0.6 }, 0.3)
+          // The back card keeps its CSS tilt (Tailwind sets the rotate property); only fade and lift.
+          .from("[data-hero='back']", { opacity: 0, y: 12, duration: 0.6 }, 0.3)
           .from("[data-hero='facts'] > *", { opacity: 0, y: 6, stagger: 0.05, duration: 0.3 }, 0.4)
           .from("[data-hero='reason']", { opacity: 0, x: -8, stagger: 0.07, duration: 0.3 }, 0.5)
           .from("[data-hero='gate']", { opacity: 0, scale: 0.85, stagger: 0.06, duration: 0.25, ease: "back.out(2)" }, 0.75)
@@ -291,7 +398,8 @@ function useLoopMotion(scope: React.RefObject<HTMLElement | null>) {
         const intro = gsap.to(marks, { scaleX: 1, duration: 0.35, stagger: 0.09, paused: true });
         let cycle: gsap.core.Timeline | null = null;
         if (fine) {
-          cycle = gsap.timeline({ paused: true, repeat: -1 });
+          // Two rounds, then still: enough to show the cycle without pulling the eye while reading.
+          cycle = gsap.timeline({ paused: true, repeat: 1 });
           sweeps.forEach((el) => {
             cycle!
               .fromTo(el, { scaleX: 0, opacity: 1 }, { scaleX: 1, duration: 0.9, ease: "power1.inOut", transformOrigin: "0% 50%" })
@@ -462,6 +570,29 @@ export default function Landing() {
               </li>
             ))}
           </ol>
+        </section>
+
+        {/* The gates, shown on a simulated example */}
+        <section aria-labelledby="gates-title" className="border-t border-line bg-canvas">
+          <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div className="max-w-2xl">
+                <h2 id="gates-title" className="text-[32px] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-4xl">
+                  Every option meets the same gates
+                </h2>
+                <p className="mt-3 text-[17px] leading-7 text-ink-muted">
+                  Deterministic checks, not a model. An option that fails one is held back with its reason, and stays visible
+                  in the audit trail.
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-[13px] font-medium text-ink-muted">
+                <FlaskConical className="h-3.5 w-3.5" aria-hidden /> Simulated example, synthetic patient
+              </span>
+            </div>
+            <div className="mt-10">
+              <GatePipeline />
+            </div>
+          </div>
         </section>
 
         {/* Explainable + compliant: asymmetric pair */}

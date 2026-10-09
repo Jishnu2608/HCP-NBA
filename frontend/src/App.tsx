@@ -8,7 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { gsap, playExit, reducedMotion, useGSAP } from "./motion";
+import { Morph, gsap, markPageSeen, playExit, reducedMotion, useGSAP } from "./motion";
 import type { ReactNode } from "react";
 import { NavLink, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router-dom";
 import { ROLE_LABEL, useAuth } from "./auth";
@@ -29,7 +29,7 @@ import { NAV_GROUPS, ROUTES, groupOf } from "./routes";
 import { LegalLinks } from "./legal";
 import { preferences } from "./session";
 import { ThemeToggle } from "./theme";
-import { Avatar, IconButton, Loading, PersonName, cx } from "./ui";
+import { Avatar, IconButton, Loading, PersonName, cx, keepFocusInside } from "./ui";
 
 // The landing page carries the scroll-storytelling code (ScrollTrigger); it loads on its own.
 const Landing = lazy(() => import("./pages/Landing"));
@@ -122,8 +122,10 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
                             {item.icon}
                           </span>
                           <span className={cx("truncate", collapsed && "sr-only")}>{label}</span>
+                          {/* Count Tick: the badge pops once when the number changes, never on load. */}
                           {count > 0 && (
-                            <span
+                            <Morph
+                              value={count}
                               className={cx(
                                 "tabular ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-nav-indicator px-1.5 text-[11px] font-semibold leading-5 text-nav",
                                 collapsed && "absolute right-1 top-1 ml-0 min-w-4 px-1 text-[10px] leading-4",
@@ -131,7 +133,7 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
                             >
                               {count > 99 ? "99+" : count}
                               <span className="sr-only"> need attention</span>
-                            </span>
+                            </Morph>
                           )}
                         </>
                       )}
@@ -302,9 +304,19 @@ function Shell({ children }: { children: ReactNode }) {
     window.scrollTo({ top: 0 });
   }, [location.pathname]);
 
+  // Leaving a page marks it seen for this session: coming back shows it without the grid
+  // entrance (motion.useEntrance).
+  useEffect(() => {
+    const path = location.pathname;
+    return () => markPageSeen(path);
+  }, [location.pathname]);
+
   useEffect(() => {
     if (!drawer) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeDrawer();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return closeDrawer();
+      if (drawerPanel.current) keepFocusInside(e, drawerPanel.current);
+    };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
@@ -410,7 +422,9 @@ function Shell({ children }: { children: ReactNode }) {
           tabIndex={-1}
           className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 outline-none sm:px-6 sm:py-8 lg:px-8"
         >
-          <div key={location.pathname} className="animate-rise">
+          {/* The page itself only fades; its KPI row and grids carry the entrance, once per
+              page per session, so the shell and the content never animate on top of each other. */}
+          <div key={location.pathname} className="animate-fade">
             <AppErrorBoundary resetKey={location.pathname}>
               <Suspense fallback={<Loading />}>{children}</Suspense>
             </AppErrorBoundary>

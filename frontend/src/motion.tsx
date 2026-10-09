@@ -38,12 +38,31 @@ export const desktopFine = () => matches(MEDIA.desktopFine);
 
 export { gsap, useGSAP };
 
+/** Calls `fn` whenever the reduced-motion preference changes while the app is open, so a
+ *  running loop (the landing canvas) can stop at once. Returns the unsubscribe function. */
+export function onReducedMotionChange(fn: (reduce: boolean) => void): () => void {
+  const mq = typeof window !== "undefined" ? window.matchMedia?.(MEDIA.reduce) : undefined;
+  if (!mq) return () => {};
+  const listener = (e: MediaQueryListEvent) => fn(e.matches);
+  mq.addEventListener("change", listener);
+  return () => mq.removeEventListener("change", listener);
+}
+
+/* Pages already seen in this session: their grids appear without the entrance stagger, so
+   moving between pages does not replay the same choreography. The shell marks a page as
+   seen when the user leaves it. */
+const seenPages = new Set<string>();
+export const markPageSeen = (path: string): void => {
+  seenPages.add(path);
+};
+const pageSeen = () => typeof window !== "undefined" && seenPages.has(window.location.pathname);
+
 /* ------------------------------------------------------------------ entrance */
 
 /**
  * Children fade and lift in once, in order, when the component mounts. Only the first
  * `max` children move (4 on touch screens); the rest are simply there. Never runs again on
- * a refetch or re-render.
+ * a refetch or re-render, and not at all on a page already seen in this session.
  */
 export function useEntrance(
   scope: RefObject<HTMLElement | null>,
@@ -52,7 +71,7 @@ export function useEntrance(
   useGSAP(
     () => {
       const root = scope.current;
-      if (!root || reducedMotion()) return;
+      if (!root || reducedMotion() || pageSeen()) return;
       const all = selector ? Array.from(root.querySelectorAll<HTMLElement>(selector)) : (Array.from(root.children) as HTMLElement[]);
       const items = all.slice(0, isTouch() ? Math.min(4, max) : max);
       if (!items.length) return;
@@ -93,19 +112,47 @@ export function Morph({ value, children, className }: { value: unknown; children
  * Items inside `scope` carrying `data-motion-id` and `data-motion-sig` (a summary of their
  * state) lift in briefly when they are new or their state changed since the last render.
  * Nothing moves on first render, and unchanged items never move, so long lists stay still.
+ *
+ * Close-up: when items left the list (sent, refilled, closed) and nothing was added except at
+ * the end (a paged list backfilling; anything else is a new filter), the remaining items glide from their old position to their new one,
+ * so the reader sees where the gap went. Positions are kept relative to the list, so page
+ * scrolling between renders never counts as movement; at most 20 items move.
  */
 export function useChangeHighlight(scope: RefObject<HTMLElement | null>, deps: unknown[]) {
   const seen = useRef<Map<string, string> | null>(null);
+  const tops = useRef<Map<string, number>>(new Map());
   useGSAP(
     () => {
       const root = scope.current;
       if (!root) return;
-      const items = Array.from(root.querySelectorAll<HTMLElement>("[data-motion-id]"));
+      // Only rendered items count: a table can keep a hidden card view of the same rows.
+      const items = Array.from(root.querySelectorAll<HTMLElement>("[data-motion-id]")).filter((el) => el.getClientRects().length > 0);
       const now = new Map(items.map((el) => [el.dataset.motionId!, el.dataset.motionSig ?? ""]));
+      const base = root.getBoundingClientRect().top;
+      const nowTops = new Map(items.map((el) => [el.dataset.motionId!, el.getBoundingClientRect().top - base]));
       const before = seen.current;
+      const beforeTops = tops.current;
       seen.current = now;
+      tops.current = nowTops;
       if (!before || reducedMotion()) return;
-      const changed = items.filter((el) => before.get(el.dataset.motionId!) !== (el.dataset.motionSig ?? "")).slice(0, 6);
+      const removed = [...before.keys()].some((id) => !now.has(id));
+      const added = [...now.keys()].some((id) => !before.has(id));
+      // A paged list backfills: the next item joins at the end. Items added only after every
+      // item that stayed still count as a close-up, not as a new filter.
+      const lastKept = items.reduce((m, el, i) => (before.has(el.dataset.motionId!) ? i : m), -1);
+      const tailOnly = items.every((el, i) => before.has(el.dataset.motionId!) || i > lastKept);
+      const gliding = new Set<HTMLElement>();
+      if (removed && tailOnly && lastKept >= 0) {
+        const moving = items
+          .map((el) => [el, (beforeTops.get(el.dataset.motionId!) ?? 0) - (nowTops.get(el.dataset.motionId!) ?? 0)] as const)
+          .filter(([, dy]) => Math.abs(dy) > 1)
+          .slice(0, 20);
+        moving.forEach(([el, dy]) => {
+          gliding.add(el);
+          gsap.fromTo(el, { y: dy }, { y: 0, duration: DUR.standard, ease: EASE.out, clearProps: "transform" });
+        });
+      }
+      const changed = items.filter((el) => !gliding.has(el)).filter((el) => before.has(el.dataset.motionId!) ? before.get(el.dataset.motionId!) !== (el.dataset.motionSig ?? "") : added).slice(0, 6);
       if (!changed.length) return;
       gsap.fromTo(changed, { opacity: 0.35, y: 6 }, { opacity: 1, y: 0, duration: DUR.standard, stagger: 0.05, clearProps: "opacity,transform" });
     },

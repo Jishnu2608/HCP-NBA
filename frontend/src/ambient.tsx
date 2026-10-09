@@ -8,10 +8,11 @@
 // - at most 46 points (22 on small or touch screens), pixel ratio capped at 1.5;
 // - draws only while on screen and the tab is visible (IntersectionObserver +
 //   visibilitychange); stops completely otherwise;
-// - reduced motion: one still frame, no loop, no pointer response;
+// - reduced motion: one still frame, no loop, no pointer response (also when the setting
+//   changes while the page is open);
 // - colours come from the theme tokens and update when the theme changes.
 import { useEffect, useRef } from "react";
-import { isTouch, reducedMotion } from "./motion";
+import { isTouch, onReducedMotionChange, reducedMotion } from "./motion";
 
 type Node = { x: number; y: number; vx: number; vy: number; r: number };
 
@@ -36,7 +37,7 @@ export function CareNetwork({ className, density = 1 }: { className?: string; de
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const still = reducedMotion();
+    let still = reducedMotion();
     const touch = isTouch();
     let width = 0;
     let height = 0;
@@ -149,6 +150,7 @@ export function CareNetwork({ className, density = 1 }: { className?: string; de
     };
 
     const onMove = (e: PointerEvent) => {
+      if (still) return;
       const rect = host.getBoundingClientRect();
       pointer.x = e.clientX - rect.left;
       pointer.y = e.clientY - rect.top;
@@ -173,13 +175,22 @@ export function CareNetwork({ className, density = 1 }: { className?: string; de
       draw();
     });
     themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
-    if (!still && !touch) {
+    const offMotion = onReducedMotionChange((reduce) => {
+      still = reduce;
+      pointer.active = false;
+      if (reduce) {
+        stop();
+        draw();
+      } else start();
+    });
+    if (!touch) {
       host.addEventListener("pointermove", onMove);
       host.addEventListener("pointerleave", onLeave);
     }
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       stop();
+      offMotion();
       ro.disconnect();
       io.disconnect();
       themeWatch.disconnect();

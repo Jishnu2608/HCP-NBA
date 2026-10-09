@@ -3,7 +3,7 @@
 // invite representatives and care managers. The role choices come from the server, and the
 // server checks every action again: hiding an option here is presentation, not security.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, CheckCircle2, Clock3, Copy, MailCheck, MailPlus, MailX, RefreshCw, Send, TerminalSquare, UserPlus } from "lucide-react";
+import { Ban, CheckCircle2, Clock3, MailCheck, MailPlus, MailX, RefreshCw, Send, TerminalSquare, UserPlus } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api, post, query } from "../api";
@@ -29,6 +29,7 @@ import {
   TextField,
   fmtDateTime,
   num,
+  CopyButton,
 } from "../ui";
 import type { Column, Tone } from "../ui";
 import { SpecialtyPicker, specialtyText } from "./HealthForms";
@@ -77,7 +78,6 @@ function Delivery({ value }: { value: string }) {
 
 /** Development only (no mail server): the link is shown to the inviter, clearly labelled. */
 function DevLink({ link, onClose }: { link: string; onClose: () => void }) {
-  const toast = useToast();
   return (
     <Alert
       tone="warn"
@@ -96,12 +96,7 @@ function DevLink({ link, onClose }: { link: string; onClose: () => void }) {
         <code className="min-w-0 flex-1 break-all rounded-lg border border-warn-line bg-surface px-3 py-2 text-xs text-ink">
           {link}
         </code>
-        <Button
-          size="sm"
-          onClick={() => void navigator.clipboard?.writeText(link).then(() => toast("Link copied"))}
-        >
-          <Copy className="h-3.5 w-3.5" aria-hidden /> Copy
-        </Button>
+        <CopyButton text={link} label="Copy link" />
       </div>
     </Alert>
   );

@@ -409,7 +409,7 @@ export function MyMedications() {
         title="Instructions from your care team"
         description="Advice from your healthcare professionals and your care team, with the request each one answers."
       >
-        <NoteList items={h.notes} tiles limit={3} />
+        <NoteList items={h.notes} tiles limit={3} seenKey={user ? `notes.${user.id}` : undefined} />
       </Card>
 
       <Card

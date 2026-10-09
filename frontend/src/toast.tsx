@@ -17,28 +17,46 @@ interface Toast {
 const ToastContext = createContext<(message: ReactNode, tone?: Toast["tone"]) => void>(() => {});
 const LIFETIME_MS = 4200;
 
+/**
+ * One toast. It leaves on its own after LIFETIME_MS, but the clock pauses while the pointer
+ * is over it or it has keyboard focus, so nobody loses a message they are reading (WCAG
+ * 2.2.1). A thin bar shows the time left (transform only; hidden under reduced motion).
+ */
 function ToastItem({ toast, onGone }: { toast: Toast; onGone: (id: number) => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLSpanElement>(null);
+  const clock = useRef<gsap.core.Tween | null>(null);
   const leaving = useRef(false);
   const leave = useCallback(() => {
     if (leaving.current) return;
     leaving.current = true;
+    clock.current?.kill();
     playExit([ref.current], () => onGone(toast.id), { y: 8 });
   }, [onGone, toast.id]);
   useGSAP(
     () => {
-      if (ref.current && !reducedMotion()) gsap.from(ref.current, { y: 12, opacity: 0, duration: 0.2, clearProps: "transform,opacity" });
-      const timer = window.setTimeout(leave, LIFETIME_MS);
-      return () => window.clearTimeout(timer);
+      const still = reducedMotion();
+      if (ref.current && !still) gsap.from(ref.current, { y: 12, opacity: 0, duration: 0.2, clearProps: "transform,opacity" });
+      clock.current = still
+        ? gsap.delayedCall(LIFETIME_MS / 1000, leave)
+        : gsap.fromTo(bar.current, { scaleX: 1 }, { scaleX: 0, duration: LIFETIME_MS / 1000, ease: "none", transformOrigin: "0% 50%", onComplete: leave });
     },
     { scope: ref },
   );
+  const hold = () => clock.current?.pause();
+  const release = () => {
+    if (!ref.current?.matches(":hover, :focus-within")) clock.current?.resume();
+  };
   return (
     <div
       ref={ref}
       role="status"
+      onPointerEnter={hold}
+      onPointerLeave={release}
+      onFocus={hold}
+      onBlur={release}
       className={cx(
-        "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-xl border px-4 py-3 shadow-overlay",
+        "pointer-events-auto relative flex w-full max-w-sm items-start gap-3 overflow-hidden rounded-xl border px-4 py-3 shadow-overlay",
         "border-line bg-surface text-sm text-ink",
       )}
     >
@@ -51,6 +69,11 @@ function ToastItem({ toast, onGone }: { toast: Toast; onGone: (id: number) => vo
       <button type="button" aria-label="Dismiss" onClick={leave} className="-m-1 rounded-md p-1 text-ink-subtle hover:text-ink">
         <X className="h-4 w-4" aria-hidden />
       </button>
+      <span
+        ref={bar}
+        aria-hidden
+        className={cx("absolute inset-x-0 bottom-0 h-0.5 motion-reduce:hidden", toast.tone === "ok" ? "bg-ok-fill/60" : "bg-primary/50")}
+      />
     </div>
   );
 }

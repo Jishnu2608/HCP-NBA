@@ -171,7 +171,7 @@ Tokens: micro 0.18 s (press, small state), standard 0.32 s (cards, panels, drawe
 | `useEntrance` | `KpiGrid` (after the heading), `BentoGrid` (after the figures), the sign-in panel | The page arrived, in reading order. At most 8 items move (4 on touch); runs once, never on refetch |
 | `Morph` | Status badges, request status chips, MLR badges, content version badges | The state changed (never on first render) |
 | `useChangeHighlight` | Data tables with `motionSig`, request lists, HCP consultations, HCP work | A new row, or a row whose state changed, lifts in once; other rows never move |
-| `playExit` | Drawers, the phone navigation drawer, the account menu, toasts | Where the surface went; then it unmounts. Backdrops only fade (no blur) |
+| `playExit` | Drawers, the phone navigation drawer, the account menu, toasts | Where the surface went; then it unmounts. Backdrops only fade (no blur). Works because the CSS entrances fill `backwards` only |
 | `AnimatedNumber` | KPI figures | Moves from the old value to the new one; first load shows the value at once |
 | `Button done` | Refill, HCP intent answers, follow-up and meeting forms | idle -> working -> done ✓ for 1.6 s |
 | Nav indicator | Sidebar | One marker glides to the active page; collapse is instant |
@@ -179,6 +179,32 @@ Tokens: micro 0.18 s (press, small state), standard 0.32 s (cards, panels, drawe
 | `Steps` with `seenKey`, `StreakCard` | Consultation steps, content lifecycle, streaks | Animate only when the value differs from what this viewer last saw (`preferences.lastSeen`); first sight and reloads are static |
 | Verification code | Sign-up | Digit pop, a 4 px shake of the code row on a wrong code, green sweep on success (navigation waits at most 250 ms) |
 | Landing (`pages/Landing.tsx`, lazy chunk with ScrollTrigger) | Hero, data-to-action strip, 8-step loop, section reveals | Hero builds a recommendation the way a reviewer reads it; the strip lights signal -> insight -> action -> review -> outcome; the loop highlights one step at a time only while on screen (mouse devices); one ScrollTrigger per section, `once`. Magnetic pull on the main sign-in buttons and a pointer spotlight on role cards, desktop mouse only |
+
+Additions of 2026-10-09 (interaction quality pass):
+
+| Building block | Where | Meaning |
+|---|---|---|
+| Page entrance once | `useEntrance` + `markPageSeen` (shell) | Grids stagger only on the first visit to a page in a session; the route wrapper only fades, so shell and content never animate on top of each other |
+| Count Tick | Menu attention badges (`Morph`) | A pending-work count pops once when it changes |
+| Calm toasts | `toast.tsx` | Auto-dismiss after 4.2 s with a countdown bar; the clock pauses on hover or keyboard focus (WCAG 2.2.1); under reduced motion the bar is hidden and only the timer runs |
+| Close-up | `useChangeHighlight` | When rows leave a list (a paged list may backfill at the end), the remaining rows glide from their old position (FLIP, at most 20, positions relative to the list, hidden duplicates ignored) |
+| Drawer | `Drawer`, phone navigation | CSS entrance (fill-mode `backwards`, so the GSAP exit is never overridden), GSAP exit, focus kept inside (`keepFocusInside`), Escape closes |
+| Tabs | `Segmented` | The pill follows the active option and re-measures when a count changes width (ResizeObserver); arrow keys move the choice (radio-group pattern, one tab stop) |
+| Copy | `CopyButton` | The label becomes "Copied" with a check (or "Copy failed"), announced politely |
+| Press | `Button` | Eases a 1 px press and a 1.5% scale (Tailwind 4 `translate`/`scale` properties listed in the transition) |
+| Refill ripple | `DayStrip` | Days whose state changes during the visit (a refill recorded, supply ending) settle in left to right; nothing on first render |
+| Coverage sweep | `CoverageTimeline` (Patient 360) | Covered periods appear oldest to newest, once, via `useDrawIn` cells |
+| Rail fill | `Steps` vertical | A rail filled to the furthest step reached; on a real advance since the last visit it grows, then the new nodes settle |
+| Coin drop | `CoinCard` | When the balance is higher than at the last visit, "+N" rises from the coin and the tile settles; never on a first visit or a lower balance |
+| Instruction arrival | `NoteList seenKey` (patient My health, care manager panel) | Instructions added since the last visit carry a "New" badge and a ring, and settle in once |
+| Section navigator | `SectionNav` (Patient 360) | Sticky under the top bar; a transform-only marker glides to the section being read; links scroll there (instantly under reduced motion) |
+| Gate Check Cascade | `GateChecks` (recommendation page) | MLR, consent, medication and contact-frequency results from the server re-check (`gate_now.codes`), all text visible at once; only the result icons settle in order. Frequency is labelled "checked again at approval and send" because the pre-check leaves it out |
+| Decision settle | Audit trail (recommendation), review history (content) | The event a decision just recorded settles into the history |
+| Version diff reveal | `ChangesCard` | "Before" and "Now" labelled in words; the earlier wording settles to its struck state, then the new wording |
+| Approval seal | `SealedStatus` | A ring draws once around the MLR badge in the colour of a decision this viewer has not seen yet (approved, changes requested, rejected, withdrawn), then fades; never for undecided states |
+| Gate pipeline | Landing | Two simulated options through MLR, consent and frequency: one reaches review, one is held back at consent and kept for audit; labelled "Simulated example, synthetic patient"; played once |
+
+Landing changes: the hero back card no longer tweens rotation (its tilt is Tailwind's `rotate` property, so the tween did nothing); the loop sweep plays two rounds and stops. Dark cards carry a hairline top highlight in `--shadow-sm` / `--shadow-md`. The landing canvas stops and shows a still frame as soon as reduced motion is switched on while the page is open (`onReducedMotionChange`).
 
 CSS keeps the cheap pieces: `lift` hover, `animate-grow` / `animate-grow-up` (a "from" frame that hands over to the element's own scale), `animate-pop`, `animate-fade`, the skeleton opacity pulse, the engine progress bar (only while an operation runs), `.chart-hatch`, `.spotlight`.
 

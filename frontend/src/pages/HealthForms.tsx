@@ -2,10 +2,11 @@
 // conditions, medications, care requests, instructions and the care team. What the server
 // accepts is checked there; these only collect and display.
 import { Steps } from "../charts";
-import { Morph, useChangeHighlight } from "../motion";
+import { DUR, Morph, gsap, reducedMotion, useChangeHighlight, useGSAP } from "../motion";
+import { preferences } from "../session";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Clock3, HeartPulse, MessageSquareText, Pill, Stethoscope, UserRound } from "lucide-react";
-import { useId, useState, useRef } from "react";
+import { useEffect, useId, useState, useRef } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api } from "../api";
 import type { Json } from "../api";
@@ -691,20 +692,50 @@ export function NoteList({
   compact,
   tiles = false,
   limit,
+  seenKey,
 }: {
   items: Json[];
   staff?: boolean;
   compact?: boolean;
   tiles?: boolean;
   limit?: number;
+  /** Marks instructions added since this viewer's last visit as "New" (words, not only colour). */
+  seenKey?: string;
 }) {
   const [shown, more] = useShowMore(items, limit ?? items.length, "instructions");
+  const newest = items.reduce((m, n) => Math.max(m, Number(n.id) || 0), 0);
+  // Read once per visit: what was newest last time. A first visit marks nothing as new.
+  const [seenUpTo] = useState<number | null>(() => {
+    if (!seenKey) return null;
+    const last = preferences.lastSeen(seenKey);
+    return last === null ? null : Number(last);
+  });
+  useEffect(() => {
+    if (seenKey && newest) preferences.setLastSeen(seenKey, String(newest));
+  }, [seenKey, newest]);
+  const list = useRef<HTMLUListElement>(null);
+  useGSAP(
+    () => {
+      if (!list.current || reducedMotion()) return;
+      const fresh = list.current.querySelectorAll("[data-note-new]");
+      if (fresh.length) gsap.from(fresh, { opacity: 0, y: 8, duration: DUR.standard, stagger: 0.08, delay: 0.2, clearProps: "transform,opacity" });
+    },
+    { scope: list },
+  );
   if (!items.length) return <p className="text-sm text-ink-subtle">No instructions yet.</p>;
   return (
     <div className={cx(tiles && "@container")}>
-      <ul className={tiles ? "space-y-3 @2xl:columns-2 @5xl:columns-3 @2xl:gap-3 @2xl:space-y-0 @2xl:[&>li]:mb-3 [&>li]:break-inside-avoid" : "space-y-3"}>
+      <ul ref={list} className={tiles ? "space-y-3 @2xl:columns-2 @5xl:columns-3 @2xl:gap-3 @2xl:space-y-0 @2xl:[&>li]:mb-3 [&>li]:break-inside-avoid" : "space-y-3"}>
         {shown.map((n) => (
-          <li key={n.id} className={cx("rounded-lg border border-line p-3", n.kind === "hcp_instruction" && "bg-primary-soft/40")}>
+          <li
+            key={n.id}
+            {...(seenUpTo !== null && Number(n.id) > seenUpTo ? { "data-note-new": "" } : {})}
+            className={cx(
+              "rounded-lg border p-3",
+              seenUpTo !== null && Number(n.id) > seenUpTo ? "border-primary-line ring-1 ring-primary-line" : "border-line",
+              n.kind === "hcp_instruction" && "bg-primary-soft/40",
+            )}
+          >
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-subtle">
               <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
               {/* Follow-ups are tracked as requests with a due date; a follow-up note is an older,
@@ -720,6 +751,7 @@ export function NoteList({
               <span aria-hidden>·</span>
               <span className="tabular">{fmtDateTime(n.created_at)}</span>
               {staff && !n.visible_to_patient && <Badge tone="neutral">Care team only</Badge>}
+              {seenUpTo !== null && Number(n.id) > seenUpTo && <Badge tone="info">New</Badge>}
             </div>
             {n.request && !compact && (
               <p className="mt-1 text-[13px] text-ink-subtle">

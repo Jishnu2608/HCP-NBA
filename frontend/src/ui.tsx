@@ -11,6 +11,7 @@ import {
   ArrowRight,
   CalendarX2,
   Check,
+  Copy,
   CheckCheck,
   CheckCircle2,
   ChevronDown,
@@ -224,7 +225,9 @@ export function Button({
       disabled={rest.disabled || busy}
       className={cx(
         "inline-flex select-none items-center justify-center whitespace-nowrap rounded-lg font-semibold",
-        "transition-[background-color,color,box-shadow,transform,opacity] duration-150 active:translate-y-px",
+        // Tailwind 4 writes translate and scale as their own properties, so they are listed
+        // for the press to ease rather than snap.
+        "transition-[background-color,color,box-shadow,translate,scale,opacity] duration-150 active:translate-y-px active:scale-[0.985]",
         "disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none",
         VARIANT[variant],
         SIZE[size],
@@ -239,6 +242,36 @@ export function Button({
       {children}
       {confirmed && !busy && <span className="sr-only">Done</span>}
     </button>
+  );
+}
+
+/**
+ * Copies `text` and confirms in place: the icon becomes a check and the label "Copied" for
+ * a moment (announced to screen readers). If the browser refuses, it says so.
+ */
+export function CopyButton({ text, label = "Copy", size = "sm" }: { text: string; label?: string; size?: Size }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const t = window.setTimeout(() => setState("idle"), 1800);
+    return () => window.clearTimeout(t);
+  }, [state]);
+  const copy = () => {
+    if (!navigator.clipboard) return setState("failed");
+    navigator.clipboard.writeText(text).then(
+      () => setState("copied"),
+      () => setState("failed"),
+    );
+  };
+  return (
+    <Button size={size} onClick={copy} className={cx(state === "copied" && "text-ok")}>
+      {state === "copied" ? (
+        <Check className="animate-pop h-3.5 w-3.5" aria-hidden />
+      ) : (
+        <Copy className="h-3.5 w-3.5" aria-hidden />
+      )}
+      <span aria-live="polite">{state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : label}</span>
+    </Button>
   );
 }
 
@@ -521,7 +554,7 @@ const KPI_ICON: Record<KpiTone | "none", string> = {
  * Key-figure card. Every KPI in the product uses this one structure so tiles in a row
  * line up regardless of text length:
  *   title region  - always two lines tall (longer titles are clamped, full text in a tooltip)
- *   value         - one line, large tabular figures, counts up on first view
+ *   value         - one line, large tabular figures; counts to a new value when it changes (never on load)
  *   hint region   - always one line tall
  * The icon sits in a fixed 32px tile, top right. With `to`, the whole card is a link with a
  * hover lift and an arrow that appears on hover or focus.
@@ -1563,18 +1596,32 @@ export function Segmented<V extends string>({
 }) {
   const refs = useRef(new Map<string, HTMLButtonElement>());
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
+  // The pill follows the active option, and is measured again whenever any option changes
+  // size (a count growing from 9 to 10 widens its button), so it never sits off-centre.
+  const counts = options.map((o) => o.count ?? "").join("|");
   useLayoutEffect(() => {
     const measure = () => {
       const el = refs.current.get(value);
-      if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth });
+      if (el) setPill((p) => (p && p.left === el.offsetLeft && p.width === el.offsetWidth ? p : { left: el.offsetLeft, width: el.offsetWidth }));
     };
     measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [value, options.length]);
+    const ro = new ResizeObserver(measure);
+    refs.current.forEach((el) => ro.observe(el));
+    return () => ro.disconnect();
+  }, [value, options.length, counts]);
+  // Radio-group keys: arrows move the choice (and focus) to the previous or next option.
+  const onKey = (e: React.KeyboardEvent) => {
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const i = options.findIndex((o) => o.value === value);
+    const next = options[(i + step + options.length) % options.length];
+    onChange(next.value);
+    refs.current.get(next.value)?.focus();
+  };
   return (
     <div className="-mx-1 min-w-0 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div role="radiogroup" aria-label={label} className="relative inline-flex gap-1 rounded-lg border border-line bg-subtle p-1">
+      <div role="radiogroup" aria-label={label} onKeyDown={onKey} className="relative inline-flex gap-1 rounded-lg border border-line bg-subtle p-1">
         {pill && (
           <span
             aria-hidden
@@ -1593,6 +1640,7 @@ export function Segmented<V extends string>({
               type="button"
               role="radio"
               aria-checked={active}
+              tabIndex={active ? 0 : -1}
               onClick={() => onChange(o.value)}
               className={cx(
                 "relative inline-flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-[13px] font-semibold transition-colors",
@@ -1669,12 +1717,15 @@ export function TimelineItem({
   title,
   meta,
   children,
+  motionId,
 }: {
   icon?: ReactNode;
   tone?: "neutral" | "brand" | "ok" | "warn" | "bad";
   title: ReactNode;
   meta?: ReactNode;
   children?: ReactNode;
+  /** With a list-level useChangeHighlight, a new entry (a decision just recorded) settles in. */
+  motionId?: string | number;
 }) {
   const dot = {
     neutral: "bg-surface text-ink-subtle ring-line-strong",
@@ -1684,7 +1735,7 @@ export function TimelineItem({
     bad: "bg-bad-soft text-bad ring-bad-line",
   };
   return (
-    <li className="relative flex gap-3.5">
+    <li className="relative flex gap-3.5" {...(motionId !== undefined ? { "data-motion-id": String(motionId), "data-motion-sig": "" } : {})}>
       <span className={cx("relative z-[1] mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full ring-1", dot[tone])}>
         {icon ?? <span className="h-1.5 w-1.5 rounded-full bg-current" />}
       </span>
@@ -1787,6 +1838,27 @@ export function fmtDateTime(value: string | null | undefined) {
 /** Slide-over panel from the right. Escape or the backdrop closes it; focus moves into it.
  *  Rendered into <body>, so no page container (transforms, stacking) can place it under
  *  the sticky top bar. */
+/** Keeps Tab and Shift+Tab inside `root` (an open drawer or dialog). Call from keydown. */
+export function keepFocusInside(e: KeyboardEvent, root: HTMLElement) {
+  if (e.key !== "Tab") return;
+  const focusable = Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey && (active === first || active === root)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 export function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
   const backdrop = useRef<HTMLDivElement>(null);
@@ -1804,7 +1876,11 @@ export function Drawer({ title, onClose, children }: { title: string; onClose: (
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
+    // Escape closes; Tab and Shift+Tab stay inside the drawer while it is open.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return closeRef.current();
+      if (panel.current) keepFocusInside(e, panel.current);
+    };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {

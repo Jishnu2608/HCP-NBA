@@ -479,12 +479,32 @@ const DAY_FILL = { covered: "bg-ok-fill", gap: "bg-bad-soft border border-bad-li
 /** One cell per day: supply on hand, no supply, or not started. */
 export function DayStrip({ days, label }: { days: DayCell[]; label: string }) {
   const mark = useMark();
+  const row = useRef<HTMLDivElement>(null);
+  const before = useRef<Map<string, string> | null>(null);
+  const signature = days.map((d) => `${d.date}:${d.state}`).join("|");
+  // Refill ripple: when real data changes a day's state during this visit (a refill recorded,
+  // a supply ending), those days settle in from left to right. Nothing moves on first render.
+  useGSAP(
+    () => {
+      const now = new Map(days.map((d) => [d.date, d.state as string]));
+      const prev = before.current;
+      before.current = now;
+      if (!prev || !row.current || reducedMotion()) return;
+      const changed = Array.from(row.current.querySelectorAll<HTMLElement>("[data-day]")).filter(
+        (el) => prev.has(el.dataset.day!) && prev.get(el.dataset.day!) !== now.get(el.dataset.day!),
+      );
+      if (changed.length)
+        gsap.fromTo(changed, { scaleY: 0.35, opacity: 0.4 }, { scaleY: 1, opacity: 1, duration: DUR.standard, stagger: { amount: 0.35 }, transformOrigin: "50% 100%", clearProps: "transform,opacity" });
+    },
+    { dependencies: [signature] },
+  );
   return (
     <div>
-      <div data-draw="cells" className="grid gap-[2px]" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }} aria-label={label} role="group">
+      <div ref={row} data-draw="cells" className="grid gap-[2px]" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }} aria-label={label} role="group">
         {days.map((d) => (
           <div
             key={d.date}
+            data-day={d.date}
             className={cx("h-6 rounded-[3px] outline-offset-1 focus-visible:outline-2 focus-visible:outline-focus", DAY_FILL[d.state])}
             {...mark(d.tip, undefined, false)}
           />
@@ -768,7 +788,11 @@ function useStepAdvance(scope: RefObject<HTMLOListElement | null>, steps: Step[]
       if (!moved || reducedMotion() || !(reached > before)) return;
       const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-step-node]")).slice(Math.max(0, before - 1), reached);
       if (!nodes.length) return;
-      gsap.from(nodes, { scale: 0.6, opacity: 0.3, duration: DUR.standard, stagger: 0.12, ease: "back.out(2)", clearProps: "transform,opacity" });
+      // Rail fill: the line grows from where it stood at the last visit to the new step,
+      // then the newly reached nodes settle in.
+      const rail = root.parentElement?.querySelector<HTMLElement>("[data-step-rail]");
+      if (rail && reached > 1) gsap.from(rail, { scaleY: Math.max(0, before - 1) / (reached - 1), duration: 0.45, ease: "power2.inOut", transformOrigin: "50% 0%", clearProps: "transform" });
+      gsap.from(nodes, { scale: 0.6, opacity: 0.3, duration: DUR.standard, stagger: 0.12, delay: rail ? 0.2 : 0, ease: "back.out(2)", clearProps: "transform,opacity" });
     },
     { scope, dependencies: [reached, seenKey] },
   );
@@ -779,9 +803,21 @@ function useStepAdvance(scope: RefObject<HTMLOListElement | null>, steps: Step[]
 export function Steps({ steps, label, vertical, seenKey }: { steps: Step[]; label: string; vertical?: boolean; seenKey?: string }) {
   const ref = useRef<HTMLOListElement>(null);
   useStepAdvance(ref, steps, seenKey);
-  if (vertical)
+  if (vertical) {
+    // A rail behind the nodes, filled up to the furthest step reached (done, current or
+    // skipped), so progress reads at a glance as well as in the words beside each step.
+    const last = steps.reduce((m, st, i) => (st.state === "todo" ? m : i), 0);
+    const fill = steps.length > 1 ? last / (steps.length - 1) : 0;
     return (
-      <ol ref={ref} aria-label={label} className="space-y-1.5">
+      <div className="relative">
+        <span aria-hidden className="absolute bottom-2.5 left-[9.5px] top-2.5 w-px bg-line-strong" />
+        <span
+          aria-hidden
+          data-step-rail
+          className="absolute left-[9px] top-2.5 w-0.5 rounded-full bg-ok-fill"
+          style={{ height: `calc((100% - 20px) * ${fill})` }}
+        />
+      <ol ref={ref} aria-label={label} className="relative space-y-1.5">
         {steps.map((s) => (
           <li key={s.key} className="flex items-center gap-2">
             <span data-step-node className={cx("grid h-5 w-5 shrink-0 place-items-center rounded-full [&>svg]:h-3 [&>svg]:w-3", STEP_TONE[s.state])} aria-hidden>
@@ -797,7 +833,9 @@ export function Steps({ steps, label, vertical, seenKey }: { steps: Step[]; labe
           </li>
         ))}
       </ol>
+      </div>
     );
+  }
   return (
     <ol ref={ref} aria-label={label} className="flex flex-col gap-2 sm:flex-row sm:gap-0">
       {steps.map((s, i) => (

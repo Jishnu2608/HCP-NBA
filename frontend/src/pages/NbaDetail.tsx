@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Gauge,
   MessageSquare,
+  Minus,
   PenLine,
   RefreshCw,
   Send,
@@ -16,12 +17,13 @@ import {
   UserRound,
   XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, post } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
+import { DUR, gsap, reducedMotion, useChangeHighlight, useGSAP } from "../motion";
 import { TaskForm } from "./HcpWork";
 
 const LEARNED: Record<string, string> = {
@@ -103,6 +105,59 @@ function Fact({ icon, label, value, hint }: { icon: ReactNode; label: string; va
   );
 }
 
+/**
+ * Gate Check Cascade: the safeguards as they stand now, one chip per gate, from the
+ * server's re-check (`gate_now.codes`). Every label and result is readable at once; only
+ * the result icons settle in, in order, once per visit. Contact frequency is not part of
+ * this pre-check (the server leaves it to approval and send), so it says exactly that.
+ */
+const MLR_CODES = ["audience_mismatch", "channel_not_allowed", "jurisdiction_mismatch"];
+function GateChecks({ gate, patient }: { gate: Json; patient: boolean }) {
+  const ref = useRef<HTMLUListElement>(null);
+  const codes: string[] = gate.codes ?? [];
+  const mlrFail = codes.some((c) => c.startsWith("mlr_") || MLR_CODES.includes(c));
+  const rows: Array<{ key: string; label: string; state: "pass" | "fail" | "later" | "na"; note: string }> = [
+    { key: "mlr", label: "MLR approval", state: mlrFail ? "fail" : "pass", note: mlrFail ? "Fails now" : "Approved, in date, cleared for this channel" },
+    patient
+      ? { key: "consent", label: "Consent", state: codes.includes("consent_missing") ? "fail" : "pass", note: codes.includes("consent_missing") ? "No consent on this channel" : "Granted on this channel" }
+      : { key: "consent", label: "Consent", state: "na", note: "No consent model for HCPs" },
+    ...(patient
+      ? [{ key: "therapy", label: "Medication", state: (codes.includes("therapy_inactive") ? "fail" : "pass") as "fail" | "pass", note: codes.includes("therapy_inactive") ? "No longer active" : "Active and confirmed" }]
+      : []),
+    { key: "frequency", label: "Contact frequency", state: "later", note: "Checked again at approval and send" },
+  ];
+  useGSAP(
+    () => {
+      if (!ref.current || reducedMotion()) return;
+      gsap.from(ref.current.querySelectorAll("[data-gate-icon]"), { scale: 0.5, opacity: 0, duration: DUR.micro, stagger: 0.09, delay: 0.15, ease: "back.out(2)", clearProps: "transform,opacity" });
+    },
+    { scope: ref },
+  );
+  const look = {
+    pass: { tone: "border-ok-line bg-ok-soft/50", icon: <CheckCircle2 className="h-4 w-4 text-ok" />, word: "Passes" },
+    fail: { tone: "border-bad-line bg-bad-soft/60", icon: <Ban className="h-4 w-4 text-bad" />, word: "Fails" },
+    later: { tone: "border-line bg-subtle", icon: <CalendarClock className="h-4 w-4 text-ink-subtle" />, word: "At send" },
+    na: { tone: "border-line bg-subtle", icon: <Minus className="h-4 w-4 text-ink-subtle" />, word: "Not applicable" },
+  };
+  return (
+    <ul ref={ref} aria-label="Safeguards now" className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {rows.map((r) => (
+        <li key={r.key} className={cx("flex min-w-0 items-start gap-2.5 rounded-lg border px-3 py-2.5", look[r.state].tone)}>
+          <span data-gate-icon aria-hidden className="mt-0.5 shrink-0">
+            {look[r.state].icon}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[13px] font-semibold text-ink">
+              {r.label}: {look[r.state].word}
+            </span>
+            <span className="block text-xs leading-5 text-ink-muted">{r.note}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function NbaDetail() {
   const { id } = useParams();
   const { can } = useAuth();
@@ -110,6 +165,10 @@ export default function NbaDetail() {
   const client = useQueryClient();
   const toast = useToast();
   const detail = useQuery({ queryKey: ["nba-detail", id], queryFn: () => api(`/nba/${id}`) });
+  // Decision settle: a decision just taken (approve, send, reject) appears in the audit trail
+  // and settles in there, so the reader sees what their action recorded.
+  const auditRef = useRef<HTMLDivElement>(null);
+  useChangeHighlight(auditRef, [(detail.data?.audit ?? []).map((a: Json) => a.id).join("|")]);
   const [draftId, setDraftId] = useState<number | null>(null);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -444,6 +503,7 @@ export default function NbaDetail() {
                   />
                 )}
               </dl>
+              {n.gate_now && <GateChecks gate={n.gate_now} patient={isPatient} />}
               {n.can_review && (reviewing || n.status === "approved") && (
                 <div className="mt-5 flex flex-wrap gap-2">
                   <Button variant="primary" onClick={() => reveal("[data-decision]")}>
@@ -606,10 +666,12 @@ export default function NbaDetail() {
 
           <Card title="Audit trail">
             {n.audit.length ? (
+              <div ref={auditRef}>
               <Timeline>
                 {n.audit.map((a: Json) => (
                   <TimelineItem
                     key={a.id}
+                    motionId={a.id}
                     tone={auditTone(a.action)}
                     title={
                       <>
@@ -627,6 +689,7 @@ export default function NbaDetail() {
                   />
                 ))}
               </Timeline>
+              </div>
             ) : (
               <p className="text-sm text-ink-subtle">No events recorded yet.</p>
             )}

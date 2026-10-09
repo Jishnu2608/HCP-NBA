@@ -14,6 +14,7 @@ import { ChartPanel, ChartTable, Heatmap, SeriesLegend, TrendLines, shortDate } 
 import type { ChartTone, TrendSeries } from "../charts";
 import { BentoGrid, BentoSplit, SectionHeader } from "../layout";
 import { DUR, changedSinceSeen, gsap, reducedMotion, useGSAP } from "../motion";
+import { preferences } from "../session";
 import { useToast } from "../toast";
 import {
   AnimatedNumber,
@@ -270,13 +271,36 @@ function CoinCard({ coins }: { coins: Json }) {
     },
     { dependencies: [earned], scope: ref },
   );
+  // Coin drop: when the balance is higher than at the last visit (a check-in goal met), a
+  // small "+1" rises from the coin and the tile settles. Once per change; never on a
+  // first visit, never for a lower balance.
+  const plus = useRef<HTMLSpanElement>(null);
+  const tile = useRef<HTMLSpanElement>(null);
+  useGSAP(
+    () => {
+      if (!user || !plus.current) return;
+      const key = `coins.${user.id}`;
+      const before = Number(preferences.lastSeen(key) ?? coins.balance);
+      const changed = changedSinceSeen(key, String(coins.balance));
+      const gained = coins.balance - before;
+      if (!changed || gained <= 0 || reducedMotion()) return;
+      plus.current.textContent = `+${gained}`;
+      gsap
+        .timeline()
+        .fromTo(plus.current, { opacity: 0, y: 4 }, { opacity: 1, y: -6, duration: 0.25 })
+        .to(plus.current, { opacity: 0, y: -18, duration: 0.5, delay: 0.6 })
+        .from(tile.current, { scale: 0.85, duration: DUR.standard, ease: "back.out(2)", clearProps: "transform" }, 0);
+    },
+    { dependencies: [coins.balance], scope: ref },
+  );
   const next = coins.next_badge;
   return (
     <Card title="Check-in coins" description="One coin for each day you complete your daily check-in goal.">
       <div ref={ref}>
         <div className="flex items-center gap-4">
-          <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-warn-soft text-warn ring-1 ring-warn-line" aria-hidden>
+          <span ref={tile} className="relative grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-warn-soft text-warn ring-1 ring-warn-line" aria-hidden>
             <Coins className="h-7 w-7" />
+            <span ref={plus} className="tabular pointer-events-none absolute -top-2 right-0 text-sm font-semibold text-ok opacity-0" />
           </span>
           <div>
             <p className="tabular text-3xl font-semibold leading-9 text-ink">

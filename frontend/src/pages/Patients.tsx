@@ -19,7 +19,7 @@ import {
 import { useState } from "react";
 import { ChartFrame, ChartPanel, ChartTable, Scatter, Sparkline, ToneKey, shortDate, useInsights } from "../charts";
 import type { ChartTone } from "../charts";
-import { BentoCard, BentoCell, BentoGrid } from "../layout";
+import { BentoCard, BentoCell, BentoGrid, SectionNav } from "../layout";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, query } from "../api";
 import type { Json } from "../api";
@@ -340,8 +340,12 @@ export function CoverageTimeline({ fills, asOf }: { fills: Json[]; asOf: string 
     months.push(d.getTime());
   }
   return (
+    // Coverage sweep: once, the first time it is on screen, the covered periods appear from
+    // the oldest to the newest (charts.useDrawIn "cells"); positions never move.
+    <ChartFrame>
     <figure aria-label="Medication supply over the last 12 months">
       <div
+        data-draw="cells"
         className="relative h-8 overflow-hidden rounded-md ring-1 ring-inset ring-bad-line"
         style={{
           backgroundColor: "var(--bad-soft)",
@@ -400,6 +404,7 @@ export function CoverageTimeline({ fills, asOf }: { fills: Json[]; asOf: string 
         </span>
       </figcaption>
     </figure>
+    </ChartFrame>
   );
 }
 
@@ -599,10 +604,11 @@ export function OpenNba({ nba, lastCycle }: { nba: Json | null; lastCycle?: stri
   );
 }
 
-function TherapyCard({ t, fills, asOf, country }: { t: Json; fills: Json[]; asOf: string; country?: string | null }) {
+function TherapyCard({ t, fills, asOf, country, id }: { t: Json; fills: Json[]; asOf: string; country?: string | null; id?: string }) {
   const below = t.pdc !== null && t.pdc < 0.8;
   return (
     <BentoCard
+      id={id}
       span="full"
       icon={<Pill />}
       title={
@@ -727,6 +733,16 @@ export function PatientProfile() {
         />
       </KpiGrid>
       <RiskTrend history={p.risk_history} />
+      <SectionNav
+        label="Sections of this patient record"
+        items={[
+          { id: "care", label: "Care management" },
+          { id: "recommendation", label: "Next best action" },
+          { id: "therapies", label: "Therapies" },
+          { id: "care-team", label: "Care team" },
+          { id: "outreach", label: "Outreach" },
+        ]}
+      />
 
       {/* A real patient's care: managed by their care manager, read-only for other staff. */}
       {p.origin !== "synthetic" &&
@@ -741,7 +757,7 @@ export function PatientProfile() {
           pair; the outreach timeline, which grows with every contact, full width below.
           Phones read top to bottom in the same order. */}
       <BentoGrid>
-        <BentoCell span="wide">
+        <BentoCell span="wide" id="recommendation">
           <OpenNba nba={p.open_nba} lastCycle={p.last_cycle_at} />
         </BentoCell>
         <BentoCard span="narrow" icon={<ShieldCheck />} title="Consent on record" description="Only the patient can change consent.">
@@ -770,9 +786,10 @@ export function PatientProfile() {
           </ul>
         </BentoCard>
 
-        {p.therapies.map((t: Json) => (
+        {p.therapies.map((t: Json, i: number) => (
           <TherapyCard
             key={t.therapy_id}
+            id={i === 0 ? "therapies" : undefined}
             t={t}
             fills={p.fills.filter((f: Json) => f.therapy_id === t.therapy_id)}
             asOf={p.as_of_date}
@@ -785,7 +802,7 @@ export function PatientProfile() {
             <ChannelTable channels={p.features.channels} />
           </BentoCard>
         )}
-        <BentoCard span={p.features ? "half" : "full"} pairOnTablet icon={<Users />} title="Care team">
+        <BentoCard id="care-team" span={p.features ? "half" : "full"} pairOnTablet icon={<Users />} title="Care team">
           {p.care_team.length || (p.care_managers ?? []).length ? (
             <ul className="space-y-3">
               {(p.care_managers ?? []).map((m: Json) => (
@@ -819,6 +836,7 @@ export function PatientProfile() {
           )}
         </BentoCard>
         <BentoCard
+          id="outreach"
           span="full"
           icon={<History />}
           title="Outreach timeline"

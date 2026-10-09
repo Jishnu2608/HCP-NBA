@@ -7,7 +7,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   ClipboardList,
-  Copy,
   HandHeart,
   HeartPulse,
   Mail,
@@ -22,6 +21,7 @@ import { useCallback, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, patch, post, put, query } from "../api";
+import { useAuth } from "../auth";
 import type { Json } from "../api";
 import { BarList, ChartPanel, ChartTable, SeriesLegend, StackedBar, StreakCard, TrendLines, shortDate, useInsights } from "../charts";
 import { BentoGrid, BentoSplit, SectionHeader } from "../layout";
@@ -48,6 +48,7 @@ import {
   fmtDate,
   fmtDateTime,
   num,
+  CopyButton,
 } from "../ui";
 import type { Column } from "../ui";
 import {
@@ -451,6 +452,7 @@ const emptySupply = { measure: "", days_supply: "30", copay: "0" };
 
 /** Everything a care manager does for one real patient. */
 export function CarePanel({ patientId }: { patientId: string }) {
+  const { user } = useAuth();
   const client = useQueryClient();
   const toast = useToast();
   const key = ["care-record", patientId];
@@ -496,7 +498,7 @@ export function CarePanel({ patientId }: { patientId: string }) {
   };
 
   return (
-    <section aria-labelledby="care-title" className="mb-6 space-y-6">
+    <section id="care" aria-labelledby="care-title" className="mb-6 scroll-mt-32 space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 id="care-title" className="flex items-center gap-2 text-[17px] font-semibold text-ink">
@@ -612,7 +614,7 @@ export function CarePanel({ patientId }: { patientId: string }) {
               <CareTeam team={r.care_team} />
             </Card>
             <Card title="Instructions and follow-up" description="Newest first. Instructions linked to a request also show on it.">
-              <NoteList items={r.notes} staff limit={2} />
+              <NoteList items={r.notes} staff limit={2} seenKey={user ? `care-notes.${user.id}.${patientId}` : undefined} />
             </Card>
           </>
         }
@@ -1225,9 +1227,7 @@ function PortalAccess({ patientId, portal, onInvited }: { patientId: string; por
         <Alert tone="info" title="No email was sent (local run without a mail server)" className="mt-3">
           <div className="flex flex-wrap items-center gap-2">
             <code className="break-all text-[13px]">{link}</code>
-            <Button size="sm" onClick={() => void navigator.clipboard?.writeText(link)}>
-              <Copy className="h-3.5 w-3.5" aria-hidden /> Copy
-            </Button>
+            <CopyButton text={link} label="Copy link" />
           </div>
         </Alert>
       )}
@@ -1239,7 +1239,7 @@ function PortalAccess({ patientId, portal, onInvited }: { patientId: string; por
  *  and medications pair up; requests grow with the patient's history and run full width. */
 export function HealthSummary({ health }: { health: Json }) {
   return (
-    <section aria-labelledby="health-title" className="mb-6 space-y-4">
+    <section id="care" aria-labelledby="health-title" className="mb-6 scroll-mt-32 space-y-4">
       <h2 id="health-title" className="sr-only">
         Health profile
       </h2>
