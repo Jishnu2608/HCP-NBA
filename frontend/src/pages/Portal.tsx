@@ -33,7 +33,7 @@ import {
   shortDate,
   useInsights,
 } from "../charts";
-import { BentoGrid } from "../layout";
+import { BentoGrid, BentoSplit } from "../layout";
 import { HealthPlanSection } from "./HealthPlan";
 import { useChangeHighlight } from "../motion";
 import { useAuth } from "../auth";
@@ -342,44 +342,54 @@ export function MyMedications() {
 
       {can(P.SELF_HEALTH_MANAGE) && <HealthPlanSection onContact={() => setPanel("plan")} />}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="min-w-0 space-y-6">
-          <Card
-            title="Conditions"
-            action={
-              editable && (
-                <Button size="sm" onClick={() => setPanel("condition")}>
-                  <Plus className="h-3.5 w-3.5" aria-hidden /> Add
-                </Button>
-              )
-            }
-          >
-            <ConditionList items={h.conditions} />
+      {/* Conditions beside the care team (two short cards, one row); medications across the
+          full width, two-up when wide; instructions and requests grow over time, so each runs
+          full width with its items in balanced columns. */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card
+          title="Conditions"
+          action={
+            editable && (
+              <Button size="sm" onClick={() => setPanel("condition")}>
+                <Plus className="h-3.5 w-3.5" aria-hidden /> Add
+              </Button>
+            )
+          }
+        >
+          <ConditionList items={h.conditions} />
+        </Card>
+        <Card title="Your care team">
+          <CareTeam team={h.care_team} />
+        </Card>
+      </div>
+
+      <section aria-labelledby="medications-title" className="mt-8 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="medications-title" className="text-[15px] font-semibold text-ink">
+            Medications
+          </h2>
+          {editable && (
+            <Button size="sm" onClick={() => setPanel("medication")}>
+              <Plus className="h-3.5 w-3.5" aria-hidden /> Add medication
+            </Button>
+          )}
+        </div>
+        <ErrorNote error={refill.error} />
+        {hasConfirmed && insights.data && (
+          <StreakCard
+            streak={insights.data.streak}
+            label="Days in a row with your medicine on hand"
+            empty="Your streak starts once a confirmed medication has a recorded refill."
+          />
+        )}
+        {!h.medications.length ? (
+          <Card>
+            <EmptyState title="No medications on record" icon={<Pill className="h-5 w-5" />} compact>
+              {editable ? "Add a medication you take; your care team confirms it." : undefined}
+            </EmptyState>
           </Card>
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[15px] font-semibold text-ink">Medications</h2>
-              {editable && (
-                <Button size="sm" onClick={() => setPanel("medication")}>
-                  <Plus className="h-3.5 w-3.5" aria-hidden /> Add medication
-                </Button>
-              )}
-            </div>
-            <ErrorNote error={refill.error} />
-            {hasConfirmed && insights.data && (
-              <StreakCard
-                streak={insights.data.streak}
-                label="Days in a row with your medicine on hand"
-                empty="Your streak starts once a confirmed medication has a recorded refill."
-              />
-            )}
-            {!h.medications.length && (
-              <Card>
-                <EmptyState title="No medications on record" icon={<Pill className="h-5 w-5" />} compact>
-                  {editable ? "Add a medication you take; your care team confirms it." : undefined}
-                </EmptyState>
-              </Card>
-            )}
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-2 xl:[&>*:last-child:nth-child(odd)]:col-span-2">
             {h.medications.map((m: Json) => (
               <MedicationCard
                 key={m.therapy_id}
@@ -391,25 +401,25 @@ export function MyMedications() {
               />
             ))}
           </div>
-        </div>
-        <div className="min-w-0 space-y-6">
-          <Card title="Your care team">
-            <CareTeam team={h.care_team} />
-          </Card>
-          <Card
-            title="Instructions from your care team"
-            description="Advice from your healthcare professionals and your care team, with the request each one answers."
-          >
-            <NoteList items={h.notes} />
-          </Card>
-          <Card
-            title="Your requests"
-            action={openRequests > 0 && <Badge tone="warn">{openRequests} open</Badge>}
-          >
-            <RequestList items={h.requests} />
-          </Card>
-        </div>
-      </div>
+        )}
+      </section>
+
+      <Card
+        className="mt-8"
+        title="Instructions from your care team"
+        description="Advice from your healthcare professionals and your care team, with the request each one answers."
+      >
+        <NoteList items={h.notes} tiles limit={3} />
+      </Card>
+
+      <Card
+        className="mt-4"
+        title="Your requests"
+        description="Each request shows where it stands. Closed requests keep their answer."
+        action={openRequests > 0 && <Badge tone="warn">{openRequests} open</Badge>}
+      >
+        <RequestList items={h.requests} tiles closedLimit={2} />
+      </Card>
 
       {panel && (
         <Drawer
@@ -841,7 +851,10 @@ export function MyConsents() {
         subtitle="You decide how your care team may contact you. Changes take effect immediately: a channel you switch off cannot be used, even for a message already prepared."
       />
       <ErrorNote error={change.error} className="mb-4" />
-      <div className="grid max-w-3xl gap-6">
+      {/* Contact channels lead; sharing and the record-keeping note sit beside them. */}
+      <BentoSplit
+        ratio="7/5"
+        main={
         <Card title="How we may contact you" description="Applies to reminders and messages from your care team.">
           <ul className="divide-y divide-line">
             {outreach.map((c) => (
@@ -849,6 +862,9 @@ export function MyConsents() {
             ))}
           </ul>
         </Card>
+        }
+        aside={
+          <>
         {sharing.length > 0 && (
           <Card title="Sharing with your doctors">
             <ul className="divide-y divide-line">
@@ -887,7 +903,9 @@ export function MyConsents() {
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           Every change is recorded with the date. Your care team cannot change these settings for you.
         </p>
-      </div>
+          </>
+        }
+      />
     </>
   );
 }
@@ -1382,7 +1400,9 @@ export function MyProfile() {
   return (
     <>
       <PageHeader title="Profile" subtitle="Your professional profile. Specialties are set by an administrator." />
-      <div className="grid max-w-5xl items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <BentoSplit
+        ratio="7/5"
+        main={
         <Card>
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
             <Avatar name={p.name} size="lg" />
@@ -1436,7 +1456,9 @@ export function MyProfile() {
             )}
           </dl>
         </Card>
-        {can(P.SELF_SPECIALTY_REQUEST) && (
+        }
+        aside={
+        can(P.SELF_SPECIALTY_REQUEST) && (
           <Card
             title="Specialty changes"
             action={
@@ -1470,8 +1492,9 @@ export function MyProfile() {
               <p className="text-sm text-ink-subtle">No requests yet.</p>
             )}
           </Card>
-        )}
-      </div>
+        )
+        }
+      />
       {asking && (
         <Drawer title="Request specialty change" onClose={close}>
           <SpecialtyRequestForm current={p.specialties ?? []} onDone={close} />

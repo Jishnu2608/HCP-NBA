@@ -254,7 +254,7 @@ export function ChartPanel({
   title: string;
   question: ReactNode;
   icon?: ReactNode;
-  span?: "full" | "wide" | "half" | "narrow";
+  span?: "full" | "wide" | "half" | "narrow" | "auto";
   pairOnTablet?: boolean;
   query?: { isLoading: boolean; error: unknown; refetch: () => unknown };
   empty?: ReactNode | false;
@@ -278,7 +278,19 @@ export function ChartPanel({
       </button>
     ) : undefined;
   return (
-    <BentoCard span={span} pairOnTablet={pairOnTablet} title={title} description={question} icon={icon} action={toggle} note={note} link={link}>
+    // A chart beside a taller neighbour sits in the middle of its stretched card, so the
+    // spare height is shared above and below instead of collecting under the chart.
+    <BentoCard
+      span={span}
+      pairOnTablet={pairOnTablet}
+      title={title}
+      description={question}
+      icon={icon}
+      action={toggle}
+      note={note}
+      link={link}
+      bodyClassName="flex flex-col justify-center"
+    >
       {query?.isLoading ? (
         <LoadingRows rows={3} label={`Loading ${title.toLowerCase()}`} />
       ) : query?.error ? (

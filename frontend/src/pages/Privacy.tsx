@@ -225,8 +225,8 @@ export default function Privacy() {
         title="Data & privacy"
         subtitle="The documents you accepted, your consents, a copy of your data, and requests about your personal information."
       />
-      <div className="grid gap-6 xl:grid-cols-12">
-        <div className="space-y-6 xl:col-span-7">
+      {/* Consents first, across the full width (their number differs by role); the documents (with
+          the privacy contact) and the data copy as one even row; then privacy requests and the consent history. */}
           <Section title="Your consents" icon={<ShieldCheck className="h-4 w-4" aria-hidden />}>
             <ErrorNote error={withdraw.error} className="mb-3" />
             <ul className="divide-y divide-line">
@@ -245,41 +245,9 @@ export default function Privacy() {
             )}
           </Section>
 
-          {can(P.PRIVACY_REQUEST) ? (
-          <Section
-            title="Privacy requests"
-            icon={<Send className="h-4 w-4" aria-hidden />}
-            description="Ask to access, correct, delete, restrict, receive or object to the processing of your personal information."
-          >
-            <RequestForm types={s.request_types} />
-            <div className="mt-6 border-t border-line pt-4">
-              {requests.isLoading ? (
-                <LoadingRows rows={2} label="Loading requests" />
-              ) : requests.data?.length ? (
-                <DataTable caption="Your privacy requests" tableFrom="2xl" columns={requestColumns} rows={requests.data} rowKey={(r) => r.id} mobileAside={(r) => <RequestStatus status={r.status} />} />
-              ) : (
-                <EmptyState compact title="No requests yet" icon={<Send className="h-5 w-5" />}>
-                  Requests you submit appear here with their status.
-                </EmptyState>
-              )}
-            </div>
-          </Section>
-          ) : (
-            can(P.PRIVACY_MANAGE) && (
-              <Section title="Privacy requests" icon={<Send className="h-4 w-4" aria-hidden />}>
-                <p className="text-sm text-ink-muted">
-                  You handle privacy requests; you do not submit them here. Review and work them in the{" "}
-                  <Link to="/privacy-requests" className="font-semibold text-primary-ink underline underline-offset-2">
-                    request centre
-                  </Link>
-                  .
-                </p>
-              </Section>
-            )
-          )}
-        </div>
 
-        <div className="space-y-6 xl:col-span-5">
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
           <Section title="Documents" icon={<FileText className="h-4 w-4" aria-hidden />}>
             <ul className="space-y-3">
               {s.documents.map((d: Json) => (
@@ -294,7 +262,18 @@ export default function Privacy() {
                 </li>
               ))}
             </ul>
+            <p className="mt-4 flex gap-2 border-t border-line pt-4 text-sm leading-6 text-ink-muted">
+              <Mail className="mt-1 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
+              <span>
+              Questions about your privacy: see{" "}
+              <Link to={`${legalPath("privacy")}#who-we-are`} className="font-semibold text-primary-ink underline underline-offset-2">
+                who we are and how to contact us
+              </Link>
+              . You can also complain to a data protection authority where that right applies.
+              </span>
+            </p>
           </Section>
+
 
           <Section
             title="A copy of your data"
@@ -311,19 +290,47 @@ export default function Privacy() {
             </p>
           </Section>
 
-          <Section title="Contact" icon={<Mail className="h-4 w-4" aria-hidden />}>
-            <p className="text-sm leading-6 text-ink-muted">
-              Questions about your privacy: see{" "}
-              <Link to={`${legalPath("privacy")}#who-we-are`} className="font-semibold text-primary-ink underline underline-offset-2">
-                who we are and how to contact us
-              </Link>
-              . You can also complain to a data protection authority where that right applies.
-            </p>
-          </Section>
-        </div>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-4 space-y-4 [&:not(:has(*))]:hidden">
+          {can(P.PRIVACY_REQUEST) ? (
+          <Section
+            title="Privacy requests"
+            icon={<Send className="h-4 w-4" aria-hidden />}
+            description="Ask to access, correct, delete, restrict, receive or object to the processing of your personal information."
+          >
+            {/* The form and the requests already made sit side by side when there is room. */}
+            <div className="grid gap-6 xl:grid-cols-2">
+            <RequestForm types={s.request_types} />
+            <div className="border-t border-line pt-4 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
+              {requests.isLoading ? (
+                <LoadingRows rows={2} label="Loading requests" />
+              ) : requests.data?.length ? (
+                <DataTable caption="Your privacy requests" tableFrom="2xl" columns={requestColumns} rows={requests.data} rowKey={(r) => r.id} mobileAside={(r) => <RequestStatus status={r.status} />} />
+              ) : (
+                <EmptyState compact title="No requests yet" icon={<Send className="h-5 w-5" />}>
+                  Requests you submit appear here with their status.
+                </EmptyState>
+              )}
+            </div>
+            </div>
+          </Section>
+          ) : (
+            can(P.PRIVACY_MANAGE) && (
+              <Section title="Privacy requests" icon={<Send className="h-4 w-4" aria-hidden />}>
+                <p className="text-sm text-ink-muted">
+                  You handle privacy requests; you do not submit them here. Review and work them in the{" "}
+                  <Link to="/privacy-requests" className="font-semibold text-primary-ink underline underline-offset-2">
+                    request centre
+                  </Link>
+                  .
+                </p>
+              </Section>
+            )
+          )}
+      </div>
+
+      <div className="mt-4">
         <Section title="Consent history" icon={<History className="h-4 w-4" aria-hidden />} description="Every acceptance and withdrawal, with the version. Entries are never changed.">
           {history.data?.length ? (
             <DataTable caption="Consent history" tableFrom="2xl" columns={historyColumns} rows={history.data} rowKey={(h) => `${h.kind}-${h.at}-${h.action}`} />

@@ -7,9 +7,11 @@
 //   wide   -  8 of 12   (primary content; full width below 1280px)
 //   half   -  6 of 12   (paired content; full width below 1280px, charts need the width)
 //   narrow -  4 of 12   (supporting content; half width from 768px when `pairOnTablet`)
-// A cell can be two rows tall (`rows={2}`, from 1280px) so a long list sits beside two
-// stacked supporting cards. Cards stretch to the tallest cell in their row, so neighbouring
-// cards always align.
+//   auto   - no span of its own (cards inside a BentoSplit column)
+// Cards stretch to the tallest cell in their row, so neighbouring cards align; pair only
+// cards of similar height in one row. A long or growing list never shares a row with short
+// cards: it goes full width, or into a BentoSplit, where each column stacks its own cards
+// and nothing stretches.
 import { ArrowRight } from "lucide-react";
 import { useId, useRef } from "react";
 import type { ReactNode } from "react";
@@ -17,18 +19,18 @@ import { Link } from "react-router-dom";
 import { useEntrance, useSpotlightGrid } from "./motion";
 import { cx } from "./ui";
 
-type Span = "full" | "wide" | "half" | "narrow";
+type Span = "full" | "wide" | "half" | "narrow" | "auto";
 const SPAN: Record<Span, string> = {
   full: "xl:col-span-12",
   wide: "xl:col-span-8",
   half: "xl:col-span-6",
   narrow: "xl:col-span-4",
+  auto: "",
 };
 
-const ROWS = { 1: "", 2: "xl:row-span-2" } as const;
-
-function spanClass(span: Span, pairOnTablet: boolean, rows: 1 | 2) {
-  return cx(SPAN[span], pairOnTablet && span !== "full" ? "md:col-span-1" : "md:col-span-2", ROWS[rows]);
+function spanClass(span: Span, pairOnTablet: boolean) {
+  if (span === "auto") return "";
+  return cx(SPAN[span], pairOnTablet && span !== "full" ? "md:col-span-1" : "md:col-span-2");
 }
 
 /**
@@ -38,17 +40,15 @@ function spanClass(span: Span, pairOnTablet: boolean, rows: 1 | 2) {
 export function BentoCell({
   span = "half",
   pairOnTablet = false,
-  rows = 1,
   children,
   className,
 }: {
   span?: Span;
   pairOnTablet?: boolean;
-  rows?: 1 | 2;
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cx("flex min-w-0 flex-col [&>*]:flex-1", spanClass(span, pairOnTablet, rows), className)}>{children}</div>;
+  return <div className={cx("flex min-w-0 flex-col [&>*]:flex-1", spanClass(span, pairOnTablet), className)}>{children}</div>;
 }
 
 /** The grid enters after the page heading and figures: first cells lift in, in order, once. */
@@ -63,6 +63,57 @@ export function BentoGrid({ children, className }: { children: ReactNode; classN
   );
 }
 
+const SPLIT = {
+  "8/4": ["xl:col-span-8", "xl:col-span-4"],
+  "7/5": ["xl:col-span-7", "xl:col-span-5"],
+  "6/6": ["xl:col-span-6", "xl:col-span-6"],
+} as const;
+
+/**
+ * Two independent columns on the 12-column grid: primary content and supporting cards.
+ * Each column stacks its own cards at their natural height, so a long card never stretches
+ * its neighbour and the next card fills the space under a short one. Below 1280px the main
+ * column comes first at full width; the supporting cards pair two-up from 768px (a lone or
+ * last odd card takes the whole row). Cards inside use `span="auto"`.
+ */
+export function BentoSplit({
+  main,
+  aside,
+  ratio = "8/4",
+  className,
+}: {
+  main: ReactNode;
+  aside: ReactNode;
+  ratio?: keyof typeof SPLIT;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEntrance(ref, { delay: 0.1, selector: ":scope > div > *" });
+  useSpotlightGrid(ref);
+  const [left, right] = SPLIT[ratio];
+  // Nothing to put beside the main column: it takes the full width rather than leaving one empty.
+  if (!aside)
+    return (
+      <div ref={ref} className={cx("flex min-w-0 flex-col gap-4", className)}>
+        {main}
+      </div>
+    );
+  return (
+    <div ref={ref} className={cx("grid grid-cols-1 items-start gap-4 xl:grid-cols-12", className)}>
+      <div className={cx("flex min-w-0 flex-col gap-4", left)}>{main}</div>
+      <div
+        className={cx(
+          "grid min-w-0 content-start gap-4 md:grid-cols-2 xl:grid-cols-1",
+          "md:[&>*:last-child:nth-child(odd)]:col-span-2 xl:[&>*:last-child:nth-child(odd)]:col-span-1",
+          right,
+        )}
+      >
+        {aside}
+      </div>
+    </div>
+  );
+}
+
 /**
  * A titled panel that fills its grid cell. Optional icon tile in the header, optional
  * "View all" link, optional footer note pinned to the bottom so notes in a row line up.
@@ -70,7 +121,6 @@ export function BentoGrid({ children, className }: { children: ReactNode; classN
 export function BentoCard({
   span = "half",
   pairOnTablet = false,
-  rows = 1,
   title,
   description,
   icon,
@@ -84,8 +134,6 @@ export function BentoCard({
   span?: Span;
   /** Narrow and half cells sit two-up between 768 and 1279px instead of full width. */
   pairOnTablet?: boolean;
-  /** Two rows tall from 1280px. */
-  rows?: 1 | 2;
   title: ReactNode;
   description?: ReactNode;
   icon?: ReactNode;
@@ -103,7 +151,7 @@ export function BentoCard({
       data-spot
       className={cx(
         "spotlight flex min-w-0 flex-col rounded-xl border border-line bg-surface shadow-card",
-        spanClass(span, pairOnTablet, rows),
+        spanClass(span, pairOnTablet),
         className,
       )}
     >
@@ -133,7 +181,8 @@ export function BentoCard({
           </Link>
         )}
       </header>
-      <div className={cx("flex-1 px-5 pb-5 pt-4 sm:px-6", bodyClassName)}>{children}</div>
+      {/* A column, so a chart can grow into a card stretched by its neighbour. */}
+      <div className={cx("flex flex-1 flex-col px-5 pb-5 pt-4 sm:px-6", bodyClassName)}>{children}</div>
       {note && <p className="border-t border-line px-5 py-3 text-[13px] leading-5 text-ink-subtle sm:px-6">{note}</p>}
     </section>
   );

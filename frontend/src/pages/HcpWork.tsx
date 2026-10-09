@@ -686,7 +686,7 @@ export default function HcpWork() {
           ]}
         />
       </Toolbar>
-      <div className="grid gap-4 lg:grid-cols-12">
+      <div className="grid items-start gap-4 lg:grid-cols-12">
         <Card className="lg:col-span-7" flush>
           {!d.items.length ? (
             <EmptyState tone="ok" icon={<ClipboardList className="h-5 w-5" />} title={view === "done_today" ? "Nothing closed yet today" : "Nothing here"}>

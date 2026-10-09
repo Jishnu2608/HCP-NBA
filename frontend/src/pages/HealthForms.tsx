@@ -9,7 +9,7 @@ import { useId, useState, useRef } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api } from "../api";
 import type { Json } from "../api";
-import { Avatar, Badge, Button, ErrorNote, FormField, TextArea, TextField, cx, fmtDate, fmtDateTime, titleCase } from "../ui";
+import { Avatar, Badge, Button, ErrorNote, FormField, TextArea, TextField, cx, fmtDate, fmtDateTime, titleCase, useShowMore } from "../ui";
 import type { Tone } from "../ui";
 
 export interface Vocabulary {
@@ -591,103 +591,147 @@ export function CareTeam({ team }: { team: Json }) {
   );
 }
 
-export function RequestList({ items, staff, actions }: { items: Json[]; staff?: boolean; actions?: (r: Json) => ReactNode }) {
+/**
+ * Requests with their progress. `tiles` lays them out as cards in two balanced columns when
+ * the list is wide enough (full-width placements; newest first, down then across, so tall and
+ * short cards pack without gaps); otherwise a divided list. Open requests always
+ * show; closed ones beyond `closedLimit` wait behind a "show more" control.
+ */
+export function RequestList({
+  items,
+  staff,
+  actions,
+  tiles = false,
+  closedLimit,
+}: {
+  items: Json[];
+  staff?: boolean;
+  actions?: (r: Json) => ReactNode;
+  tiles?: boolean;
+  closedLimit?: number;
+}) {
   const list = useRef<HTMLUListElement>(null);
   useChangeHighlight(list, [items.map((r) => `${r.id}:${r.status}`).join("|")]);
+  const [shown, more] = useShowMore(items, closedLimit ?? items.length, "closed requests", (r) => r.status !== "closed");
   if (!items.length) return <p className="text-sm text-ink-subtle">No requests.</p>;
   return (
-    <ul ref={list} className="divide-y divide-line">
-      {items.map((r) => (
-        <li key={r.id} data-motion-id={r.id} data-motion-sig={r.status} className="py-3 first:pt-0 last:pb-0">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-semibold text-ink">{REQUEST_LABEL[r.type] ?? titleCase(r.type)}</span>
-            <span className="flex flex-wrap items-center gap-1.5">
-              {r.overdue && <Badge tone="bad">Overdue</Badge>}
-              {/* Patients read what the status means for them; staff see the workflow state. */}
-              <Morph value={r.status}>
-                <StatusChip status={r.status} staff={staff} label={staff ? undefined : r.status_label} />
-              </Morph>
-            </span>
-          </div>
-          <div className="mt-0.5 text-[13px] leading-5 text-ink-subtle">
-            {r.condition?.label ?? r.medication ?? ""}
-            {r.condition || r.medication ? " · " : ""}
-            {r.type === "follow_up" && r.due_date ? `Due ${fmtDate(r.due_date)} · ` : ""}
-            {staff && r.owner ? `Owner: ${r.owner} · ` : ""}
-            {fmtDate(r.created_at)}
-          </div>
-          {r.reason && (r.type === "consultation" || r.type === "follow_up") && (
-            <p className="mt-1 whitespace-pre-line text-sm text-ink-muted">
-              {r.type === "consultation" ? `“${r.reason}”` : r.reason}
-            </p>
-          )}
-          {r.assigned_hcp && (
-            <p className="mt-1 text-[13px] text-ink-muted">
-              {r.status === "awaiting_hcp" ? "Waiting for " : r.status === "hcp_responded" ? "Answered by " : "Routed to "}
-              <span className="font-semibold text-ink">{r.assigned_hcp.name}</span> ({specialtyText(r.assigned_hcp.specialties)})
-              {staff && r.status === "awaiting_hcp" && (
-                <span className="text-ink-subtle">
-                  {r.assigned_hcp.in_app ? " · answers in the app" : " · does not use the app: record their response"}
-                </span>
-              )}
-            </p>
-          )}
-          {r.progress && (
-            <div className="mt-2 rounded-lg bg-subtle px-3 py-2.5">
-              <Steps steps={r.progress.steps} label="Where this consultation stands" vertical seenKey={`request.${r.id}`} />
+    <div className={cx(tiles && "@container")}>
+      <ul ref={list} className={tiles ? "space-y-3 @3xl:columns-2 @3xl:gap-3 @3xl:space-y-0 @3xl:[&>li]:mb-3" : "divide-y divide-line"}>
+        {shown.map((r) => (
+          <li
+            key={r.id}
+            data-motion-id={r.id}
+            data-motion-sig={r.status}
+            className={tiles ? "min-w-0 break-inside-avoid rounded-xl border border-line p-4" : "py-3 first:pt-0 last:pb-0"}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-ink">{REQUEST_LABEL[r.type] ?? titleCase(r.type)}</span>
+              <span className="flex flex-wrap items-center gap-1.5">
+                {r.overdue && <Badge tone="bad">Overdue</Badge>}
+                {/* Patients read what the status means for them; staff see the workflow state. */}
+                <Morph value={r.status}>
+                  <StatusChip status={r.status} staff={staff} label={staff ? undefined : r.status_label} />
+                </Morph>
+              </span>
             </div>
-          )}
-          {r.resolution && !r.resolution.startsWith("Routed to") && (
-            <p className="mt-1 text-[13px] text-ink-muted">{r.resolution}</p>
-          )}
-          {r.status === "awaiting_hcp" && !staff && (
-            <p className="mt-1 text-[13px] text-ink-muted">
-              Your care manager has passed this on. You will see the answer here; there is nothing you need to do now.
-            </p>
-          )}
-          {(r.notes ?? []).length > 0 && (
-            <div className="mt-2">
-              <NoteList items={r.notes} staff={staff} compact />
+            <div className="mt-0.5 text-[13px] leading-5 text-ink-subtle">
+              {r.condition?.label ?? r.medication ?? ""}
+              {r.condition || r.medication ? " · " : ""}
+              {r.type === "follow_up" && r.due_date ? `Due ${fmtDate(r.due_date)} · ` : ""}
+              {staff && r.owner ? `Owner: ${r.owner} · ` : ""}
+              {fmtDate(r.created_at)}
             </div>
-          )}
-          {actions && <div className="mt-2 flex flex-wrap gap-2">{actions(r)}</div>}
-        </li>
-      ))}
-    </ul>
+            {r.reason && (r.type === "consultation" || r.type === "follow_up") && (
+              <p className="mt-1 whitespace-pre-line text-sm text-ink-muted">
+                {r.type === "consultation" ? `“${r.reason}”` : r.reason}
+              </p>
+            )}
+            {r.assigned_hcp && (
+              <p className="mt-1 text-[13px] text-ink-muted">
+                {r.status === "awaiting_hcp" ? "Waiting for " : r.status === "hcp_responded" ? "Answered by " : "Routed to "}
+                <span className="font-semibold text-ink">{r.assigned_hcp.name}</span> ({specialtyText(r.assigned_hcp.specialties)})
+                {staff && r.status === "awaiting_hcp" && (
+                  <span className="text-ink-subtle">
+                    {r.assigned_hcp.in_app ? " · answers in the app" : " · does not use the app: record their response"}
+                  </span>
+                )}
+              </p>
+            )}
+            {r.progress && (
+              <div className="mt-2 rounded-lg bg-subtle px-3 py-2.5">
+                <Steps steps={r.progress.steps} label="Where this consultation stands" vertical seenKey={`request.${r.id}`} />
+              </div>
+            )}
+            {r.resolution && !r.resolution.startsWith("Routed to") && (
+              <p className="mt-1 text-[13px] text-ink-muted">{r.resolution}</p>
+            )}
+            {r.status === "awaiting_hcp" && !staff && (
+              <p className="mt-1 text-[13px] text-ink-muted">
+                Your care manager has passed this on. You will see the answer here; there is nothing you need to do now.
+              </p>
+            )}
+            {(r.notes ?? []).length > 0 && (
+              <div className="mt-2">
+                <NoteList items={r.notes} staff={staff} compact />
+              </div>
+            )}
+            {actions && <div className="mt-2 flex flex-wrap gap-2">{actions(r)}</div>}
+          </li>
+        ))}
+      </ul>
+      {more}
+    </div>
   );
 }
 
-export function NoteList({ items, staff, compact }: { items: Json[]; staff?: boolean; compact?: boolean }) {
+/** Instructions and notes, newest first. `tiles` flows them in columns when wide; `limit` keeps the newest few in view. */
+export function NoteList({
+  items,
+  staff,
+  compact,
+  tiles = false,
+  limit,
+}: {
+  items: Json[];
+  staff?: boolean;
+  compact?: boolean;
+  tiles?: boolean;
+  limit?: number;
+}) {
+  const [shown, more] = useShowMore(items, limit ?? items.length, "instructions");
   if (!items.length) return <p className="text-sm text-ink-subtle">No instructions yet.</p>;
   return (
-    <ul className="space-y-3">
-      {items.map((n) => (
-        <li key={n.id} className={cx("rounded-lg border border-line p-3", n.kind === "hcp_instruction" && "bg-primary-soft/40")}>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-subtle">
-            <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
-            {/* Follow-ups are tracked as requests with a due date; a follow-up note is an older,
-                untracked note kept for the record and is not open work. */}
-            <span className="font-semibold text-ink">
-              {n.kind === "hcp_instruction"
-                ? "Instruction"
-                : n.kind === "hcp_decline"
-                  ? "Could not take this consultation"
-                  : "Note (earlier follow-up, not tracked)"}
-            </span>
-            {n.hcp && <span>from {n.hcp}{n.by_hcp ? "" : staff ? " (recorded by the care team)" : ""}</span>}
-            <span aria-hidden>·</span>
-            <span className="tabular">{fmtDateTime(n.created_at)}</span>
-            {staff && !n.visible_to_patient && <Badge tone="neutral">Care team only</Badge>}
-          </div>
-          {n.request && !compact && (
-            <p className="mt-1 text-[13px] text-ink-subtle">
-              About: {REQUEST_LABEL[n.request.type] ?? titleCase(n.request.type)} of {fmtDate(n.request.created_at)}
-              {n.request.reason ? ` · “${n.request.reason.length > 80 ? `${n.request.reason.slice(0, 80)}…` : n.request.reason}”` : ""}
-            </p>
-          )}
-          <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-ink">{n.text}</p>
-        </li>
-      ))}
-    </ul>
+    <div className={cx(tiles && "@container")}>
+      <ul className={tiles ? "space-y-3 @2xl:columns-2 @5xl:columns-3 @2xl:gap-3 @2xl:space-y-0 @2xl:[&>li]:mb-3 [&>li]:break-inside-avoid" : "space-y-3"}>
+        {shown.map((n) => (
+          <li key={n.id} className={cx("rounded-lg border border-line p-3", n.kind === "hcp_instruction" && "bg-primary-soft/40")}>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-subtle">
+              <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
+              {/* Follow-ups are tracked as requests with a due date; a follow-up note is an older,
+                  untracked note kept for the record and is not open work. */}
+              <span className="font-semibold text-ink">
+                {n.kind === "hcp_instruction"
+                  ? "Instruction"
+                  : n.kind === "hcp_decline"
+                    ? "Could not take this consultation"
+                    : "Note (earlier follow-up, not tracked)"}
+              </span>
+              {n.hcp && <span>from {n.hcp}{n.by_hcp ? "" : staff ? " (recorded by the care team)" : ""}</span>}
+              <span aria-hidden>·</span>
+              <span className="tabular">{fmtDateTime(n.created_at)}</span>
+              {staff && !n.visible_to_patient && <Badge tone="neutral">Care team only</Badge>}
+            </div>
+            {n.request && !compact && (
+              <p className="mt-1 text-[13px] text-ink-subtle">
+                About: {REQUEST_LABEL[n.request.type] ?? titleCase(n.request.type)} of {fmtDate(n.request.created_at)}
+                {n.request.reason ? ` · “${n.request.reason.length > 80 ? `${n.request.reason.slice(0, 80)}…` : n.request.reason}”` : ""}
+              </p>
+            )}
+            <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-ink">{n.text}</p>
+          </li>
+        ))}
+      </ul>
+      {more}
+    </div>
   );
 }

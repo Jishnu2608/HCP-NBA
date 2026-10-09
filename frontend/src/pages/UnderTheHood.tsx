@@ -68,19 +68,20 @@ export default function UnderTheHood() {
         </ol>
       </Card>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <Card title="Design rules">
-          <ul className="divide-y divide-line">
-            {PRINCIPLES.map(([name, text]) => (
-              <li key={name} className="py-3.5 first:pt-0 last:pb-0">
-                <div className="text-sm font-semibold text-ink">{name}</div>
-                <p className="mt-0.5 text-sm leading-6 text-ink-muted">{text}</p>
-              </li>
-            ))}
-          </ul>
-        </Card>
+      {/* The design rules, the models and the data counts each read across the full width,
+          laid out in columns inside their card. */}
+      <Card title="Design rules" className="mt-6">
+        <ul className="grid gap-x-8 gap-y-5 md:grid-cols-2 2xl:grid-cols-3">
+          {PRINCIPLES.map(([name, text]) => (
+            <li key={name} className="min-w-0 border-t border-line pt-3">
+              <div className="text-sm font-semibold text-ink">{name}</div>
+              <p className="mt-0.5 text-sm leading-6 text-ink-muted">{text}</p>
+            </li>
+          ))}
+        </ul>
+      </Card>
 
-        <div className="min-w-0 space-y-6">
+      <div className="mt-6 space-y-6">
           <Card title="Propensity models" description="Held-out last 60 days. Higher AUC is better; 0.5 is chance.">
             {models.isLoading ? (
               <LoadingRows rows={3} label="Loading models" />
@@ -137,7 +138,7 @@ export default function UnderTheHood() {
                   <Badge tone="sage">Drafting provider: {meta.data.llm_provider}</Badge>
                   <Badge tone="sage">Today: {fmtDate(meta.data.as_of_date)}</Badge>
                 </div>
-                <dl className="grid gap-x-6 sm:grid-cols-2">
+                <dl className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
                   {Object.entries(meta.data.row_counts as Record<string, number>)
                     .filter(([, n]) => n > 0)
                     .sort((a, b) => b[1] - a[1])
@@ -151,7 +152,6 @@ export default function UnderTheHood() {
               </>
             )}
           </Card>
-        </div>
       </div>
     </>
   );

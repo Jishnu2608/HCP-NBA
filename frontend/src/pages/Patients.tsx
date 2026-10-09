@@ -11,6 +11,7 @@ import {
   Pill,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Stethoscope,
   Users,
   X,
@@ -406,25 +407,35 @@ export function CoverageTimeline({ fills, asOf }: { fills: Json[]; asOf: string 
 export function ChannelTable({ channels }: { channels: Record<string, Json> }) {
   const entries = Object.entries(channels);
   if (!entries.length) return <p className="text-sm text-ink-subtle">No outreach history yet.</p>;
+  // Two columns once the card is wide enough; a channel never used is one quiet line, not
+  // an empty bar.
   return (
-    <ul className="space-y-3.5">
-      {entries.map(([name, c]) => (
-        <li key={name}>
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="flex min-w-0 items-center gap-2 text-ink">
-              <ChannelIcon channel={name} className="h-4 w-4 shrink-0 text-ink-subtle" />
-              <span className="truncate">{channelName(name)}</span>
-            </span>
-            <span className="tabular shrink-0 font-semibold text-ink">{c.sent ? pct(c.rate) : "—"}</span>
-          </div>
-          <Meter value={c.sent ? c.rate : 0} className="mt-1.5" label={`${channelName(name)} response rate`} />
-          <div className="tabular mt-1 text-xs text-ink-subtle">
-            {c.sent ? `${c.engaged} of ${c.sent} responded` : "No history on this channel"}
-          </div>
-        </li>
-      ))}
-      <li className="text-xs text-ink-subtle">Rates are smoothed toward the average, so one response is not over-read.</li>
-    </ul>
+    <div className="@container">
+      <ul className="grid gap-x-8 gap-y-3.5 @lg:grid-cols-2">
+        {entries.map(([name, c]) => (
+          <li key={name}>
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className={cx("flex min-w-0 items-center gap-2", c.sent ? "text-ink" : "text-ink-muted")}>
+                <ChannelIcon channel={name} className="h-4 w-4 shrink-0 text-ink-subtle" />
+                <span className="truncate">{channelName(name)}</span>
+              </span>
+              {c.sent ? (
+                <span className="tabular shrink-0 font-semibold text-ink">{pct(c.rate)}</span>
+              ) : (
+                <span className="shrink-0 text-xs text-ink-subtle">No history</span>
+              )}
+            </div>
+            {c.sent > 0 && (
+              <>
+                <Meter value={c.rate} className="mt-1.5" label={`${channelName(name)} response rate`} />
+                <div className="tabular mt-1 text-xs text-ink-subtle">{`${c.engaged} of ${c.sent} responded`}</div>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-4 text-xs text-ink-subtle">Rates are smoothed toward the average, so one response is not over-read.</p>
+    </div>
   );
 }
 
@@ -519,12 +530,14 @@ export function HistoryList({ items }: { items: Json[] }) {
 export function OpenNba({ nba, lastCycle }: { nba: Json | null; lastCycle?: string | null }) {
   if (!nba) {
     return (
-      <div className="rounded-xl border border-dashed border-line-strong bg-surface p-5">
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-subtle">
-          <span className="h-2 w-2 rounded-full bg-line-strong" aria-hidden /> Next best action
-        </div>
-        <p className="mt-2 text-sm text-ink-muted">
-          No open recommendation. Recommendations are prepared at each engine cycle
+      // Centred, because the card stretches to the height of its neighbour in the bento row.
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line-strong bg-surface p-6 text-center">
+        <span aria-hidden className="grid h-10 w-10 place-items-center rounded-xl bg-subtle text-ink-subtle">
+          <Sparkles className="h-5 w-5" />
+        </span>
+        <div className="mt-3 text-[15px] font-semibold text-ink">No open recommendation</div>
+        <p className="mt-1 max-w-md text-sm text-ink-muted">
+          Recommendations are prepared at each engine cycle
           {lastCycle ? ` (last run ${fmtDateTime(lastCycle)})` : ""}; changes since then are considered at the next one.
         </p>
       </div>
@@ -724,8 +737,9 @@ export function PatientProfile() {
         ))}
 
       {/* Bento: recommendation beside the consent it depends on; one full-width row per
-          therapy (the supply timeline needs the width); the outreach timeline as a tall cell
-          beside the two supporting cards. Phones read top to bottom in the same order. */}
+          therapy (the supply timeline needs the width); the two short supporting cards as a
+          pair; the outreach timeline, which grows with every contact, full width below.
+          Phones read top to bottom in the same order. */}
       <BentoGrid>
         <BentoCell span="wide">
           <OpenNba nba={p.open_nba} lastCycle={p.last_cycle_at} />
@@ -766,21 +780,12 @@ export function PatientProfile() {
           />
         ))}
 
-        <BentoCard
-          span="wide"
-          rows={p.features ? 2 : 1}
-          icon={<History />}
-          title="Outreach timeline"
-          description="Newest first. Engine recommendations are highlighted."
-        >
-          <HistoryList items={p.interactions} />
-        </BentoCard>
         {p.features && (
-          <BentoCard span="narrow" pairOnTablet icon={<MessageSquare />} title="Response by channel">
+          <BentoCard span="half" pairOnTablet icon={<MessageSquare />} title="Response by channel">
             <ChannelTable channels={p.features.channels} />
           </BentoCard>
         )}
-        <BentoCard span="narrow" pairOnTablet={Boolean(p.features)} icon={<Users />} title="Care team">
+        <BentoCard span={p.features ? "half" : "full"} pairOnTablet icon={<Users />} title="Care team">
           {p.care_team.length || (p.care_managers ?? []).length ? (
             <ul className="space-y-3">
               {(p.care_managers ?? []).map((m: Json) => (
@@ -812,6 +817,14 @@ export function PatientProfile() {
           ) : (
             <p className="text-sm text-ink-subtle">No care team on record.</p>
           )}
+        </BentoCard>
+        <BentoCard
+          span="full"
+          icon={<History />}
+          title="Outreach timeline"
+          description="Newest first. Engine recommendations are highlighted."
+        >
+          <HistoryList items={p.interactions} />
         </BentoCard>
       </BentoGrid>
     </>

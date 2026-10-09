@@ -125,9 +125,22 @@ Dashboards and other dense screens use one grid: 1 column on phones, 2 from 768p
 | `half` | 6 | Paired items of equal weight |
 | `narrow` | 4 | Supporting items beside a `wide` cell |
 
-Rows always add up to 12 (8 + 4, 6 + 6, 12). Below 1280px the cells go full width, because charts and lists need the width; `pairOnTablet` lets small cells sit two-up from 768px. Cards stretch to the tallest cell in the row, and a footer `note` is pinned to the bottom, so neighbouring cards end level. When a card would be mostly empty (for example a trend with one data point), the layout changes instead: the related card takes the row.
+Rows always add up to 12 (8 + 4, 6 + 6, 12). Below 1280px the cells go full width, because charts and lists need the width; `pairOnTablet` lets small cells sit two-up from 768px. An odd last chart in an all-half grid spans the row (`xl:[&>*:last-child:nth-child(odd)]:col-span-12`). Cards stretch to the tallest cell in the row, and a footer `note` is pinned to the bottom, so neighbouring cards end level. When a card would be mostly empty (for example a trend with one data point), the layout changes instead: the related card takes the row.
 
-Components: `BentoGrid`, `BentoCard` (icon tile, title, description, optional "View all" link, footer note), `BentoCell` (a cell for content that brings its own card, stretched to the row), `SectionHeader`, `InsightRow` (finding plus figure), `BarRow` (label, figure, proportion bar). From 1280px a cell can be two rows tall (`rows={2}`) so a long list sits beside two stacked supporting cards; their bottoms line up with it.
+Components: `BentoGrid`, `BentoCard` (icon tile, title, description, optional "View all" link, footer note; its body is a column, so a chart can grow into a stretched card), `BentoCell` (a cell for content that brings its own card, stretched to the row), `BentoSplit` (below), `SectionHeader`, `InsightRow` (finding plus figure), `BarRow` (label, figure, proportion bar). Two-row-tall cells were removed (2026-10-09): a tall cell beside short ones stretched the short side or left the tall one mostly empty.
+
+### Composition rules (whitespace)
+
+Every page follows these, so no card is stretched and no column runs on beside an empty one:
+
+- **Pair only cards of similar height in one bento row.** Rows stretch, so a short card beside a tall one turns into whitespace. Chart cards (`ChartPanel`) centre their chart, and a Recharts chart keeps a 16rem floor and grows (`min-h-64 flex-1`), so any spare height is shared, not collected at the bottom. An empty or placeholder card centres its message.
+- **Long or growing content never shares a row with short cards.** Requests, instructions, timelines, conversations and design-rule lists run full width, and lay their items out in columns inside the card: `RequestList tiles` and `NoteList tiles` use balanced CSS columns (`@container`, two from 48rem of card width, instructions three from 64rem; newest first, down then across, `break-inside-avoid`), and `ChannelTable` goes two-up from 32rem of card width.
+- **`BentoSplit` for primary content beside supporting cards** (`8/4`, `7/5` or `6/6` on the 12-column grid from 1280px). Each column stacks its own cards at natural height, so nothing stretches and the next card fills the space under a short one. Below 1280px the main column comes first; supporting cards pair two-up from 768px (a lone or odd last card takes the row). Without supporting cards the main column takes the full width. Put only bounded content in the aside (care team, the newest two instructions, coins, specialty changes); a list that grows goes full width instead.
+- **Long lists show their newest items first and say how many more there are.** `useShowMore(items, limit, noun, keep?)` in `ui.tsx` (open requests always show; closed ones beyond the limit wait behind "Show N more closed requests"; the outreach timeline shows 8). Nothing is removed or truncated.
+- **No fixed reading widths on app pages** (`max-w-3xl`, `max-w-5xl`, fixed `340px` columns). Pages use the full content width with a split or columns inside cards.
+- **An empty state that invites action is one compact row** (icon, text, action), never a tall centred box (for example the health plan invitation).
+- **Check with numbers, not only screenshots.** For each role and page at 1440, 768 and 375 px: no sideways page scroll, no card with more than about 90px of empty space at its bottom, and no two cards side by side whose content ends more than about 250px apart (except the sticky decision panel on the recommendation page, which is meant to stay in view).
+
 
 ### 360 pages
 

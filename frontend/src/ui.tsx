@@ -1630,6 +1630,35 @@ export function Toolbar({ children, className }: { children: ReactNode; classNam
 
 /* ---------------------------------------------------------------- timeline */
 
+/**
+ * Keeps a long list to its first `limit` items until the reader asks for the rest, so one
+ * growing list does not set the height of a whole page. Nothing is hidden for good: the
+ * control says how many more there are. `keep` marks items that always show (open work).
+ */
+export function useShowMore<T>(items: T[], limit: number, noun: string, keep?: (item: T) => boolean) {
+  const [all, setAll] = useState(false);
+  let extra = 0;
+  let seen = 0;
+  const visible = all
+    ? items
+    : items.filter((item) => {
+        if (keep?.(item)) return true;
+        seen += 1;
+        if (seen <= limit) return true;
+        extra += 1;
+        return false;
+      });
+  const hidden = all ? 0 : extra;
+  const control =
+    all || hidden > 0 ? (
+      <Button variant="ghost" size="sm" className="mt-3" aria-expanded={all} onClick={() => setAll(!all)}>
+        <ChevronDown className={cx("h-3.5 w-3.5 transition-transform", all && "rotate-180")} aria-hidden />
+        {all ? "Show fewer" : `Show ${hidden} more ${noun}`}
+      </Button>
+    ) : null;
+  return [visible, control] as const;
+}
+
 export function Timeline({ children }: { children: ReactNode }) {
   return <ol className="relative space-y-5 before:absolute before:inset-y-1 before:left-[11px] before:w-px before:bg-line">{children}</ol>;
 }

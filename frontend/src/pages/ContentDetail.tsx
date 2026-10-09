@@ -605,7 +605,9 @@ function History({ c, onPosted }: { c: Json; onPosted: (d: Json) => void }) {
       </Card>
       {c.conversation.hcp_threads.length > 0 && (
         <Card title="Questions from HCPs" description="Asked about material delivered to them. Compliance sees the HCP without identity; the representative who sent it sees the name.">
-          <div className="space-y-5">
+          {/* Two threads side by side only where the card is wide enough for both. */}
+          <div className="@container">
+          <div className="grid items-start gap-4 @3xl:grid-cols-2">
             {c.conversation.hcp_threads.map((t: Json) => (
               <div key={t.interaction_id} className="rounded-xl border border-line p-4">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
@@ -626,6 +628,7 @@ function History({ c, onPosted }: { c: Json; onPosted: (d: Json) => void }) {
                 )}
               </div>
             ))}
+          </div>
           </div>
         </Card>
       )}
@@ -820,7 +823,11 @@ export default function ContentDetail() {
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-12">
+      {/* A reviewer reads the material, its versions and the conversation beside the decision
+          panel, the tallest card on the page. Everyone else reads it with its version history
+          beside it, the review facts in two columns and the conversation full width below. */}
+      {reviewer ? (
+      <div className="grid items-start gap-4 lg:grid-cols-12">
         <div className="space-y-4 lg:col-span-7">
           <Card title="What the recipient reads" description="Delivered exactly as written; never edited at send.">
             <p className="whitespace-pre-line text-sm leading-6 text-ink">
@@ -898,13 +905,13 @@ export default function ContentDetail() {
               </ul>
             </Card>
           )}
+          <Card title="Version history" description="Each version of this material and the MLR decisions on it, oldest first.">
+            <VersionTimeline versions={c.versions} reviews={c.reviews} current={c.content_id} />
+          </Card>
           <History c={c} onPosted={(d) => refresh(d, "Message sent.")} />
         </div>
         <div className="space-y-4 lg:col-span-5">
           {reviewer && <DecisionPanel key={`${c.content_id}-${c.mlr_status}`} c={c} onDone={decisionDone} />}
-          <Card title="Version history" description="Each version of this material and the MLR decisions on it, oldest first.">
-            <VersionTimeline versions={c.versions} reviews={c.reviews} current={c.content_id} />
-          </Card>
           {reviewer && c.recommendations_waiting > 0 && (
             <Alert tone="warn" title="Recommendations waiting">
               {c.recommendations_waiting} recommendation{c.recommendations_waiting === 1 ? " is" : "s are"} held back by this item. Approval takes effect at the next engine cycle.
@@ -912,6 +919,96 @@ export default function ContentDetail() {
           )}
         </div>
       </div>
+      ) : (
+      <div className="space-y-4">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card title="What the recipient reads" description="Delivered exactly as written; never edited at send.">
+            <p className="whitespace-pre-line text-sm leading-6 text-ink">
+              <TemplateText text={c.body} />
+            </p>
+            {hasFields(c.body) && (
+              <p className="mt-2 text-xs text-ink-subtle">
+                Highlighted fields are filled in for each recipient when the message is sent: their own first name and the medicine the message is about.
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-ink-subtle">
+              {c.channels.map((ch: string) => (
+                <span key={ch} className="inline-flex items-center gap-1">
+                  <ChannelIcon channel={ch} className="h-3.5 w-3.5" /> {channelName(ch)}
+                </span>
+              ))}
+              <span>{c.specialty ? `For ${c.specialty}` : "Any specialty"}</span>
+              <span>{c.jurisdiction_names?.length ? `Only in ${c.jurisdiction_names.join(", ")}` : "No country restriction"}</span>
+              <span className="tabular">
+                {c.effective_date ? `Effective ${fmtDate(c.effective_date)} · ${c.is_expired ? "expired" : "valid until"} ${fmtDate(c.expiry_date)}` : "Not approved"}
+              </span>
+            </div>
+          </Card>
+          <Card title="Version history" description="Each version of this material and the MLR decisions on it, oldest first.">
+            <VersionTimeline versions={c.versions} reviews={c.reviews} current={c.content_id} />
+          </Card>
+        </div>
+          <Card title="For MLR review">
+            <dl className={cx("space-y-4 text-sm", !reviewer && "md:grid md:grid-cols-2 md:gap-x-8 md:gap-y-4 md:space-y-0 md:[&>div:first-child]:row-span-4")}>
+              <div>
+                <dt className="font-semibold text-ink">Claims and supporting references</dt>
+                <dd>
+                  {c.claims.length ? (
+                    <ol className="mt-1 list-decimal space-y-1 pl-5">
+                      {c.claims.map((x: Json, n: number) => (
+                        <li key={n}>
+                          {x.text}
+                          <span className={cx("block text-[13px]", x.reference ? "text-ink-subtle" : "text-bad")}>
+                            {x.reference ? `Reference: ${x.reference}` : "No reference"}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <span className="text-bad">No claims recorded</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-ink">Product or medicine</dt>
+                <dd className="text-ink-muted">{c.product ?? "General material (no product named)"}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-ink">Indication</dt>
+                <dd className="text-ink-muted">{c.indication ?? <span className="text-bad">Not given</span>}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-ink">Safety and benefit-risk</dt>
+                <dd className="text-ink-muted">{c.safety_info ?? <span className="text-bad">Not given</span>}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-ink">Labelling</dt>
+                <dd className="text-ink-muted">{c.labelling_note ?? "Not given"}</dd>
+              </div>
+            </dl>
+          </Card>
+          {c.changes.length > 0 && (
+            <Card title={`Changes since ${c.previous_id}`}>
+              <ul className="space-y-3 text-sm">
+                {c.changes.map((ch: Json) => (
+                  <li key={ch.field}>
+                    <div className="font-semibold text-ink">{FIELD_LABEL[ch.field] ?? ch.field}</div>
+                    <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                      <p className="rounded-lg bg-bad-soft/40 p-2 text-ink-muted line-through decoration-bad/40">{show(ch.before)}</p>
+                      <p className="rounded-lg bg-ok-soft/50 p-2 text-ink">{show(ch.after)}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+      </div>
+      )}
+      {!reviewer && (
+        <div className="mt-4 space-y-4">
+          <History c={c} onPosted={(d) => refresh(d, "Message sent.")} />
+        </div>
+      )}
       {c.deliveries && (
         <div className="mt-4">
           <Deliveries d={c.deliveries} />

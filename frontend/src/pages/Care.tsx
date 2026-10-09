@@ -24,7 +24,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, patch, post, put, query } from "../api";
 import type { Json } from "../api";
 import { BarList, ChartPanel, ChartTable, SeriesLegend, StackedBar, StreakCard, TrendLines, shortDate, useInsights } from "../charts";
-import { BentoGrid, SectionHeader } from "../layout";
+import { BentoGrid, BentoSplit, SectionHeader } from "../layout";
 import { ResidenceFields } from "../legal";
 import { CarePlanEditor } from "./HealthPlan";
 import { useToast } from "../toast";
@@ -518,7 +518,11 @@ export function CarePanel({ patientId }: { patientId: string }) {
 
       {r.origin === "clinic" && <PortalAccess patientId={patientId} portal={r.portal} onInvited={done("Invitation sent.")} />}
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
+      {/* Conditions and medications lead; the care team and the newest instructions sit
+          beside them. Requests grow with the patient's history, so they run full width. */}
+      <BentoSplit
+        main={
+          <>
         <Card
           title="Conditions"
           action={
@@ -556,11 +560,6 @@ export function CarePanel({ patientId }: { patientId: string }) {
             )}
           />
         </Card>
-        <Card title="Care team">
-          <CareTeam team={r.care_team} />
-        </Card>
-      </div>
-
       <Card
         title="Medications"
         description="Reported by the patient or recorded by you. Confirm with the supply details to start adherence tracking."
@@ -605,11 +604,26 @@ export function CarePanel({ patientId }: { patientId: string }) {
         )}
       </Card>
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
+          </>
+        }
+        aside={
+          <>
+            <Card title="Care team">
+              <CareTeam team={r.care_team} />
+            </Card>
+            <Card title="Instructions and follow-up" description="Newest first. Instructions linked to a request also show on it.">
+              <NoteList items={r.notes} staff limit={2} />
+            </Card>
+          </>
+        }
+      />
+
         <Card title="Requests">
           <RequestList
             items={r.requests}
             staff
+            tiles
+            closedLimit={2}
             actions={(q) =>
               q.status !== "closed" && (
                 <>
@@ -647,10 +661,6 @@ export function CarePanel({ patientId }: { patientId: string }) {
             }
           />
         </Card>
-        <Card title="Instructions and follow-up">
-          <NoteList items={r.notes} staff />
-        </Card>
-      </div>
       <ErrorNote error={call.error} />
       <CarePlanEditor patientId={patientId} />
 
@@ -1225,31 +1235,34 @@ function PortalAccess({ patientId, portal, onInvited }: { patientId: string; por
   );
 }
 
-/** Read-only summary for staff who see the patient but do not manage their care. */
+/** Read-only summary for staff who see the patient but do not manage their care. Conditions
+ *  and medications pair up; requests grow with the patient's history and run full width. */
 export function HealthSummary({ health }: { health: Json }) {
   return (
-    <section aria-labelledby="health-title" className="mb-6 grid items-start gap-6 lg:grid-cols-3">
+    <section aria-labelledby="health-title" className="mb-6 space-y-4">
       <h2 id="health-title" className="sr-only">
         Health profile
       </h2>
-      <Card title={<span className="flex items-center gap-2"><HeartPulse className="h-4 w-4 text-ink-subtle" aria-hidden /> Conditions</span>}>
-        <ConditionList items={health.conditions} staff />
-      </Card>
-      <Card title="Medications">
-        {health.medications.length ? (
-          <ul className="space-y-3">
-            {health.medications.map((m: Json) => (
-              <li key={m.therapy_id}>
-                <MedicationSummary m={m} staff />
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-ink-subtle">No medications recorded.</p>
-        )}
-      </Card>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card title={<span className="flex items-center gap-2"><HeartPulse className="h-4 w-4 text-ink-subtle" aria-hidden /> Conditions</span>}>
+          <ConditionList items={health.conditions} staff />
+        </Card>
+        <Card title="Medications">
+          {health.medications.length ? (
+            <ul className="space-y-3">
+              {health.medications.map((m: Json) => (
+                <li key={m.therapy_id}>
+                  <MedicationSummary m={m} staff />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-ink-subtle">No medications recorded.</p>
+          )}
+        </Card>
+      </div>
       <Card title="Requests">
-        <RequestList items={health.requests} staff />
+        <RequestList items={health.requests} staff tiles closedLimit={2} />
       </Card>
     </section>
   );

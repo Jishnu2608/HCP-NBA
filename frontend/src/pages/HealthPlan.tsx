@@ -12,7 +12,7 @@ import type { Json } from "../api";
 import { useAuth } from "../auth";
 import { ChartPanel, ChartTable, Heatmap, SeriesLegend, TrendLines, shortDate } from "../charts";
 import type { ChartTone, TrendSeries } from "../charts";
-import { BentoGrid, SectionHeader } from "../layout";
+import { BentoGrid, BentoSplit, SectionHeader } from "../layout";
 import { DUR, changedSinceSeen, gsap, reducedMotion, useGSAP } from "../motion";
 import { useToast } from "../toast";
 import {
@@ -20,7 +20,6 @@ import {
   Badge,
   Button,
   Card,
-  EmptyState,
   ErrorNote,
   ErrorState,
   LoadingRows,
@@ -382,30 +381,31 @@ export function HealthPlanSection({ onContact }: { onContact: () => void }) {
       ) : q.error ? (
         <ErrorState error={q.error} retry={() => void q.refetch()} title="Your health plan could not be loaded" />
       ) : !d.plan ? (
+        // An invitation, not a placeholder: one compact row, so it never holds a screen of space.
         <Card>
-          <EmptyState
-            icon={<CalendarCheck className="h-5 w-5" />}
-            title="Your health journey starts here."
-            action={
-              d.has_care_manager ? (
-                <Button variant="primary" onClick={onContact}>
-                  Contact your care manager
-                </Button>
-              ) : undefined
-            }
-          >
-            {d.has_care_manager
-              ? `Your care manager${d.care_managers.length ? ` (${d.care_managers.join(", ")})` : ""} will help you set up a personalised goal plan to track the health measurements that matter to you. Your check-ins, readings and coins appear here once it is ready.`
-              : "A care manager needs to be assigned to you before your plan can be set up. Your care team will arrange this; there is nothing you need to do."}
-          </EmptyState>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <span aria-hidden className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary-ink">
+              <CalendarCheck className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[15px] font-semibold text-ink">Your health journey starts here.</p>
+              <p className="mt-0.5 max-w-3xl text-sm text-ink-subtle">
+                {d.has_care_manager
+                  ? `Your care manager${d.care_managers.length ? ` (${d.care_managers.join(", ")})` : ""} will help you set up a personalised goal plan to track the health measurements that matter to you. Your check-ins, readings and coins appear here once it is ready.`
+                  : "A care manager needs to be assigned to you before your plan can be set up. Your care team will arrange this; there is nothing you need to do."}
+              </p>
+            </div>
+            {d.has_care_manager && (
+              <Button variant="primary" className="shrink-0 self-start sm:self-center" onClick={onContact}>
+                Contact your care manager
+              </Button>
+            )}
+          </div>
         </Card>
       ) : (
         <>
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <TodayCheckins data={d} />
-            <div className="space-y-4">{coins.data && <CoinCard coins={coins.data} />}</div>
-          </div>
-          <BentoGrid className="mt-4">
+          {coins.data ? <BentoSplit main={<TodayCheckins data={d} />} aside={<CoinCard coins={coins.data} />} /> : <TodayCheckins data={d} />}
+          <BentoGrid className="mt-4 xl:[&>*:last-child:nth-child(odd)]:col-span-12">
             <CheckinCalendar calendar={d.calendar} query={q} />
             <ReadingsCharts readings={d.readings} query={q} />
           </BentoGrid>
@@ -591,7 +591,7 @@ export function CarePlanEditor({ patientId }: { patientId: string }) {
         )}
       </Card>
       {plan && (
-        <BentoGrid className="mt-4">
+        <BentoGrid className="mt-4 xl:[&>*:last-child:nth-child(odd)]:col-span-12">
           <CheckinCalendar calendar={d.calendar} query={q} />
           <ReadingsCharts readings={d.readings} query={q} title="Readings vs target" />
         </BentoGrid>

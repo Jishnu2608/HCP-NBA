@@ -89,7 +89,8 @@ const legendProps = { iconType: "circle" as const, iconSize: 8, wrapperStyle: { 
 const MIN_SENT = 20;
 const engineRate = (row: Json | undefined) => (row && row.sent >= MIN_SENT ? row.response_rate : undefined);
 // Fixed chart height so charts in the same row line up.
-const CHART_H = "h-64";
+// Charts keep a 16rem floor and grow when the row is taller (the card body is a column).
+const CHART_H = "min-h-64 flex-1";
 
 function count(rows: Json[], target: string, status: string) {
   return rows.filter((r) => r.target_type === target && r.status === status).reduce((n, r) => n + r.count, 0);
@@ -452,7 +453,7 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="flex h-full flex-col gap-5">
+            <div className="flex flex-1 flex-col justify-center gap-5">
               <dl className="grid grid-cols-2 gap-3">
                 {[
                   { label: "Earlier outreach: responded", value: pct(fair.baseline?.response_rate, 1) },
@@ -513,7 +514,7 @@ export default function Dashboard() {
       {/* 3. Recommendations */}
       <SectionHeader title="Recommendations" description="Where every recommendation stands, and what the engine is proposing." />
       <BentoGrid>
-        <BentoCard span="half" icon={<ListChecks />} title="Status by audience" description="Every recommendation on record." link={queue ? { to: queue, label: "Open queue" } : undefined}>
+        <BentoCard span="half" icon={<ListChecks />} title="Status by audience" description="Every recommendation on record." link={queue ? { to: queue, label: "Open queue" } : undefined} bodyClassName="flex flex-col justify-center">
           <div className="space-y-6">
             <StatusBar rows={status} target="PATIENT" label="Patients" />
             <StatusBar rows={status} target="HCP" label="HCPs" />

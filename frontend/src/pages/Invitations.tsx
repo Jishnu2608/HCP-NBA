@@ -336,7 +336,7 @@ export default function Invitations() {
       {devLink && <DevLink link={devLink} onClose={() => setDevLink(null)} />}
       <ErrorNote error={act.error} className="mb-4" />
 
-      <div className="grid gap-6 xl:grid-cols-12">
+      <div className="grid items-start gap-6 xl:grid-cols-12">
         <Card title="Send an invitation" description="Links work once and expire after 72 hours." className="xl:col-span-4">
           {options.isLoading ? (
             <LoadingRows rows={3} label="Loading roles" />
