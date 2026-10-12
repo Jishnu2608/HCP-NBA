@@ -97,10 +97,21 @@ def now_on(db: Session) -> datetime:
     return now if now.date() == today else datetime.combine(today, now.time())
 
 
+class NotDue(Exception):
+    """A recommendation scheduled for a later day: it stays approved and can be sent from
+    that day. Nothing is blocked or recorded as sent."""
+
+    def __init__(self, day):
+        super().__init__(f"Scheduled for {day:%b %d}; it can be sent from that day")
+        self.day = day
+
+
 def send(db: Session, nba: Nba, user: User) -> Interaction:
     """Delivers an approved recommendation. Gates are checked one last time first."""
     if nba.status != NbaStatus.APPROVED:
         raise ValueError(f"only approved recommendations can be sent (status: {nba.status})")
+    if nba.scheduled_for and nba.scheduled_for > clock.get_today(db):
+        raise NotDue(nba.scheduled_for)
 
     failures = current_failures(db, nba)
     if failures:

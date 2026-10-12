@@ -291,6 +291,15 @@ def _consent_rows(patient_id, granted_by_channel, sharing, enrolled, rng, as_of,
             effective_from=enrolled,
         )
     )
+    rows.append(
+        Consent(
+            patient_id=patient_id,
+            purpose=ConsentPurpose.AGGREGATE_INSIGHTS,
+            channel=None,
+            granted=ref.aggregate_insights_opt_in(patient_id),
+            effective_from=enrolled,
+        )
+    )
     return rows
 
 

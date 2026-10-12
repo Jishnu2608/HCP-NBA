@@ -30,6 +30,7 @@ import { BentoCard, BentoCell, BentoGrid } from "../layout";
 import { ChannelTable, HistoryList, OpenNba } from "./Patients";
 import { specialtyText } from "./HealthForms";
 import { EngagePanel } from "./HcpWork";
+import { PanelAdherenceCard, SourcesCard } from "./HcpContext";
 import { useAuth } from "../auth";
 import { P } from "../permissions";
 
@@ -285,6 +286,9 @@ export function HcpProfile() {
             </BentoCard>
           </>
         )}
+
+        {h.panel_adherence && <PanelAdherenceCard panel={h.panel_adherence} />}
+        {h.sources && <SourcesCard sources={h.sources} />}
 
         <BentoCard span="full" icon={<History />} title="Engagement timeline" description="Newest first. Engine recommendations are highlighted.">
           <HistoryList items={h.interactions} />

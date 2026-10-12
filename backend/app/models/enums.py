@@ -131,6 +131,11 @@ class RiskSegment(StrEnum):
 class ConsentPurpose(StrEnum):
     OUTREACH = "outreach"
     PROVIDER_SHARING = "provider_sharing"
+    # Use of the patient's information, de-identified and only in groups large enough that no
+    # one can be singled out, in statistics that shape how healthcare professionals are
+    # engaged (for example "share of this HCP's patients on statins at PDC 80%"). Separate
+    # from sharing with one's own doctors: neither implies the other. Opt-in.
+    AGGREGATE_INSIGHTS = "aggregate_insights"
 
 
 class MlrStatus(StrEnum):

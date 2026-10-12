@@ -34,11 +34,29 @@ DEFAULTS: dict[str, Any] = {
     "nba_withheld_margin": 1.10,
     "nba_hcp_min_score": 8.0,
     "nba_repeat_content_days": 90,
+    # Timing. A refill reminder for a supply that has not yet run out is scheduled this many
+    # days before the run-out date. A target held back only by the contact limits gets a
+    # recommendation scheduled for the first allowed day, if that day is within the horizon
+    # (0 = defer as before). Every gate is checked again at approval and at send.
+    "refill_lead_days": 3,
+    "nba_schedule_ahead_days": 7,
+    # De-identified aggregates (HCP panel adherence): a group smaller than this is never shown
+    # or used, and the share of patients at the PDC threshold below which adherence-support
+    # material for that measure is favoured for the HCP.
+    "aggregate_min_cohort": 11,
+    "panel_adherence_target": 0.80,
+    # Persistence: a gap in supply longer than this ends a course of therapy.
+    "persistence_gap_days": 60,
+    # Randomised holdout of synthetic patients (never real people): a fixed share receives no
+    # engine outreach so outcomes can be compared. Off unless an administrator turns it on.
+    "holdout": {"enabled": False, "share": 0.10},
+    # Scheduled engine cycle: once a day after this UTC hour. Off unless turned on.
+    "auto_cycle": {"enabled": False, "hour_utc": 6},
 }
 
 
 # Settings whose value is a fraction between 0 and 1 (inclusive).
-FRACTIONS = {"pdc_threshold", "hcp_tiers"}
+FRACTIONS = {"pdc_threshold", "hcp_tiers", "panel_adherence_target", "holdout"}
 NUMBER_MAX = 100_000
 
 
@@ -71,7 +89,13 @@ def validate_value(key: str, value: Any) -> str | None:
             return None
         return None if type(given) is type(default) else f"{where} has the wrong type."
 
-    return check(DEFAULTS[key], value, "")
+    problem = check(DEFAULTS[key], value, "")
+    if problem is None and key == "auto_cycle" and value["hour_utc"] > 23:
+        return "auto_cycle.hour_utc must be between 0 and 23."
+    if problem is None and key == "aggregate_min_cohort" and value < 5:
+        # Below this, de-identified figures could point at individuals.
+        return "aggregate_min_cohort must be at least 5."
+    return problem
 
 
 def get_config(db: Session, key: str) -> Any:

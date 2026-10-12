@@ -17,6 +17,7 @@ from app.api.schemas import StrictBody
 from app.auth.repository import SqlUserRepository
 from app.auth.service import account_out
 from app.auth.sessions import sessions
+from app.core import clock
 from app.core.db import get_db
 from app.core.engine_config import DEFAULTS, get_config, set_config, validate_value
 from app.core.permissions import Permission, can
@@ -258,7 +259,11 @@ def bulk_send(
     body = body or BulkSendBody()
     rows = db.scalars(
         select(Nba)
-        .where(Nba.status == NbaStatus.READY_FOR_REVIEW)
+        .where(
+            Nba.status == NbaStatus.READY_FOR_REVIEW,
+            # Scheduled for a later day: left for that day.
+            Nba.scheduled_for <= clock.get_today(db),
+        )
         .order_by(Nba.priority.desc(), Nba.id)
         .limit(body.limit)
     ).all()

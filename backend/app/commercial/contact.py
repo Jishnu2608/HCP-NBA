@@ -38,11 +38,9 @@ def contact_window(db: Session, hcp: Hcp, state: eng.EngagementState | None = No
     cap = get_config(db, "frequency_caps")["HCP"]
     last = state.days[-1] if state.days else None
     failures = gates.frequency_failures(state, today, cap)
-    next_allowed = today
-    while gates.frequency_failures(state, next_allowed, cap) and next_allowed < today + timedelta(
+    next_allowed = gates.next_allowed_day(state, today, cap, HORIZON_DAYS) or today + timedelta(
         days=HORIZON_DAYS
-    ):
-        next_allowed += timedelta(days=1)
+    )
     reason = None
     if failures:
         reason = gates.describe(failures)

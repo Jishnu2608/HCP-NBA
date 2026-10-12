@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     # Off only in tests; limits are per process.
     rate_limit_enabled: bool = True
+    # How often the server checks whether the scheduled daily engine cycle is due (the
+    # schedule itself is the `auto_cycle` engine setting, off by default). 0 = never check.
+    scheduler_poll_seconds: int = 300
 
     # "template" needs no key and no network; other providers are plugged in later.
     llm_provider: str = "template"

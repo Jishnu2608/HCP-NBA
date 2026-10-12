@@ -272,7 +272,7 @@ def test_play_out_resolves_responses_and_real_days_bring_refills(env):
     # Send a batch so there is something for the world to respond to.
     batch = db.scalars(
         select(Nba)
-        .where(Nba.status == NbaStatus.READY_FOR_REVIEW)
+        .where(Nba.status == NbaStatus.READY_FOR_REVIEW, Nba.scheduled_for <= DEFAULT_AS_OF)
         .order_by(Nba.priority.desc())
         .limit(40)
     ).all()

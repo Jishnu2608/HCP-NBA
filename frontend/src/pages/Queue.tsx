@@ -28,6 +28,7 @@ import {
   StatusBadge,
   Toolbar,
   cx,
+  fmtDate,
 } from "../ui";
 import type { Column } from "../ui";
 
@@ -103,6 +104,8 @@ export default function Queue() {
   const maxPriority = Math.max(1, ...((list.data?.items ?? []) as Json[]).map((n) => n.priority));
   const audienceWord = view === "hcps" ? "HCP" : view === "patients" ? "patient" : null;
 
+  // Scheduled items show the day they can go; dates are UTC days, as on the server.
+  const today = new Date().toISOString().slice(0, 10);
   const columns: Column<Json>[] = [
     {
       key: "who",
@@ -207,7 +210,14 @@ export default function Queue() {
       header: "Status",
       className: "w-36",
       hideOnMobile: true,
-      cell: (n) => <StatusBadge status={n.status} />,
+      cell: (n) => (
+        <div className="flex flex-col items-start gap-1">
+          <StatusBadge status={n.status} />
+          {["ready_for_review", "approved"].includes(n.status) && n.scheduled_for > today && (
+            <span className="text-xs text-ink-subtle">From {fmtDate(n.scheduled_for)}</span>
+          )}
+        </div>
+      ),
     },
   ];
 

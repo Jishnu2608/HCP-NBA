@@ -16,6 +16,7 @@ from app.models import (
     FeatureSnapshot,
     Hcp,
     Interaction,
+    MedicationFill,
     MessageDraft,
     Nba,
     NbaCandidate,
@@ -354,11 +355,23 @@ def therapy_out(db: Session, t: PatientTherapy, today: date, *, with_risk: bool)
         "adherent": snap.pdc >= 0.8 if snap else None,
     }
     if with_risk:
+        from app.analytics.measures import therapy_persistence
+        from app.core.engine_config import get_config
+
+        fills = db.execute(
+            select(MedicationFill.fill_date, MedicationFill.days_supply).where(
+                MedicationFill.therapy_id == t.id
+            )
+        ).all()
         out.update(
             copay=t.copay,
             mpr=snap.mpr if snap else None,
             risk_score=snap.risk_score if snap else None,
             risk_segment=snap.risk_segment if snap else None,
+            # This one course of therapy: how long it has continued without a long gap.
+            persistence=therapy_persistence(
+                [(d, s) for d, s in fills], today, get_config(db, "persistence_gap_days")
+            ),
         )
     return out
 

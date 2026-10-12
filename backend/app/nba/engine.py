@@ -11,14 +11,14 @@ from datetime import date, timedelta
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
-from app import audit, pipeline
+from app import audit, panel_adherence, pipeline
 from app.features import engagement as eng
 from app.features.adherence import Adherence, compute_adherence, coverage_intervals
 from app.features.population import Population, load_population
 from app.models import Content, EngineCycle, Nba, NbaCandidate, PatientTherapy
 from app.models.enums import ActionType, MlrStatus, NbaStatus, RiskSegment, TargetType
 from app.models.tables import utcnow
-from app.nba import gates, rationale
+from app.nba import gates, holdout, rationale
 from app.scoring import propensity
 from app.scoring.risk import Risk, score_risk
 
@@ -148,6 +148,12 @@ INTENT_LABEL = {
 }
 # Material that answers a request for information or evidence.
 EVIDENCE_ACTIONS = (ActionType.SHARE_STUDY, ActionType.HCP_EDUCATION)
+# Adherence-support material: favoured for an HCP whose de-identified patient group is below
+# the adherence target in the content's measure (panel_adherence).
+SUPPORT_ACTIONS = (ActionType.HCP_EDUCATION, ActionType.PROGRAM_INFO)
+SUPPORT_BOOST = 1.15
+# How recent a prescriber's engagement with education must be to be mentioned to the care team.
+PRESCRIBER_CONTEXT_DAYS = 90
 
 
 def _recent(pop: Population, hcp_id: str) -> list:
@@ -266,8 +272,29 @@ def score_patient_candidates(db: Session, candidates: list[Candidate], settings:
         )
 
 
+def support_signal(panels: dict | None, c: Candidate) -> dict | None:
+    """The de-identified group figure that favours this candidate, if any."""
+    if not panels or c.content.action_type not in SUPPORT_ACTIONS:
+        return None
+    panel = panels.get(c.target_id)
+    return panel_adherence.below_target(panel, c.content.measure) if panel else None
+
+
+def hcp_panels(pop: Population, settings: dict, hcp_ids) -> dict[str, dict]:
+    """De-identified panel adherence for each HCP, computed once per cycle."""
+    pts = panel_adherence.points_from_population(pop, settings)
+    return {
+        h: panel_adherence.panel(pop.hcps[h], pop.hcp_patients.get(h, set()), pts, settings)
+        for h in hcp_ids
+    }
+
+
 def score_hcp_candidates(
-    db: Session, pop: Population, candidates: list[Candidate], settings: dict
+    db: Session,
+    pop: Population,
+    candidates: list[Candidate],
+    settings: dict,
+    panels: dict | None = None,
 ) -> None:
     if not candidates:
         return
@@ -299,6 +326,10 @@ def score_hcp_candidates(
         # material first.
         if evidence[c.target_id] and c.content.action_type in EVIDENCE_ACTIONS:
             score *= 1.15
+        # The HCP's consenting patients (as a de-identified group) are below the adherence
+        # target in this measure: adherence-support material first. Never overrides a gate.
+        if support_signal(panels, c):
+            score *= SUPPORT_BOOST
         c.score = round(score, 2)
 
 
@@ -308,6 +339,75 @@ def rank(candidates: list[Candidate]) -> list[Candidate]:
         candidates,
         key=lambda c: (-c.score, c.content.measure is None, c.content.content_id, c.channel),
     )
+
+
+def _before_timing(reasons: list[dict], extra: list[dict]) -> list[dict]:
+    """Context reasons read after the action and channel, before timing and compliance."""
+    at = next((i for i, r in enumerate(reasons) if r["kind"] == "timing"), len(reasons))
+    return reasons[:at] + extra + reasons[at:]
+
+
+def prescriber_context(pop: Population, therapy: PatientTherapy) -> list[dict]:
+    """The patient's prescriber recently engaged with MLR-approved education on the same
+    measure. Context for the care team only: it does not change the score or the choice."""
+    hcp_id = therapy.prescriber_hcp_id
+    if not hcp_id or hcp_id not in pop.hcps:
+        return []
+    since = pop.as_of - timedelta(days=PRESCRIBER_CONTEXT_DAYS)
+    engaged = []
+    for i in pop.interactions.get((TargetType.HCP, hcp_id), []):
+        content = pop.contents.get(i.content_id)
+        if (
+            i.int_ts.date() >= since
+            and (eng.is_engaged(i.outcome) or i.intent in ("interested", "request_meeting"))
+            and content is not None
+            and content.measure == therapy.measure
+            and content.action_type in (*EVIDENCE_ACTIONS, ActionType.PROGRAM_INFO)
+        ):
+            engaged.append(i)
+    if not engaged:
+        return []
+    last = max(engaged, key=lambda i: i.int_ts)
+    label = panel_adherence._lower_first(
+        panel_adherence.MEASURE_LABEL.get(therapy.measure, "this medicine")
+    )
+    return [
+        rationale._reason(
+            "context",
+            "prescriber_education",
+            f"The prescriber engaged with MLR-approved education on {label} on "
+            f"{last.int_ts:%b %d}: this outreach supports the same goal (context only; it did "
+            "not change the choice)",
+        )
+    ]
+
+
+def schedule_deferred(
+    pop: Population,
+    candidates: list[Candidate],
+    target_type: str,
+    state: eng.EngagementState,
+    consents: list,
+    country: str | None,
+    settings: dict,
+    min_score: float = 0.0,
+):
+    """An HCP held back only by the contact limits: the recommendation for the first day
+    the limits allow, if that day is within the scheduling horizon. Every gate is evaluated
+    for that day here, and again at approval and at send. Patients are not scheduled this way:
+    their next cycle re-decides with fresh fills (a refill often makes the contact pointless)."""
+    horizon = settings["nba_schedule_ahead_days"]
+    cap = settings["frequency_caps"][target_type]
+    day = gates.next_allowed_day(state, pop.as_of, cap, horizon) if horizon else None
+    if day is None or day == pop.as_of:
+        return None
+    for c in candidates:
+        c.failures = gates.evaluate(
+            target_type, c.content, c.channel, day, consents, state,
+            settings["frequency_caps"], country,
+        )  # fmt: skip
+    decision = decide(candidates, settings, min_score=min_score)
+    return (day, decision) if decision.outcome == "ready" else None
 
 
 # --- Selection ---------------------------------------------------------------
@@ -484,9 +584,14 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
     # Patients: build and score every candidate in one batch, then decide per patient.
     contexts: dict[str, PatientContext] = {}
     by_patient: dict[str, list[Candidate]] = {}
+    holdout_config = settings["holdout"]
     for pid in pop.patients:
         if (TargetType.PATIENT, pid) in in_flight:
             stats["patient_in_flight"] += 1
+            continue
+        if holdout.in_holdout(pop.patients[pid], holdout_config):
+            # Randomised holdout (synthetic patients only): no engine outreach this cycle.
+            stats["patient_holdout"] += 1
             continue
         ctx = patient_context(pop, pid, settings)
         if ctx is None:
@@ -517,7 +622,9 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
                 "channel": str(preferred),
                 "failures": [gates.CONSENT_MISSING],
             }
-        scheduled_for, timing_note = rationale.patient_timing(ctx.adherence, pop.as_of, ctx.runout)
+        scheduled_for, timing_note = rationale.patient_timing(
+            ctx.adherence, pop.as_of, ctx.runout, settings["refill_lead_days"], c.action
+        )
         predicted = {"p_engage": c.p_engage, "p_outcome": c.p_outcome}
         reasons = rationale.patient_reasons(
             drug=ctx.therapy.drug_name,
@@ -534,6 +641,7 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
             withheld=decision.withheld,
             eligible=c.eligible,
         )
+        reasons = _before_timing(reasons, prescriber_context(pop, ctx.therapy))
         priority = ctx.risk.score * max(c.p_outcome, 0.01)
         _persist(
             db, cycle, decision, reasons, scheduled_for, timing_note, priority,
@@ -554,16 +662,27 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
             stats["hcp_followup_pending"] += 1
             continue
         by_hcp[hcp_id] = hcp_candidates(pop, hcp_id, states[hcp_id], settings)
-    score_hcp_candidates(db, pop, [c for cs in by_hcp.values() for c in cs], settings)
+    panels = hcp_panels(pop, settings, by_hcp)
+    score_hcp_candidates(db, pop, [c for cs in by_hcp.values() for c in cs], settings, panels)
 
     for hcp_id, candidates in by_hcp.items():
         hcp, state = pop.hcps[hcp_id], states[hcp_id]
-        decision = decide(candidates, settings, min_score=settings["nba_hcp_min_score"])
-        stats[f"hcp_{decision.outcome}"] += 1
+        min_score = settings["nba_hcp_min_score"]
+        decision = decide(candidates, settings, min_score=min_score)
+        scheduled = None
+        if decision.outcome == "deferred":
+            scheduled = schedule_deferred(
+                pop, candidates, TargetType.HCP, state, [], hcp.country, settings, min_score
+            )
+            if scheduled:
+                decision = scheduled[1]
+        stats[f"hcp_{'scheduled' if scheduled else decision.outcome}"] += 1
         if decision.chosen is None:
             continue
         c = decision.chosen
         scheduled_for, timing_note = rationale.hcp_timing(state, pop.as_of)
+        if scheduled:
+            scheduled_for, timing_note = scheduled[0], rationale.limit_timing(scheduled[0])
         measure, subtopic = eng.topic_parts(c.content)
         reasons = rationale.hcp_reasons(
             hcp=hcp,
@@ -577,6 +696,21 @@ def run_cycle(db: Session, pop: Population | None = None) -> CycleResult:
             withheld=decision.withheld,
             eligible=c.eligible,
         ) + intent_reasons(pop, hcp_id)
+        signal = support_signal(panels, c)
+        if signal:
+            reasons = _before_timing(
+                reasons,
+                [
+                    rationale._reason(
+                        "context",
+                        "panel_adherence",
+                        panel_adherence.reason_text(signal, panels[hcp_id]),
+                        level=signal["level"],
+                        patients=signal["patients"],
+                    )
+                ],
+            )
+            stats["hcp_panel_signal"] += 1
         # An unrated (invited) HCP counts as mid-value: neither favoured nor buried.
         value = hcp.value_score if hcp.value_score is not None else 50.0
         priority = value * max(c.p_engage, 0.01)

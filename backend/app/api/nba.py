@@ -331,6 +331,8 @@ def send(nba_id: int, user: User = Depends(readers), db: Session = Depends(get_d
     _require_status(nba, NbaStatus.APPROVED)
     try:
         delivery.send(db, nba, user)
+    except delivery.NotDue as exc:
+        raise _conflict("not_due", str(exc), scheduled_for=exc.day.isoformat()) from exc
     except delivery.SendBlocked as exc:
         db.commit()
         raise _conflict("blocked", f"Not sent: {exc.reason}") from exc

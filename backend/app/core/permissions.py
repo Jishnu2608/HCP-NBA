@@ -82,6 +82,9 @@ class Permission(StrEnum):
     # Submitting one's own privacy request. Not held by the administrator, who handles them.
     PRIVACY_REQUEST = "privacy:request"
     PRIVACY_MANAGE = "privacy:manage"
+    # Export approved recommendations and their delivery outcomes for a CRM or automation
+    # system (integration/crm.py), within the reader's own recommendation scope.
+    HANDOFF_EXPORT = "handoff:export"
 
 
 P = Permission
@@ -113,6 +116,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.INVITATION_READ_ALL,
             P.PRIVACY_SELF,
             P.PRIVACY_MANAGE,
+            P.HANDOFF_EXPORT,
         }
     ),
     Role.COMPLIANCE: frozenset(
@@ -134,6 +138,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.NBA_REVIEW_HCP,
             P.CONTENT_READ_APPROVED_HCP,
             P.CONTENT_PROPOSE,
+            P.HANDOFF_EXPORT,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
         }
@@ -147,6 +152,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.PATIENT_CARE_MANAGE,
             # Clinic patients only, for a record this care manager is responsible for.
             P.INVITE_PATIENT,
+            P.HANDOFF_EXPORT,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
         }

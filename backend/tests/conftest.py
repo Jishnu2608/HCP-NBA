@@ -15,6 +15,7 @@ os.environ.update(
     NBA_ENVIRONMENT="local",
     NBA_SEED_DEMO_ACCOUNTS="true",
     NBA_RATE_LIMIT_ENABLED="false",
+    NBA_SCHEDULER_POLL_SECONDS="0",
 )
 
 import pytest

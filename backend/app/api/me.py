@@ -169,6 +169,7 @@ def my_consents(
     current = _current_consents(db, own_patient_id(user), today)
     keys = [(ConsentPurpose.OUTREACH, ch) for ch in OUTREACH_CHANNELS]
     keys.append((ConsentPurpose.PROVIDER_SHARING, None))
+    keys.append((ConsentPurpose.AGGREGATE_INSIGHTS, None))
     return [
         consent_out(current[k], today)
         if k in current
@@ -220,6 +221,15 @@ def set_outreach_consent(
     if channel not in OUTREACH_CHANNELS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown channel")
     return _change_consent(db, user, ConsentPurpose.OUTREACH, channel, body.granted)
+
+
+@router.put("/consents/aggregate-insights")
+def set_aggregate_consent(
+    body: ConsentChange, user: User = Depends(consent_managers), db: Session = Depends(get_db)
+) -> dict:
+    """Opt in or out of de-identified aggregate statistics (panel_adherence). Off until the
+    patient switches it on; it never shares anything about them as an individual."""
+    return _change_consent(db, user, ConsentPurpose.AGGREGATE_INSIGHTS, None, body.granted)
 
 
 @router.put("/consents/provider-sharing")

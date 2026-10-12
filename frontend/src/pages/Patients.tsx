@@ -658,6 +658,14 @@ function TherapyCard({ t, fills, asOf, country, id }: { t: Json; fills: Json[]; 
           </dd>
         </div>
       </dl>
+      {t.persistence?.first_fill && (
+        <p className="mt-4 text-[13px] text-ink-muted">
+          <span className="font-semibold text-ink">Persistence:</span>{" "}
+          {t.persistence.discontinued
+            ? `stopped after ${t.persistence.days_persistent} days: supply ran out ${fmtDate(t.persistence.discontinued_on)} with no refill within ${t.persistence.gap_days_allowed} days.`
+            : `on therapy ${t.persistence.days_persistent} days since the first fill (${fmtDate(t.persistence.first_fill)}), no gap over ${t.persistence.gap_days_allowed} days.`}
+        </p>
+      )}
       <div className="mt-6">
         <CoverageTimeline fills={fills} asOf={asOf} />
       </div>
@@ -770,7 +778,13 @@ export function PatientProfile() {
                   ) : (
                     <Stethoscope className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden />
                   )}
-                  <span className="min-w-0">{c.channel ? channelName(c.channel) : "Share adherence with provider"}</span>
+                  <span className="min-w-0">
+                    {c.channel
+                      ? channelName(c.channel)
+                      : c.purpose === "aggregate_insights"
+                        ? "Anonymous group statistics"
+                        : "Share adherence with provider"}
+                  </span>
                 </span>
                 {c.granted ? (
                   <Badge tone="ok" icon={<Check className="h-3.5 w-3.5" aria-hidden />} className="shrink-0">

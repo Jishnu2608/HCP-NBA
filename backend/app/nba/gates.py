@@ -6,7 +6,7 @@ before delivery, so an approval that lapsed or a consent that was withdrawn in b
 still stops the message.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from app.features.engagement import EngagementState
 from app.models import Consent, Content
@@ -77,6 +77,16 @@ def frequency_failures(state: EngagementState, day: date, cap: dict) -> list[str
     if state.days and (day - state.days[-1]).days < cap["min_gap_days"]:
         failures.append("min_gap")
     return failures
+
+
+def next_allowed_day(state: EngagementState, day: date, cap: dict, horizon: int) -> date | None:
+    """The first day from `day` on which the contact limits allow a touch, within `horizon`
+    days; None if there is none that soon."""
+    for offset in range(horizon + 1):
+        candidate = day + timedelta(days=offset)
+        if not frequency_failures(state, candidate, cap):
+            return candidate
+    return None
 
 
 def evaluate(

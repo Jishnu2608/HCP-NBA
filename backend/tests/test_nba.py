@@ -287,6 +287,8 @@ def test_scenario_2_mlr_approval_unlocks_the_withheld_content(cycled):
         + first.stats["patient_blocked"]
         + first.stats["hcp_ready"]
         + first.stats.get("hcp_blocked", 0)
+        # HCP recommendations scheduled for the first day the contact limits allow.
+        + first.stats.get("hcp_scheduled", 0)
     )
 
 

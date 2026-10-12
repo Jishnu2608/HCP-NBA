@@ -39,6 +39,9 @@ class Population:
     # Open commercial work per HCP (their request, a follow-up, a meeting): while any is open
     # the representative owes that next step, so the engine proposes no other outreach.
     hcp_open_work: dict[str, list] = field(default_factory=dict)
+    # Patients attributed to each HCP (`patient_hcp`), for de-identified panel figures and for
+    # a patient's prescriber context. Never used to show an individual patient to anyone.
+    hcp_patients: dict[str, set[str]] = field(default_factory=dict)
 
 
 def _hcp_open_work(db: Session) -> dict[str, list]:
@@ -63,6 +66,15 @@ def _engine_hcps(db: Session) -> dict:
             select(Hcp).where(or_(Hcp.origin == "synthetic", Hcp.hcp_id.in_(active)))
         )
     }
+
+
+def _hcp_patients(db: Session) -> dict[str, set[str]]:
+    from app.models import PatientHcp
+
+    out: dict[str, set[str]] = defaultdict(set)
+    for patient_id, hcp_id in db.execute(select(PatientHcp.patient_id, PatientHcp.hcp_id)):
+        out[hcp_id].add(patient_id)
+    return dict(out)
 
 
 def _hcp_specialties(db: Session) -> dict[str, set[str]]:
@@ -114,6 +126,7 @@ def load_population(db: Session, *, patient_id: str | None = None) -> Population
         hcps=({} if patient_id else _engine_hcps(db)),
         hcp_specialties=({} if patient_id else _hcp_specialties(db)),
         hcp_open_work=({} if patient_id else _hcp_open_work(db)),
+        hcp_patients=({} if patient_id else _hcp_patients(db)),
         contents={} if patient_id else {c.content_id: c for c in db.scalars(select(Content))},
         therapies=therapies,
         fills=fills,

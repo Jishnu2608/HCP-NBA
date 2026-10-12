@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  BarChart3,
   Building2,
   CheckCircle2,
   HeartPulse,
@@ -799,10 +800,15 @@ export function MyConsents() {
   const [confirmSharing, setConfirmSharing] = useState(false);
   const consents = useQuery({ queryKey: ["consents"], queryFn: () => api<Json[]>("/me/consents") });
   const change = useMutation({
-    mutationFn: (v: { channel: string | null; granted: boolean }) =>
-      put(v.channel ? `/me/consents/outreach/${v.channel}` : "/me/consents/provider-sharing", {
-        granted: v.granted,
-      }),
+    mutationFn: (v: { channel: string | null; purpose?: string; granted: boolean }) =>
+      put(
+        v.channel
+          ? `/me/consents/outreach/${v.channel}`
+          : v.purpose === "aggregate_insights"
+            ? "/me/consents/aggregate-insights"
+            : "/me/consents/provider-sharing",
+        { granted: v.granted },
+      ),
     onSuccess: (_, v) => {
       toast(v.granted ? "Preference saved: allowed" : "Preference saved: not allowed");
       void client.invalidateQueries({ queryKey: ["consents"] });
@@ -811,18 +817,27 @@ export function MyConsents() {
   if (consents.isLoading) return <Loading label="Loading your preferences" rows={4} />;
   if (consents.error) return <ErrorState error={consents.error} retry={() => void consents.refetch()} variant="page" title="Your preferences could not be loaded" />;
   const outreach = consents.data!.filter((c) => c.channel);
-  const sharing = consents.data!.filter((c) => !c.channel);
+  const sharing = consents.data!.filter((c) => !c.channel && c.purpose === "provider_sharing");
+  const statistics = consents.data!.filter((c) => c.purpose === "aggregate_insights");
 
   const Row = ({ c }: { c: Json }) => {
     const label = c.channel
       ? `Contact me by ${channelName(c.channel).toLowerCase()}`
-      : "Share my adherence summary with my doctors";
-    const sharingOff = !c.channel && c.granted;
+      : c.purpose === "aggregate_insights"
+        ? "Include me in anonymous group statistics"
+        : "Share my adherence summary with my doctors";
+    const sharingOff = c.purpose === "provider_sharing" && c.granted;
     return (
       <li className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
         <div className="flex min-w-0 items-start gap-3">
           <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-subtle text-ink-muted">
-            {c.channel ? <ChannelIcon channel={c.channel} /> : <Stethoscope className="h-4 w-4" aria-hidden />}
+            {c.channel ? (
+              <ChannelIcon channel={c.channel} />
+            ) : c.purpose === "aggregate_insights" ? (
+              <BarChart3 className="h-4 w-4" aria-hidden />
+            ) : (
+              <Stethoscope className="h-4 w-4" aria-hidden />
+            )}
           </span>
           <div className="min-w-0">
             <div className="text-sm font-semibold text-ink">{label}</div>
@@ -837,7 +852,9 @@ export function MyConsents() {
           disabled={change.isPending}
           onChange={(granted) =>
             // Turning sharing off takes the doctors' view away: confirm first.
-            sharingOff && !granted ? setConfirmSharing(true) : change.mutate({ channel: c.channel, granted })
+            sharingOff && !granted
+              ? setConfirmSharing(true)
+              : change.mutate({ channel: c.channel, purpose: c.purpose, granted })
           }
         />
       </li>
@@ -886,7 +903,10 @@ export function MyConsents() {
                     variant="danger"
                     busy={change.isPending}
                     onClick={() =>
-                      change.mutate({ channel: null, granted: false }, { onSettled: () => setConfirmSharing(false) })
+                      change.mutate(
+                        { channel: null, purpose: "provider_sharing", granted: false },
+                        { onSettled: () => setConfirmSharing(false) },
+                      )
                     }
                   >
                     Stop sharing
@@ -897,6 +917,18 @@ export function MyConsents() {
                 </div>
               </Alert>
             )}
+          </Card>
+        )}
+        {statistics.length > 0 && (
+          <Card
+            title="Anonymous group statistics"
+            description="Optional. If you allow it, your medicine refill record is counted, without your name or any detail about you, in statistics about groups of at least 11 patients. Those statistics help decide which education doctors are offered. Nobody can see your own figures through them."
+          >
+            <ul className="divide-y divide-line">
+              {statistics.map((c) => (
+                <Row key="statistics" c={c} />
+              ))}
+            </ul>
           </Card>
         )}
         <p className="flex items-start gap-2 text-[13px] text-ink-subtle">

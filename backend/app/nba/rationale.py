@@ -4,7 +4,7 @@ Every sentence is traceable to a number in the data: a risk driver, a response c
 gate result. The LLM layer may rephrase this text later; it never adds reasons of its own.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from app.clinical.vocabulary import specialty_label
 from app.features.adherence import Adherence
@@ -231,13 +231,33 @@ def to_text(reasons: list[dict]) -> str:
     return ". ".join(r["text"] for r in reasons) + "."
 
 
-def patient_timing(adherence: Adherence, today: date, runout: date | None) -> tuple[date, str]:
+def patient_timing(
+    adherence: Adherence,
+    today: date,
+    runout: date | None,
+    lead_days: int = 0,
+    action: str | None = None,
+) -> tuple[date, str]:
+    """When to reach the patient. Someone out of medication, or who never filled: now. A
+    refill reminder for a supply that has not run out yet: `lead_days` before the run-out date
+    (or now, if that day has come), early enough to refill without a gap."""
     if adherence.never_filled:
         return today, f"Act now: started {adherence.gap_days} days ago with no fill on record"
     if adherence.gap_days > 0:
         return today, f"Act now: supply ran out {adherence.gap_days} days ago"
     when = max(today, runout) if runout else today
+    if action == ActionType.REFILL_NUDGE and lead_days and runout:
+        send_on = runout - timedelta(days=lead_days)
+        if send_on > today:
+            return send_on, (
+                f"Scheduled for {send_on:%b %d}: {lead_days} days before the supply runs out "
+                f"on {when:%b %d}"
+            )
     return today, f"Act now: supply runs out on {when:%d %b}"
+
+
+def limit_timing(day: date) -> str:
+    return f"Scheduled for {day:%b %d}: the first day the contact limits allow"
 
 
 def hcp_timing(state: EngagementState, today: date) -> tuple[date, str]:

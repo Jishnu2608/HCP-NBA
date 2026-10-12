@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, panel_adherence, pipeline, unify
 from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.clinical import activity, care, records
@@ -308,6 +308,12 @@ def list_hcps(
     }
 
 
+def _panel(db: Session, h: Hcp, today) -> dict:
+    settings = pipeline.engine_settings(db)
+    pts = panel_adherence.points_from_db(db, today, settings)
+    return panel_adherence.panel(h, panel_adherence.attributed_ids(db, h.hcp_id), pts, settings)
+
+
 @router.get("/hcps/{hcp_id}")
 def hcp_360(hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(get_db)) -> dict:
     h = db.scalar(select(Hcp).where(Hcp.hcp_id == hcp_id, rbac.hcp_filter(user, Hcp.hcp_id)))
@@ -336,6 +342,11 @@ def hcp_360(hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(
         "features": out.features_out(db, TargetType.HCP, hcp_id, today),
         "interactions": _history(db, TargetType.HCP, hcp_id, user=user),
         "open_nba": _open_nba(db, TargetType.HCP, hcp_id),
+        # How this HCP's patients are getting on with their medicines, as a de-identified group
+        # of consenting patients only, suppressed below the minimum group size.
+        "panel_adherence": _panel(db, h, today),
+        # Upstream records resolved to this profile (synthetic identity-resolution feeds).
+        "sources": unify.for_hcp(db, h),
         # When the contact limits allow the next touch, and the open commercial work.
         "contact_window": contact.contact_window(db, h),
         "open_work": [
@@ -347,3 +358,12 @@ def hcp_360(hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(
             )
         ],
     }
+
+
+@router.get("/unification")
+def unification(
+    _: User = Depends(require_permission(Permission.HCP_READ_ALL)), db: Session = Depends(get_db)
+) -> dict:
+    """How the synthetic upstream records resolved to HCP profiles: counts per source and
+    status, and every record that was not merged (held for review, ambiguous, unmatched)."""
+    return unify.summary(db)

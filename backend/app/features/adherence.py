@@ -82,3 +82,34 @@ def compute_adherence(
         late_trend=round(late_trend, 2),
         mean_lateness=round(sum(lateness) / len(lateness), 2) if lateness else 0.0,
     )
+
+
+@dataclass(frozen=True)
+class Persistence:
+    """How long a course of therapy has continued without a supply gap longer than allowed."""
+
+    first_fill: date | None
+    days_persistent: int
+    discontinued: bool
+    # The day the supply ran out before the gap that ended the course.
+    discontinued_on: date | None
+
+
+def compute_persistence(
+    fills: Iterable[tuple[date, int]], as_of: date, gap_days: int = 60
+) -> Persistence:
+    """Persistence from the first fill: the course ends when the supply runs out and no new
+    fill arrives within `gap_days` (the permissible gap). A gap still open on the as-of day
+    ends it only once it is longer than `gap_days`. Only fills on or before `as_of` count."""
+    known = sorted((d, s) for d, s in fills if d <= as_of)
+    if not known:
+        return Persistence(None, 0, False, None)
+    intervals = coverage_intervals(known)
+    first = intervals[0][0]
+    for (_, end), (next_start, _) in zip(intervals, intervals[1:], strict=False):
+        if (next_start - end).days > gap_days:
+            return Persistence(first, (end - first).days, True, end)
+    end = intervals[-1][1]
+    if (as_of - end).days > gap_days:
+        return Persistence(first, (end - first).days, True, end)
+    return Persistence(first, (min(as_of, end) - first).days, False, None)

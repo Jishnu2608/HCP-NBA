@@ -5,6 +5,7 @@ import {
   Ban,
   CalendarClock,
   CheckCircle2,
+  Link2,
   Gauge,
   MessageSquare,
   Minus,
@@ -68,10 +69,13 @@ const KIND: Record<string, { label: string; icon: ReactNode }> = {
   action: { label: "Why this action", icon: <Target className="h-4 w-4" aria-hidden /> },
   channel: { label: "Why this channel", icon: <MessageSquare className="h-4 w-4" aria-hidden /> },
   timing: { label: "Why now", icon: <CalendarClock className="h-4 w-4" aria-hidden /> },
+  // The patient-HCP connection: de-identified panel adherence for an HCP, a prescriber's
+  // recent education for a patient. Context, never patient-level detail.
+  context: { label: "Across patient and HCP care", icon: <Link2 className="h-4 w-4" aria-hidden /> },
   compliance: { label: "Compliance and consent", icon: <ShieldCheck className="h-4 w-4" aria-hidden /> },
   withheld: { label: "Held back by a safeguard", icon: <ShieldAlert className="h-4 w-4" aria-hidden /> },
 };
-const KIND_ORDER = ["who", "action", "channel", "timing", "compliance", "withheld"];
+const KIND_ORDER = ["who", "action", "channel", "context", "timing", "compliance", "withheld"];
 
 const cap = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -234,6 +238,18 @@ export default function NbaDetail() {
 
   const regular = grouped.filter((g) => g.kind !== "withheld");
 
+  // Scheduled for a later day (the first day the contact limits allow, or a refill reminder
+  // timed before the supply runs out): it can be approved now and sent from that day. The
+  // server refuses an early send (409 not_due); the dates are UTC days, as on the server.
+  const notDue = Boolean(n.scheduled_for && n.scheduled_for > new Date().toISOString().slice(0, 10));
+  const dueNote = notDue && (
+    <p className="flex items-start gap-2 text-[13px] text-ink-muted">
+      <CalendarClock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      Scheduled for {fmtDate(n.scheduled_for)}. It can be approved now and sent from that day, after every safeguard is
+      checked again.
+    </p>
+  );
+
   const approve = async (thenSend: boolean) => {
     await post(`/nba/${id}/approve`, { draft_id: draftId });
     if (thenSend) await post(`/nba/${id}/send`);
@@ -248,14 +264,17 @@ export default function NbaDetail() {
     >
       {reviewing && !rejecting && (
         <div className="flex flex-col gap-2">
-          <Button
-            variant="primary"
-            size="lg"
-            busy={act.isPending}
-            onClick={() => run(() => approve(true), "Recommendation approved and sent")}
-          >
-            <Send className="h-4 w-4" aria-hidden /> {humanChannel ? `Approve and log ${visitWord} now` : "Approve and send"}
-          </Button>
+          {dueNote}
+          {!notDue && (
+            <Button
+              variant="primary"
+              size="lg"
+              busy={act.isPending}
+              onClick={() => run(() => approve(true), "Recommendation approved and sent")}
+            >
+              <Send className="h-4 w-4" aria-hidden /> {humanChannel ? `Approve and log ${visitWord} now` : "Approve and send"}
+            </Button>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <Button busy={act.isPending} onClick={() => run(() => approve(false), "Recommendation approved")}>
               <CheckCircle2 className="h-4 w-4" aria-hidden /> {humanChannel ? `Approve, ${visitWord} later` : "Approve only"}
@@ -293,8 +312,15 @@ export default function NbaDetail() {
       )}
       {n.status === "approved" && (
         <div className="flex flex-col gap-2">
-          <Button variant="primary" size="lg" busy={act.isPending} onClick={() => run(() => post(`/nba/${id}/send`), humanChannel ? "Logged" : "Message sent")}>
-            <Send className="h-4 w-4" aria-hidden /> {humanChannel ? `Log ${visitWord}` : "Send now"}
+          {dueNote}
+          <Button
+            variant="primary"
+            size="lg"
+            busy={act.isPending}
+            disabled={notDue}
+            onClick={() => run(() => post(`/nba/${id}/send`), humanChannel ? "Logged" : "Message sent")}
+          >
+            <Send className="h-4 w-4" aria-hidden /> {notDue ? `Sends from ${fmtDate(n.scheduled_for)}` : humanChannel ? `Log ${visitWord}` : "Send now"}
           </Button>
           <Button
             variant="quiet-danger"

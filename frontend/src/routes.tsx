@@ -8,7 +8,10 @@ import {
   Cpu,
   FileCheck2,
   FileLock2,
+  GitMerge,
   HandHeart,
+  Share2,
+  TrendingUp,
   Inbox,
   Lock,
   MailPlus,
@@ -63,6 +66,9 @@ const InvitationsPage = page(() => import("./pages/Invitations"));
 const PrivacyPage = page(() => import("./pages/Privacy"));
 const PrivacyRequestsPage = page(() => import("./pages/PrivacyRequests"));
 const CareRequestsPage = page(() => import("./pages/Care"));
+const OutcomesPage = page(() => import("./pages/Outcomes").then((m) => ({ default: m.OutcomesPage })));
+const HandoffPage = page(() => import("./pages/Handoff").then((m) => ({ default: m.HandoffPage })));
+const UnificationPage = page(() => import("./pages/Unification").then((m) => ({ default: m.UnificationPage })));
 import { CONTENT_READ, HCP_READ, INVITE_ANY, NBA_READ, P, PATIENT_READ } from "./permissions";
 import type { Permission } from "./permissions";
 
@@ -167,6 +173,23 @@ export const ROUTES: AppRoute[] = [
     badge: "hcp_work",
   },
   {
+    path: "/outcomes",
+    // Analysts see every view; a care manager sees the quality measures of their own panel.
+    anyOf: [P.ANALYTICS_READ, P.PATIENT_READ_ALL, P.PATIENT_READ_ASSIGNED],
+    element: <OutcomesPage />,
+    label: (can) => (can(P.ANALYTICS_READ) ? "Outcomes & learning" : "Quality measures"),
+    icon: icon(TrendingUp),
+    group: "work",
+  },
+  {
+    path: "/handoff",
+    anyOf: [P.HANDOFF_EXPORT],
+    element: <HandoffPage />,
+    label: () => "CRM hand-off",
+    icon: icon(Share2),
+    group: "work",
+  },
+  {
     path: "/content",
     anyOf: CONTENT_READ,
     element: <ContentLibrary />,
@@ -204,6 +227,14 @@ export const ROUTES: AppRoute[] = [
     element: <Admin />,
     label: () => "Engine",
     icon: icon(Settings2),
+    group: "admin",
+  },
+  {
+    path: "/unification",
+    anyOf: [P.HCP_READ_ALL],
+    element: <UnificationPage />,
+    label: () => "Data unification",
+    icon: icon(GitMerge),
     group: "admin",
   },
   {

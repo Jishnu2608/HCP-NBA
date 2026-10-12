@@ -49,7 +49,13 @@ Unify → Segment → Predict NBA → Personalize → Orchestrate → Engage →
 | Controlled delivery | What a patient or HCP receives is the approved content of one version, word for word, in a fixed template frame. Nobody edits the wording before sending; the send path refuses edited or altered wording and records which version and which wording went to whom. Withdrawn or replaced material stops being recommended at once, and copies already delivered are marked as no longer current |
 | Delivery oversight | For every content item and version, the MLR reviewer sees recommendations waiting, deliveries, responses by outcome and channel, recipients without identity, the exact wording delivered, and copies still in inboxes after a withdrawal |
 | HCP portal | Inbox of approved content with the sender and version; an HCP can ask about any item, and the question reaches the MLR reviewers (who see the HCP only by specialty and country) and the representative who sent it, with replies shown under the item. Consultations routed to the HCP are grouped as waiting, with the care manager, or finished; the patient's conditions and medicines are shown only while the consultation is with the HCP. My patients lists the patients whose care team the HCP is on and who share their adherence. Location and specialty decisions on the profile |
-| HCP 360 | Segment and value, topics and channels the HCP engages with, interaction history |
+| HCP 360 | Segment and value, topics and channels the HCP engages with, interaction history, how the HCP's patients are getting on with their medicines (de-identified, see below) and the upstream records resolved to the profile |
+| Patient and HCP, one engine | Patients can opt in to anonymous group statistics. For each HCP the engine computes how consenting patients are getting on with their medicines, by therapy area, only for groups of at least 11 patients (the HCP's own patients when both they and the rest of the area are large enough, otherwise the HCP's state). An HCP whose group is below the adherence target is offered adherence-support material first, and the recommendation says why. A patient's recommendation notes when their prescriber recently engaged with related education, as context only. No patient is ever identifiable on the commercial side |
+| CRM hand-off | Approved recommendations and their delivery outcomes as a documented feed (field map, JSON or CSV) that a CRM or marketing-automation system could read. Scoped to the reader, audited, and stripped of names, conditions, medicines, adherence figures and wording. No live connection |
+| Outcomes and learning | What worked for whom (response and refill rates by situation, therapy area, plan, segment or specialty, action and channel, with the number of touches and a 95% range; small groups not rated), model versions and how outcomes looked under each, estimated against observed, and a randomised holdout of synthetic patients (off by default) |
+| Quality measures | STAR-style medication adherence measures (share at PDC 80% or more, with written definitions and what is not modelled) and persistence on therapy, for the whole population or a care manager's own panel. Calculated measures, never presented as a Star Rating |
+| Timing | Refill reminders are scheduled a few days before the supply runs out; an HCP held back only by the contact limits gets a recommendation for the first allowed day. Nothing is sent before its day, and every safeguard is checked again at approval and at send. An optional daily engine cycle (off by default) |
+| Data unification | A demonstration of identity resolution: synthetic CRM and claims records matched to HCP profiles by fixed rules (NPI; surname, initial and ZIP), with weaker or ambiguous matches held for review and never merged |
 | Adherence risk | Rule-based 0-100 score with named drivers: days covered, current gap, widening gaps, non-response, never filled |
 | Propensity models | Chance of a response and of a fill, per action and channel. Logistic regression, compared against a boosted-tree challenger and a no-model baseline |
 | Recommendation engine | Lists candidate actions, applies hard gates, ranks what is left, picks one, keeps the options that lost |
@@ -358,6 +364,9 @@ scripts/                setup and run
 23. Every chart figure is computed on the server within the reader's own scope; small samples are labelled instead of charted, charts add no clinical, compliance or commercial claim, and streaks count only finished work from records.
 24. Motion explains a change and never decorates: transform and opacity only, no loops on working pages, nothing animates on first load, reduced motion turns it off.
 25. Clinical targets and plans come from the care team; coins reward completed check-ins, never a clinical result, and are awarded only by the server; the board is opt-in and anonymous.
+26. Patient information reaches the commercial side only as consented, de-identified group figures of at least 11 patients; it may shape which material an HCP is offered, never a patient's care or a safeguard.
+27. Data leaves for other systems only through the documented hand-off contract, within the reader's scope, and every export is audited.
+28. Observed outcomes, model estimates and comparisons are labelled separately; only the randomised holdout supports a statement about effect, and on synthetic data that effect is the simulation's.
 
 ## Path to production
 
@@ -369,7 +378,7 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 | Local accounts | Enterprise single sign-on, MFA |
 | Email code over SMTP (a personal mailbox works for a demo) | Transactional email service; SMS or authenticator codes |
 | Synthetic data | Governed claims, pharmacy, CRM and consent data |
-| Simulated delivery | CRM, marketing automation, telephony |
+| Simulated delivery; a documented hand-off feed (`/api/integration/crm`) | CRM, marketing automation and telephony connectors on that contract |
 | Offline templates | Private enterprise language model |
 | Local run | Containers and cloud deployment |
 
@@ -378,7 +387,8 @@ Each concern sits behind an interface, so each is a replacement rather than a re
 ## Known limits
 
 - Models are trained on synthetic behaviour; measured quality is modest by design and real-world results will differ.
-- Outreach delivery is simulated. No outreach message leaves the system.
+- Outreach delivery is simulated. No outreach message leaves the system. The CRM hand-off is an export, not a connection.
+- In the demo data each HCP has only a few attributed patients, so panel adherence is shown at state level; the HCP's own panel appears only with larger panels. The learning views show "too few" until enough engine messages have captured responses.
 - **Email verification codes and invitation emails:** both were checked end to end once with Gmail: a sign-up code, and an invitation that was accepted, verified with its emailed code and produced an active, verified HCP account. Real delivery has no automated test (tests use a fake mailbox), and the invitation email has not been checked in Outlook or Apple Mail. A personal Gmail account has daily sending limits and no domain authentication, so hosted use needs a transactional email service. Email is the only channel: no SMS or authenticator codes.
 - No forgot-password, password change or MFA at sign-in yet. There is deliberately no permanent account lockout: repeated failures are slowed by time-limited rate limits instead, so nobody can lock another person out.
 - Rate limits count by the client address the server sees. Behind a reverse proxy or load balancer every request would share one address; reading the forwarded client address is not configured yet.

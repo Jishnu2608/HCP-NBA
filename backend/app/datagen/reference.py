@@ -4,6 +4,8 @@ Specialty taxonomy codes and drug names/RxNorm ingredient codes are real public 
 Everything about individual people is invented.
 """
 
+import hashlib
+
 from app.clinical.vocabulary import DRUGS, PRIMARY_CARE, SPECIALIST_FOR  # noqa: F401
 from app.models.enums import Measure
 
@@ -65,5 +67,17 @@ HCP_CHANNELS = ("email", "portal", "rep_visit", "phone")
 CONSENT_RATE = {"sms": 0.70, "email": 0.82, "portal": 0.62, "phone": 0.76}
 FULL_OPT_OUT_RATE = 0.05
 PROVIDER_SHARING_RATE = 0.80
+# Share of synthetic patients who opted in to de-identified aggregate statistics.
+AGGREGATE_INSIGHTS_RATE = 0.75
+
+
+def aggregate_insights_opt_in(patient_id: str) -> bool:
+    """Whether a synthetic patient opted in to de-identified aggregate statistics. Decided
+    from the id alone (not from the generator's random stream), so adding this choice left
+    every other generated value unchanged, and migration e9b3c7a1d5f4 could give existing
+    synthetic records the same answer."""
+    digest = hashlib.sha256(f"aggregate_insights:{patient_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64 < AGGREGATE_INSIGHTS_RATE
+
 
 SUBTOPICS = ("outcomes", "guidelines", "adherence", "program")

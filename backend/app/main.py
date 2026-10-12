@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -6,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
+from app import scheduler
 from app.api import (
     analytics,
     auth,
@@ -14,6 +16,7 @@ from app.api import (
     content,
     governance,
     insights,
+    integration,
     invitations,
     me,
     nba,
@@ -57,7 +60,15 @@ async def lifespan(_: FastAPI):
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")
+    # The scheduled daily cycle (does nothing unless the auto_cycle setting is on).
+    task = (
+        asyncio.create_task(scheduler.loop(SessionLocal, settings.scheduler_poll_seconds))
+        if settings.scheduler_poll_seconds > 0
+        else None
+    )
     yield
+    if task:
+        task.cancel()
 
 
 # The interactive API reference is a development aid: it is not served outside a local run.
@@ -74,7 +85,7 @@ app = FastAPI(
 
 ROUTERS = (
     system, auth, invitations, users, nba, people, care, content, governance, me, analytics,
-    commercial, insights, plan,
+    commercial, insights, plan, integration,
 )  # fmt: skip
 for module in ROUTERS:
     app.include_router(module.router)
