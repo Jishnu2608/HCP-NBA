@@ -224,6 +224,33 @@ class OtpChallenge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PasswordReset(Base):
+    """One forgot-password transaction (auth/recovery.py). The browser holds the transaction
+    token and, after the code is verified, a reset authorization, each in an HttpOnly cookie;
+    only their hashes are stored here, with the code's keyed hash. A transaction started for
+    an address that is not eligible (unknown, an administrator, disabled, unverified) has no
+    account and no code, so it can never succeed, but it behaves the same from outside.
+    Times are UTC (naive, as everywhere in this schema)."""
+
+    __tablename__ = "password_reset"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Null for a transaction that can never succeed (see above).
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), index=True)
+    transaction_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    code_hash: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    resend_available_at: Mapped[datetime] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    authorization_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    authorization_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class UserSession(Base):
     """A signed-in browser. The cookie carries a random token; only its hash is stored."""
 

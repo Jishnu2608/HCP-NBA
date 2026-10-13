@@ -32,6 +32,7 @@ MLR_JOURNEY_BREAKPOINTS.md
 MR_JOURNEY_BREAKPOINTS.md
 PROJECT_VS_VISION_FINDINGS.md
 PROJECT_VS_VISION_BEFORE_AFTER_AUDIT.md
+Go-No-Go Report.md
 
 # Locally installed agent skills (per developer, not part of the application)
 .agents/

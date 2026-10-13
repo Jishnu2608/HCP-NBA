@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import StrictBody
-from app.auth import service
+from app.auth import recovery, service
 from app.auth.errors import AuthError
 from app.auth.repository import normalize_email
 from app.auth.service import AuthResult
@@ -22,6 +22,7 @@ from app.auth.sessions import SESSION_COOKIE, VERIFY_COOKIE, Decoy, sessions
 from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.security import token_hash
 from app.models import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -227,3 +228,121 @@ def logout(
 @router.get("/me")
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     return service.account_out(user, db)
+
+
+# --- Forgot password (auth/recovery.py) ---------------------------------------------------
+
+
+class ResetRequestBody(StrictBody):
+    email: str = Field(max_length=254)
+
+
+class ResetCompleteBody(StrictBody):
+    password: str = Field(max_length=128)
+    confirm_password: str = Field(max_length=128)
+
+
+def _reset_cookie(response: JSONResponse, name: str, token: str, minutes: int) -> None:
+    response.set_cookie(
+        name, token, max_age=minutes * 60, httponly=True, secure=get_settings().cookie_secure,
+        samesite="strict", path=recovery.COOKIE_PATH,
+    )  # fmt: skip
+
+
+def _clear_reset_cookie(response: JSONResponse, name: str) -> None:
+    response.delete_cookie(
+        name, path=recovery.COOKIE_PATH, secure=get_settings().cookie_secure, httponly=True,
+        samesite="strict",
+    )  # fmt: skip
+
+
+def _reset_run(db: Session, action: Callable[[], recovery.Step], status: int = 200) -> JSONResponse:
+    """Commits on success and on a handled refusal (a wrong code still counts as an attempt,
+    a refused transaction stays ended). An unexpected failure rolls everything back."""
+    try:
+        step = action()
+    except AuthError:
+        db.commit()
+        raise
+    db.commit()
+    response = JSONResponse(step.body, status_code=status)
+    if step.transaction_token:
+        _reset_cookie(
+            response, recovery.TRANSACTION_COOKIE, step.transaction_token,
+            recovery.TRANSACTION_MINUTES,
+        )  # fmt: skip
+        _clear_reset_cookie(response, recovery.AUTHORIZATION_COOKIE)
+    if step.authorization_token:
+        _reset_cookie(
+            response, recovery.AUTHORIZATION_COOKIE, step.authorization_token,
+            recovery.AUTHORIZATION_MINUTES,
+        )  # fmt: skip
+    if step.clear_cookies:
+        _clear_reset_cookie(response, recovery.TRANSACTION_COOKIE)
+        _clear_reset_cookie(response, recovery.AUTHORIZATION_COOKIE)
+        clear_session_cookie(response)
+    return response
+
+
+def _transaction_key(request: Request) -> str:
+    token = request.cookies.get(recovery.TRANSACTION_COOKIE)
+    return f"reset:{token_hash(token)}" if token else f"reset-none:{ratelimit.client_ip(request)}"
+
+
+@router.post("/password-reset/request", status_code=202)
+def password_reset_request(
+    body: ResetRequestBody, request: Request, db: Session = Depends(get_db)
+) -> JSONResponse:
+    """Starts a password reset. The same answer for every address: eligible, unknown, an
+    administrator, disabled or unverified. Only an eligible account is emailed a code."""
+    ip = ratelimit.client_ip(request)
+    ratelimit.consume(db, "reset_request_ip", ip)
+    key = f"{normalize_email(body.email)}|{ip}"
+    ratelimit.check(db, "otp_send", key)
+
+    def action() -> recovery.Step:
+        step = recovery.request(db, body.email)
+        ratelimit.record(db, "otp_send", key)
+        return step
+
+    return _reset_run(db, action, status=202)
+
+
+@router.post("/password-reset/resend", status_code=202)
+def password_reset_resend(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
+    key = _transaction_key(request)
+    ratelimit.check(db, "otp_send", key)
+
+    def action() -> recovery.Step:
+        step = recovery.resend(db, request.cookies.get(recovery.TRANSACTION_COOKIE))
+        ratelimit.record(db, "otp_send", key)
+        return step
+
+    return _reset_run(db, action, status=202)
+
+
+@router.post("/password-reset/verify")
+def password_reset_verify(
+    body: VerifyBody, request: Request, db: Session = Depends(get_db)
+) -> JSONResponse:
+    ratelimit.consume(db, "otp_verify", _transaction_key(request))
+    token = request.cookies.get(recovery.TRANSACTION_COOKIE)
+    return _reset_run(db, lambda: recovery.verify(db, token, body.code))
+
+
+@router.post("/password-reset/complete")
+def password_reset_complete(
+    body: ResetCompleteBody, request: Request, db: Session = Depends(get_db)
+) -> JSONResponse:
+    """Sets the new password. Needs the transaction and the reset authorization issued by a
+    successful code check, both from this browser's cookies; never signs in."""
+    return _reset_run(
+        db,
+        lambda: recovery.complete(
+            db,
+            request.cookies.get(recovery.TRANSACTION_COOKIE),
+            request.cookies.get(recovery.AUTHORIZATION_COOKIE),
+            body.password,
+            body.confirm_password,
+        ),
+    )

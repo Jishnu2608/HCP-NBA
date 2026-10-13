@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core import ratelimit
 from app.core.config import get_settings
-from app.models import OtpChallenge, RateLimitHit, UserSession
+from app.models import OtpChallenge, PasswordReset, RateLimitHit, UserSession
 from app.models.tables import utcnow
 
 
@@ -25,6 +25,10 @@ def purge_expired(db: Session) -> dict[str, int]:
             )
         ).rowcount,
         "codes": db.execute(delete(OtpChallenge).where(OtpChallenge.expires_at <= now)).rowcount,
+        # Forgot-password transactions a day past their start (auth/recovery.py).
+        "password_resets": db.execute(
+            delete(PasswordReset).where(PasswordReset.created_at <= now - timedelta(days=1))
+        ).rowcount,
         "rate_limit": db.execute(
             delete(RateLimitHit).where(
                 RateLimitHit.ts <= now - timedelta(seconds=ratelimit.LONGEST)

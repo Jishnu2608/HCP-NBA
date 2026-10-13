@@ -5,6 +5,7 @@ import { isChallenge, useAuth } from "../auth";
 import { mayOpen } from "../routes";
 import { Alert, Button, ErrorNote, PasswordField, TextField } from "../ui";
 import AuthLayout from "./AuthLayout";
+import { ForgotPasswordDialog } from "./ForgotPassword";
 
 export default function Login() {
   const { login } = useAuth();
@@ -14,6 +15,9 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // Forgot password (every role except the administrator; the server decides).
+  const [recovering, setRecovering] = useState(false);
+  const [recovered, setRecovered] = useState(false);
   // Set when a signed-out visitor opened an app page (or a session ended): a 401.
   const signinRequired = (location.state as { reason?: string } | null)?.reason === "signin_required";
 
@@ -51,6 +55,11 @@ export default function Login() {
         </>
       }
     >
+      {recovered && (
+        <Alert tone="ok" title="Password changed" className="mb-6">
+          <span className="text-ok">Sign in with your new password.</span>
+        </Alert>
+      )}
       {signinRequired && (
         <Alert tone="info" title="Please sign in to continue" className="mb-6">
           <span className="text-info">
@@ -76,11 +85,32 @@ export default function Login() {
           onChange={(e) => setPassword(e.target.value)}
           required
         />
+        <div className="-mt-2 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setRecovering(true)}
+            className="rounded text-sm font-semibold text-primary-ink underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            Forgot password?
+          </button>
+        </div>
         <ErrorNote error={error} />
         <Button type="submit" variant="primary" size="lg" busy={busy} className="w-full">
           {busy ? "Signing in" : "Sign in"}
         </Button>
       </form>
+      {recovering && (
+        <ForgotPasswordDialog
+          initialEmail={email}
+          onClose={() => setRecovering(false)}
+          onDone={(recoveredEmail) => {
+            setEmail(recoveredEmail);
+            setPassword("");
+            setError(null);
+            setRecovered(true);
+          }}
+        />
+      )}
     </AuthLayout>
   );
 }

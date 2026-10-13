@@ -82,6 +82,9 @@ class Permission(StrEnum):
     # Submitting one's own privacy request. Not held by the administrator, who handles them.
     PRIVACY_REQUEST = "privacy:request"
     PRIVACY_MANAGE = "privacy:manage"
+    # Recover one's own password by email code (auth/recovery.py). Every role except the
+    # administrator, whose recovery is a separate, operator procedure (app.auth.rotate).
+    SELF_ACCOUNT_RECOVERY = "self:account:recover"
     # Export approved recommendations and their delivery outcomes for a CRM or automation
     # system (integration/crm.py), within the reader's own recommendation scope.
     HANDOFF_EXPORT = "handoff:export"
@@ -129,6 +132,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.MODELS_READ,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
+            P.SELF_ACCOUNT_RECOVERY,
         }
     ),
     Role.MEDICAL_REP: frozenset(
@@ -141,6 +145,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.HANDOFF_EXPORT,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
+            P.SELF_ACCOUNT_RECOVERY,
         }
     ),
     Role.CARE_MANAGER: frozenset(
@@ -155,6 +160,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.HANDOFF_EXPORT,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
+            P.SELF_ACCOUNT_RECOVERY,
         }
     ),
     # An HCP may bring in the representative and care manager they work with. Never an MLR
@@ -171,6 +177,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.SELF_CONSULTATIONS_MANAGE,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
+            P.SELF_ACCOUNT_RECOVERY,
         }
     ),
     Role.PATIENT: frozenset(
@@ -181,6 +188,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.SELF_HEALTH_MANAGE,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
+            P.SELF_ACCOUNT_RECOVERY,
         }
     ),
 }

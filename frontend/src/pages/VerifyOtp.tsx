@@ -18,7 +18,7 @@ const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2,
  * Six single-digit boxes that behave like one field: typing advances, Backspace goes back,
  * pasting or SMS/email autofill of the whole code fills every box.
  */
-function CodeInput({
+export function CodeInput({
   value,
   onChange,
   invalid,

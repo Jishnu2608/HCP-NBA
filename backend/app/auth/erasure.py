@@ -38,6 +38,7 @@ from app.models import (
     Nba,
     NbaCandidate,
     OtpChallenge,
+    PasswordReset,
     Patient,
     PatientCondition,
     PatientHcp,
@@ -178,6 +179,7 @@ def erase_patient(
 
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     db.execute(delete(OtpChallenge).where(OtpChallenge.user_id == user.id))
+    db.execute(delete(PasswordReset).where(PasswordReset.user_id == user.id))
     db.execute(delete(ConsentRecord).where(ConsentRecord.user_id == user.id))
     db.execute(
         delete(Invitation).where(

@@ -41,6 +41,8 @@ LIMITS: dict[str, tuple[int, int]] = {
     "signup_ip": (5, 15 * MINUTE),
     "otp_send": (3, 10 * MINUTE),
     "otp_verify": (5, 10 * MINUTE),
+    # Forgot password: requests per client address (the email + address limit is otp_send).
+    "reset_request_ip": (10, 15 * MINUTE),
     "invite_accept_ip": (5, 15 * MINUTE),
     "invite_lookup_ip": (30, 10 * MINUTE),
     "invite_create": (30, 60 * MINUTE),

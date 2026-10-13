@@ -47,6 +47,7 @@ export const P = {
   PRIVACY_REQUEST: "privacy:request",
   PRIVACY_MANAGE: "privacy:manage",
   HANDOFF_EXPORT: "handoff:export",
+  SELF_ACCOUNT_RECOVERY: "self:account:recover",
 } as const;
 
 export type Permission = (typeof P)[keyof typeof P];

@@ -28,6 +28,11 @@ PUBLIC = {
     ("POST", "/api/auth/verify-otp"),
     ("POST", "/api/auth/resend-otp"),
     ("POST", "/api/auth/login"),
+    # Forgot password: anonymous by nature; each step needs its own HttpOnly cookie.
+    ("POST", "/api/auth/password-reset/request"),
+    ("POST", "/api/auth/password-reset/resend"),
+    ("POST", "/api/auth/password-reset/verify"),
+    ("POST", "/api/auth/password-reset/complete"),
     ("POST", "/api/invitations/lookup"),
     ("POST", "/api/invitations/accept"),
     # Legal documents are readable by anyone, before signing up.

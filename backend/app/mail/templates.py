@@ -201,3 +201,48 @@ this email.</td></tr></table>""",
         else f"{data.inviter_name} invited you to join {product} as a {data.role_label}",
         text, html,
     )  # fmt: skip
+
+
+# --- Forgot password ---------------------------------------------------------------------
+
+
+def reset_code_email(to: str, name: str, code: str, minutes: int) -> EmailMessage:
+    text = (
+        f"Hello {name},\n\n"
+        f"Your password reset code is {code}.\n"
+        f"It expires in {minutes} minutes and can be used once.\n\n"
+        "If you did not ask to reset your password, ignore this message: your password has "
+        "not been changed.\n"
+    )
+    html = _frame(
+        "Your password reset code",
+        f"""<p style="margin:0 0 16px;">Hello {escape(name)},</p>
+<p style="margin:0 0 8px;">Your password reset code is</p>
+<p style="margin:0 0 16px;font-size:28px;font-weight:700;letter-spacing:6px;">{escape(code)}</p>
+<p style="margin:0 0 16px;color:{MUTED};">It expires in {minutes} minutes and can be used once.</p>
+<p style="margin:0;color:{MUTED};">If you did not ask to reset your password, ignore this
+message: your password has not been changed.</p>""",
+    )
+    return _message(to, f"{code} is your {_product()} password reset code", text, html)
+
+
+def password_changed_email(to: str, name: str, when: datetime) -> EmailMessage:
+    base = get_settings().public_base_url.rstrip("/")
+    text = (
+        f"Hello {name},\n\n"
+        f"The password for your {_product()} account was changed on {_when(when)} using a "
+        "password reset code. Every signed-in session has been signed out.\n\n"
+        f"Sign in with your new password: {base}/login\n\n"
+        "If you did not do this, contact support straight away.\n"
+    )
+    html = _frame(
+        "Your password was changed",
+        f"""<p style="margin:0 0 16px;">Hello {escape(name)},</p>
+<p style="margin:0 0 16px;">The password for your {escape(_product())} account was changed on
+{escape(_when(when))} using a password reset code. Every signed-in session has been signed
+out.</p>
+<p style="margin:0 0 16px;"><a href="{escape(base)}/login" style="color:{PRIMARY};">Sign in with
+your new password</a></p>
+<p style="margin:0;color:{MUTED};">If you did not do this, contact support straight away.</p>""",
+    )
+    return _message(to, f"Your {_product()} password was changed", text, html)
