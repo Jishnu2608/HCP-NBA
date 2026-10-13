@@ -83,18 +83,30 @@ def _source_matches(source: str, wanted: str) -> bool:
     return (source == "nba") if wanted == "engine" else (source == "history")
 
 
+def training_rows(db: Session, pop, audience: str) -> list[dict]:
+    """Every completed touch of the audience, with features as of the moment it was sent."""
+    if audience == TargetType.PATIENT:
+        return eng.patient_training_rows(pop, get_config(db, "pdc_window_days"))
+    return eng.hcp_training_rows(pop)
+
+
 def what_worked(
-    db: Session, audience: str, segment_by: str, source: str, since: date | None
+    db: Session,
+    audience: str,
+    segment_by: str,
+    source: str,
+    since: date | None,
+    *,
+    pop=None,
+    rows: list[dict] | None = None,
 ) -> dict:
     """Observed response (and, for patients, fill) rates by segment x action x channel."""
     if segment_by not in SEGMENT_DIMENSIONS[audience]:
         raise ValueError(f"segment_by must be one of {', '.join(SEGMENT_DIMENSIONS[audience])}")
-    pop = load_population(db)
+    pop = pop or load_population(db)
     threshold = get_config(db, "pdc_threshold")
-    if audience == TargetType.PATIENT:
-        rows = eng.patient_training_rows(pop, get_config(db, "pdc_window_days"))
-    else:
-        rows = eng.hcp_training_rows(pop)
+    if rows is None:
+        rows = training_rows(db, pop, audience)
     cells: dict[tuple, list[int]] = defaultdict(lambda: [0, 0, 0])
     months: dict[tuple, list[int]] = defaultdict(lambda: [0, 0, 0])
     for r in rows:

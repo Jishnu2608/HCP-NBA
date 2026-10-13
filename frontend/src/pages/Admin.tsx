@@ -164,6 +164,24 @@ function Result({ data }: { data: Json }) {
   );
 }
 
+/** Cycles and play-outs run in the background worker (POST answers 202 with a job). Wait for
+ *  the job and return its result, which has the shape these endpoints used to return. */
+async function runJob(path: string): Promise<Json> {
+  const { job } = await post<Json>(path);
+  const started = Date.now();
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const current = await api<Json>(`/admin/jobs/${job.id}`);
+    if (current.status === "succeeded") return current.result;
+    if (current.status === "failed" || current.status === "interrupted") {
+      throw new Error(current.error ?? `The operation ${current.status}.`);
+    }
+    if (current.status === "queued" && Date.now() - started > 60_000) {
+      throw new Error("Still queued: no worker has picked it up. Start one with `python -m app.worker`.");
+    }
+  }
+}
+
 export default function Admin() {
   const client = useQueryClient();
   const toast = useToast();
@@ -218,8 +236,8 @@ export default function Admin() {
         title="Engine"
         subtitle="Run a recommendation cycle, let the simulated population respond to what was sent, or restore the seeded starting point. Everything runs on today's date."
       />
-      {/* While an operation runs (15 to 30 seconds at full scale): an indeterminate bar, only
-          for as long as the request is in flight. Transform only; removed when it ends. */}
+      {/* While an operation runs (a background job for cycles and play-outs): an indeterminate
+          bar, only until it finishes. Transform only; removed when it ends. */}
       {busy && (
         <div role="progressbar" aria-label={`${run.variables?.label ?? "Operation"} running`} className="mb-4 h-1 overflow-hidden rounded-full bg-sunken">
           <div className="engine-progress h-full w-1/3 rounded-full bg-primary" />
@@ -232,7 +250,7 @@ export default function Admin() {
           title="Run a cycle"
           actions={
             <>
-              <Button variant="primary" busy={running("Cycle")} disabled={busy} onClick={() => run.mutate({ fn: () => post("/admin/cycle"), label: "Cycle" })}>
+              <Button variant="primary" busy={running("Cycle")} disabled={busy} onClick={() => run.mutate({ fn: () => runJob("/admin/cycle"), label: "Cycle" })}>
                 <Play className="h-4 w-4" aria-hidden /> Run cycle now
               </Button>
               <Button
@@ -258,7 +276,7 @@ export default function Admin() {
             <Button
               busy={running("Play out")}
               disabled={busy}
-              onClick={() => run.mutate({ fn: () => post("/admin/play-out"), label: "Play out" })}
+              onClick={() => run.mutate({ fn: () => runJob("/admin/play-out"), label: "Play out" })}
             >
               <MessageSquareReply className="h-4 w-4" aria-hidden /> Play out now
             </Button>

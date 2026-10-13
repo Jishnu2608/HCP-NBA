@@ -6,7 +6,6 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.api.schemas import StrictBody
 from app.clinical import workload
@@ -20,6 +19,9 @@ from app.models.enums import Channel, NbaStatus, Outcome, PatientOrigin, TargetT
 from app.models.tables import utcnow
 from app.nba import gates
 from app.nba.revalidate import current_failures
+from app.services import recommendations
+from app.services import serializers as out
+from app.services.schemas import RecommendationDetail
 
 router = APIRouter(prefix="/api/nba", tags=["recommendations"])
 
@@ -60,10 +62,7 @@ class DraftEdit(StrictBody):
 
 
 def _scoped(db: Session, user: User, nba_id: int) -> Nba:
-    nba = db.scalar(select(Nba).where(Nba.id == nba_id, rbac.nba_filter(user)))
-    if nba is None:
-        raise not_found("Recommendation not found")
-    return nba
+    return recommendations.scoped_recommendation(db, user, nba_id)
 
 
 def _reviewable(db: Session, user: User, nba_id: int) -> Nba:
@@ -189,16 +188,13 @@ def list_recommendations(
     }
 
 
-@router.get("/{nba_id}")
+@router.get("/{nba_id}", response_model=RecommendationDetail)
 def get_recommendation(
     nba_id: int, user: User = Depends(readers), db: Session = Depends(get_db)
-) -> dict:
-    nba = _scoped(db, user, nba_id)
-    detail = out.nba_detail(
-        db, nba, clock.get_today(db), with_identity=rbac.can_see_target_profile(user)
-    )
-    detail["can_review"] = rbac.can_review(user, nba)
-    return detail
+) -> RecommendationDetail:
+    """One recommendation with its reasons, options considered, safeguards now and audit
+    trail (services/recommendations.py)."""
+    return recommendations.recommendation_detail(db, user, nba_id)
 
 
 @router.post("/{nba_id}/approve")
@@ -333,6 +329,12 @@ def send(nba_id: int, user: User = Depends(readers), db: Session = Depends(get_d
         delivery.send(db, nba, user)
     except delivery.NotDue as exc:
         raise _conflict("not_due", str(exc), scheduled_for=exc.day.isoformat()) from exc
+    except ValueError as exc:
+        # Sent (or changed) by someone else a moment ago: the row lock in delivery.send saw it.
+        db.rollback()
+        raise _conflict(
+            "invalid_state", "This recommendation was already sent or changed.", status="sent"
+        ) from exc
     except delivery.SendBlocked as exc:
         db.commit()
         raise _conflict("blocked", f"Not sent: {exc.reason}") from exc

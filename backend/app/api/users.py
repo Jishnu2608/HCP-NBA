@@ -13,7 +13,6 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.api.schemas import StrictBody
 from app.auth import erasure, invitations
@@ -27,6 +26,7 @@ from app.core.db import get_db
 from app.core.permissions import Permission, can, permissions_for
 from app.models import CareRequest, Hcp, Patient, SpecialtyChangeRequest, User
 from app.models.enums import AccountSource, AccountStatus, CareRequestStatus
+from app.services import serializers as out
 
 router = APIRouter(prefix="/api/admin/users", tags=["users"])
 

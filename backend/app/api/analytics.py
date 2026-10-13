@@ -5,16 +5,15 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import pipeline
-from app.analytics import measures, outcomes, queries
+from app.analytics import outcomes, queries, snapshots
 from app.api.deps import require_permission
-from app.core import clock, rbac
+from app.core import clock
 from app.core.db import get_db
-from app.core.permissions import Permission, can
-from app.models import Patient, User
+from app.core.permissions import Permission
+from app.models import User
+from app.services import analytics as analytics_service
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -50,6 +49,11 @@ def learning(
     today = clock.get_today(db)
     if audience == "HCP" and segment_by == "situation":
         segment_by = "segment"
+    source_key = "baseline" if source == "earlier" else source
+    if since is None and segment_by in snapshots.LEARNING_DIMENSIONS.get(audience, ()):
+        stored = snapshots.learning_for(db, audience, segment_by, source_key)
+        if stored is not None:
+            return stored
     try:
         since = outcomes.since_param(since, today)
         return outcomes.what_worked(
@@ -72,19 +76,6 @@ def holdout(_: User = Depends(analysts), db: Session = Depends(get_db)) -> dict:
 
 @router.get("/measures")
 def quality_measures(user: User = Depends(measure_readers), db: Session = Depends(get_db)) -> dict:
-    """STAR-style adherence measures and persistence for the reader's population: every
-    patient for readers with an all-patient or analytics scope, the care manager's own panel
-    otherwise. Groups below the minimum size are suppressed."""
-    scoped = not can(user, Permission.PATIENT_READ_ALL) and not can(user, Permission.ANALYTICS_READ)
-    ids = (
-        set(
-            db.scalars(
-                select(Patient.patient_id).where(rbac.patient_filter(user, Patient.patient_id))
-            )
-        )
-        if scoped
-        else None
-    )
-    result = measures.measures(db, clock.get_today(db), pipeline.engine_settings(db), ids)
-    result["scope"] = "panel" if scoped else "all"
-    return result
+    """STAR-style adherence measures and persistence for the reader's population
+    (services/analytics.py)."""
+    return analytics_service.quality_measures(db, user)

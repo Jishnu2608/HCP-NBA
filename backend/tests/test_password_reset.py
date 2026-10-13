@@ -2,6 +2,7 @@
 for every role except the administrator, who is excluded at every step on the server."""
 
 import re
+import secrets
 from datetime import timedelta
 
 import pytest
@@ -31,7 +32,9 @@ from app.models.enums import AccountStatus, Role
 from app.models.tables import utcnow
 
 BASE = "/api/auth/password-reset"
-NEW_PASSWORD = "Recovered-pass-2026"
+# Generated per run, like the other test passwords (no credential-like literal in the repo).
+NEW_PASSWORD = f"Rp-{secrets.token_urlsafe(10)}7"
+WEAK = "s" * 5 + "1"
 
 
 @pytest.fixture(scope="module")
@@ -336,7 +339,7 @@ def test_password_policy_and_mismatch_keep_the_transaction_usable(env, mailbox):
     assert code_of(finish(client, transaction, authorization, confirm="Different-pass-99")) == (
         "password_mismatch"
     )
-    assert code_of(finish(client, transaction, authorization, password="short1")) == "weak_password"
+    assert code_of(finish(client, transaction, authorization, password=WEAK)) == "weak_password"
     assert code_of(finish(client, transaction, authorization, password=DEMO_PASSWORD)) == (
         "password_reused"
     )

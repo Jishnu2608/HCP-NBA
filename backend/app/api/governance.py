@@ -9,8 +9,8 @@ from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import audit, cycle
-from app.api import serializers as out
+from app import audit, cycle, jobs
+from app.analytics import snapshots
 from app.api.auth import set_session_cookie
 from app.api.deps import require_permission
 from app.api.schemas import StrictBody
@@ -22,10 +22,11 @@ from app.core.db import get_db
 from app.core.engine_config import DEFAULTS, get_config, set_config, validate_value
 from app.core.permissions import Permission, can
 from app.datagen.generate import GenConfig, generate
-from app.engagement import delivery, simulator
-from app.models import AuditLog, EngineCycle, ModelVersion, Nba, User
+from app.engagement import delivery
+from app.models import AuditLog, EngineCycle, Job, ModelVersion, Nba, User
 from app.models.enums import NbaStatus
 from app.models.tables import utcnow
+from app.services import serializers as out
 
 router = APIRouter(prefix="/api", tags=["governance"])
 
@@ -131,28 +132,67 @@ def write_config(
     return {"key": key, "value": body.value}
 
 
-@router.post("/admin/cycle")
+def _busy(exc: "jobs.JobConflict") -> JSONResponse:
+    return JSONResponse(
+        jsonable_encoder(
+            {
+                "detail": {
+                    "code": "job_active",
+                    "message": "Another engine operation is already queued or running.",
+                    "job": jobs.job_out(exc.job) if exc.job else None,
+                }
+            }
+        ),
+        status_code=status.HTTP_409_CONFLICT,
+    )
+
+
+def _queued(db: Session, kind: str, user: User, params: dict | None = None) -> JSONResponse:
+    """Queues an engine job for the worker and answers 202 with it at once; 409 with the
+    active job if another engine operation is already queued or running."""
+    try:
+        job = jobs.submit(db, kind, user, params)
+    except jobs.JobConflict as exc:
+        return JSONResponse(
+            jsonable_encoder(
+                {
+                    "detail": {
+                        "code": "job_active",
+                        "message": "Another engine operation is already queued or running.",
+                        "job": jobs.job_out(exc.job) if exc.job else None,
+                    }
+                }
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    return JSONResponse(
+        jsonable_encoder({"job": jobs.job_out(job)}), status_code=status.HTTP_202_ACCEPTED
+    )
+
+
+@router.post("/admin/cycle", status_code=status.HTTP_202_ACCEPTED)
 def run_cycle(
     retrain: bool = False, user: User = Depends(admin), db: Session = Depends(get_db)
-) -> dict:
-    """Catch the synthetic population up to today, refresh features, regenerate
-    recommendations and drafts."""
-    simulator.catch_up(db)
-    result = cycle.run(db, retrain=retrain)
-    audit.record(
-        db,
-        "cycle_requested",
-        "engine_cycle",
-        result.cycle.id,
-        actor=user.username,
-        actor_role=user.role,
-    )
-    db.commit()
-    return {
-        "cycle_id": result.cycle.id,
-        "as_of_date": result.cycle.as_of_date,
-        "stats": result.stats,
-    }
+) -> JSONResponse:
+    """Queues a cycle (catch the synthetic population up to today, refresh features,
+    regenerate recommendations and drafts, publish summaries). The worker runs it; poll
+    GET /api/admin/jobs/{id}. Its `result` is what this endpoint used to return:
+    {cycle_id, as_of_date, stats}."""
+    return _queued(db, "cycle", user, {"retrain": retrain})
+
+
+@router.get("/admin/jobs")
+def list_jobs(_: User = Depends(admin), db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.scalars(select(Job).order_by(Job.id.desc()).limit(20))
+    return [jobs.job_out(j) for j in rows]
+
+
+@router.get("/admin/jobs/{job_id}")
+def get_job(job_id: int, _: User = Depends(admin), db: Session = Depends(get_db)) -> dict:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    return jobs.job_out(job)
 
 
 @router.get("/admin/cycles")
@@ -188,22 +228,12 @@ def list_models(_: User = Depends(model_readers), db: Session = Depends(get_db))
     ]
 
 
-@router.post("/admin/play-out")
-def play_out(user: User = Depends(admin), db: Session = Depends(get_db)) -> dict:
-    """Simulated people respond now to what was sent to them; their own refills are caught
-    up to today; the engine runs again. The date is never moved."""
-    result = simulator.play_out(db)
-    audit.record(
-        db,
-        "responses_played_out",
-        "engine_cycle",
-        result["cycle_id"],
-        actor=user.username,
-        actor_role=user.role,
-        detail={"responses": result["responses"]},
-    )
-    db.commit()
-    return result
+@router.post("/admin/play-out", status_code=status.HTTP_202_ACCEPTED)
+def play_out(user: User = Depends(admin), db: Session = Depends(get_db)) -> JSONResponse:
+    """Queues a play-out: simulated people respond now to what was sent to them, their own
+    refills are caught up to today, and the engine runs again (the date is never moved).
+    The job's `result` is {as_of_date, responses, cycle_id, cycle}."""
+    return _queued(db, "play_out", user)
 
 
 @router.post("/admin/reset")
@@ -218,8 +248,20 @@ def reset_demo(
     caller gets a new one."""
     body = body or ResetBody()
     actor_email = user.email
-    generate(db, GenConfig(n_patients=body.patients, n_hcps=body.hcps))
-    result = cycle.run(db, retrain=True)
+    try:
+        lock_id = jobs.acquire(db, "reset", user)
+    except jobs.JobConflict as exc:
+        return _busy(exc)
+    try:
+        generate(db, GenConfig(n_patients=body.patients, n_hcps=body.hcps))
+        result = cycle.run(db, retrain=True)
+        db.commit()
+    except BaseException:
+        db.rollback()
+        jobs.release(db, lock_id, ok=False)
+        raise
+    # The rebuild emptied the job table, lock row included: nothing is left to release.
+    snapshots.publish_safely(db, result.cycle.id)
     audit.record(
         db,
         "demo_reset",
@@ -257,6 +299,21 @@ def bulk_send(
     same gate re-check and audit trail as a manual approval.
     """
     body = body or BulkSendBody()
+    try:
+        lock_id = jobs.acquire(db, "bulk_send", user)
+    except jobs.JobConflict as exc:
+        return _busy(exc)
+    try:
+        result = _bulk_send(db, body, user)
+    except BaseException:
+        db.rollback()
+        jobs.release(db, lock_id, ok=False)
+        raise
+    jobs.release(db, lock_id, ok=True, result=result)
+    return result
+
+
+def _bulk_send(db: Session, body: BulkSendBody, user: User) -> dict:
     rows = db.scalars(
         select(Nba)
         .where(

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,7 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
-from app import scheduler
+from app import worker
 from app.api import (
     analytics,
     auth,
@@ -26,6 +25,7 @@ from app.api import (
     system,
     users,
 )
+from app.api.deps import read_errors
 from app.auth.service import ensure_system_admin
 from app.clinical import activity
 from app.clinical.hcps import separate_real_hcps
@@ -60,15 +60,12 @@ async def lifespan(_: FastAPI):
             db.commit()
     except SQLAlchemyError:
         logging.getLogger("nba").warning("Database not migrated yet; run `alembic upgrade head`.")
-    # The scheduled daily cycle (does nothing unless the auto_cycle setting is on).
-    task = (
-        asyncio.create_task(scheduler.loop(SessionLocal, settings.scheduler_poll_seconds))
-        if settings.scheduler_poll_seconds > 0
-        else None
-    )
+    # Background jobs and the scheduled daily cycle: a worker thread here in a local run,
+    # otherwise the separate `python -m app.worker` process (never both by default).
+    stop = worker.start_embedded(settings.worker_poll_seconds) if settings.embedded_worker else None
     yield
-    if task:
-        task.cancel()
+    if stop:
+        stop.set()
 
 
 # The interactive API reference is a development aid: it is not served outside a local run.
@@ -98,6 +95,7 @@ app.include_router(users.requests_router)
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 http_security.install(app, FRONTEND_DIST / "index.html")
+read_errors(app)
 
 if (FRONTEND_DIST / "index.html").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")

@@ -9,7 +9,6 @@ from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.api.schemas import StrictBody
 from app.commercial import contact, tasks
@@ -18,6 +17,7 @@ from app.core.db import get_db
 from app.core.permissions import Permission
 from app.models import Content, Hcp, HcpTask, Interaction, Nba, User
 from app.models.enums import TargetType
+from app.services import serializers as out
 
 router = APIRouter(prefix="/api", tags=["commercial"])
 reps = require_permission(Permission.NBA_REVIEW_HCP)

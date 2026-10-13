@@ -107,9 +107,15 @@ class NotDue(Exception):
 
 
 def send(db: Session, nba: Nba, user: User) -> Interaction:
-    """Delivers an approved recommendation. Gates are checked one last time first."""
-    if nba.status != NbaStatus.APPROVED:
-        raise ValueError(f"only approved recommendations can be sent (status: {nba.status})")
+    """Delivers an approved recommendation. Gates are checked one last time first.
+
+    The status is re-read under a row lock (PostgreSQL: SELECT ... FOR UPDATE; SQLite has a
+    single writer), so two simultaneous sends of the same recommendation cannot both pass:
+    the second sees it already sent and is refused."""
+    db.flush()  # a status set earlier in this same transaction (bulk send approves first)
+    current = db.scalar(select(Nba.status).where(Nba.id == nba.id).with_for_update())
+    if current != NbaStatus.APPROVED or nba.status != NbaStatus.APPROVED:
+        raise ValueError(f"only approved recommendations can be sent (status: {current})")
     if nba.scheduled_for and nba.scheduled_for > clock.get_today(db):
         raise NotDue(nba.scheduled_for)
 

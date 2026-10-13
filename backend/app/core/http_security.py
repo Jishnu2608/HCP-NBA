@@ -135,7 +135,64 @@ class RedactInviteTokens(logging.Filter):
 # --- Installation ----------------------------------------------------------------------
 
 
+# No endpoint accepts uploads; the largest JSON body (content proposals) is a few kilobytes.
+MAX_BODY_BYTES = 256 * 1024
+
+
+class BodyLimit:
+    """Refuses request bodies over MAX_BODY_BYTES with 413, whether the size is declared in
+    Content-Length or the body is streamed in chunks."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+            return await self._too_large(scope, receive, send)
+        # Read the body first (bodies here are small JSON), refusing it once it is too large,
+        # then hand the application a receive that replays it.
+        body, more = b"", True
+        while more:
+            message = await receive()
+            if message["type"] != "http.request":
+                return await self.app(scope, _replay([message]), send)
+            body += message.get("body", b"")
+            more = message.get("more_body", False)
+            if len(body) > MAX_BODY_BYTES:
+                return await self._too_large(scope, receive, send)
+        return await self.app(
+            scope, _replay([{"type": "http.request", "body": body, "more_body": False}], receive),
+            send,
+        )  # fmt: skip
+
+    async def _too_large(self, scope, receive, send):
+        response = JSONResponse(
+            {"detail": {"code": "payload_too_large", "message": "The request is too large."}},
+            status_code=413,
+        )
+        await response(scope, receive, send)
+
+
+def _replay(messages: list[dict], then=None):
+    """A receive callable that returns the buffered messages, then defers to `then` (for the
+    disconnect notice) once they are used up."""
+    queue = list(messages)
+
+    async def receive():
+        if queue:
+            return queue.pop(0)
+        if then is not None:
+            return await then()
+        return {"type": "http.disconnect"}
+
+    return receive
+
+
 def install(app: FastAPI, index_html: Path) -> None:
+    app.add_middleware(BodyLimit)
     headers = security_headers(inline_script_hashes(index_html))
     logging.getLogger("uvicorn.access").addFilter(RedactInviteTokens())
 

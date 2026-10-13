@@ -48,9 +48,13 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     # Off only in tests; limits are per process.
     rate_limit_enabled: bool = True
-    # How often the server checks whether the scheduled daily engine cycle is due (the
-    # schedule itself is the `auto_cycle` engine setting, off by default). 0 = never check.
-    scheduler_poll_seconds: int = 300
+    # Background jobs (app/jobs.py, app/worker.py). "external": run `python -m app.worker`
+    # beside the web server. "embedded": the web process hosts one worker thread (fine for a
+    # single local process). "off": nothing runs jobs. Empty = embedded in a local run,
+    # external otherwise.
+    worker_mode: str = ""
+    # How often a worker looks for queued jobs and for the scheduled daily cycle.
+    worker_poll_seconds: float = 3.0
 
     # "template" needs no key and no network; other providers are plugged in later.
     llm_provider: str = "template"
@@ -118,6 +122,11 @@ class Settings(BaseSettings):
     def cookie_secure(self) -> bool:
         """Cookies are Secure everywhere except a local run over plain http."""
         return not self.is_local
+
+    @property
+    def embedded_worker(self) -> bool:
+        mode = self.worker_mode or ("embedded" if self.is_local else "external")
+        return mode == "embedded"
 
     @property
     def show_development_codes(self) -> bool:

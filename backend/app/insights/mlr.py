@@ -9,10 +9,10 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api import serializers as out
 from app.insights import typical
 from app.models import Content, ContentReview
 from app.models.enums import MlrStatus
+from app.services import serializers as out
 
 PERSPECTIVES = (("medical", "Medical"), ("legal", "Legal"), ("regulatory", "Regulatory"))
 TURNAROUND_DAYS = 90

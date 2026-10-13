@@ -1,7 +1,15 @@
 """API behaviour, with the emphasis on who is allowed to see and do what."""
 
 import pytest
-from conftest import DEMO_PASSWORD, ApiClient, cookie_header, login, new_session, sign_in
+from conftest import (
+    DEMO_PASSWORD,
+    ApiClient,
+    cookie_header,
+    engine_job,
+    login,
+    new_session,
+    sign_in,
+)
 from sqlalchemy import select
 
 from app import cycle
@@ -344,7 +352,7 @@ def test_mlr_approval_by_compliance_then_cycle_uses_the_content(env):
         json={"decision": "approve", "comment": "Claims verified", **ALL_OK},
     )  # fmt: skip
     assert done.status_code == 200 and done.json()["usable"]
-    assert call(env, "admin", "POST", "/api/admin/cycle").status_code == 200
+    engine_job(env, call(env, "admin", "POST", "/api/admin/cycle"))
     rep_content = {c["content_id"] for c in call(env, "rep", "GET", "/api/content").json()}
     assert pending.content_id in rep_content
     actions = call(

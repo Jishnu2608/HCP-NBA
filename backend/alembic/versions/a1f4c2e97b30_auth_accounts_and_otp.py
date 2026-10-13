@@ -42,7 +42,7 @@ def upgrade() -> None:
         batch.add_column(sa.Column("last_login_at", sa.DateTime(), nullable=True))
 
     op.execute("UPDATE \"user\" SET email = lower(username) || '@nba.demo' WHERE email IS NULL")
-    op.execute("UPDATE \"user\" SET status = 'disabled' WHERE is_active = 0")
+    op.execute("UPDATE \"user\" SET status = 'disabled' WHERE NOT is_active")
 
     with op.batch_alter_table("user") as batch:
         batch.alter_column("email", existing_type=sa.String(length=254), nullable=False)

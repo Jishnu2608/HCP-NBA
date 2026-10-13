@@ -15,7 +15,7 @@ os.environ.update(
     NBA_ENVIRONMENT="local",
     NBA_SEED_DEMO_ACCOUNTS="true",
     NBA_RATE_LIMIT_ENABLED="false",
-    NBA_SCHEDULER_POLL_SECONDS="0",
+    NBA_WORKER_MODE="off",
 )
 
 import pytest
@@ -171,10 +171,77 @@ def onboard(client, email: str, role: str, name="Jordan Lee", by: str = "admin")
 MEDIUM = GenConfig(seed=11, n_patients=900, n_hcps=90, n_reps=6, n_care_managers=3)
 
 
+# Set NBA_TEST_DATABASE_URL to run the suite on another database (for example a disposable
+# local PostgreSQL database). Each new session then gets its own freshly created schema in
+# that database, so modules stay isolated exactly as with in-memory SQLite. The application's
+# own database (NBA_DATABASE_URL) is never used by the tests.
+TEST_DATABASE_URL = os.environ.get("NBA_TEST_DATABASE_URL", "")
+_SCHEMA_PREFIX = "t_"
+_schema_counter = iter(range(1, 1_000_000))
+
+
+def _postgres_engine():
+    from sqlalchemy import text
+    from sqlalchemy.pool import NullPool
+
+    schema = f"{_SCHEMA_PREFIX}{os.getpid()}_{next(_schema_counter)}"
+    admin = make_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    with admin.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    admin.dispose()
+    return make_engine(
+        TEST_DATABASE_URL,
+        poolclass=NullPool,
+        connect_args={"options": f"-csearch_path={schema}"},
+    )
+
+
 def new_session() -> Session:
-    engine = make_engine("sqlite://", poolclass=StaticPool)
+    if TEST_DATABASE_URL.startswith("postgresql"):
+        engine = _postgres_engine()
+    else:
+        engine = make_engine("sqlite://", poolclass=StaticPool)
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _clean_test_schemas():
+    """PostgreSQL runs: drop the schemas earlier runs created (never anything else)."""
+    if not TEST_DATABASE_URL.startswith("postgresql"):
+        yield
+        return
+    from sqlalchemy import text
+    from sqlalchemy.pool import NullPool
+
+    def drop_all_test_schemas():
+        admin = make_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        with admin.connect() as conn:
+            names = list(
+                conn.execute(
+                    text("SELECT nspname FROM pg_namespace WHERE nspname LIKE :p"),
+                    {"p": _SCHEMA_PREFIX.replace("_", r"\_") + "%"},
+                ).scalars()
+            )
+        # Connections a failed test left open in a transaction would block the drop forever:
+        # end them (this disposable test database only, and only this test user's sessions).
+        with admin.begin() as conn:
+            conn.execute(
+                text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND usename = current_user "
+                    "AND pid <> pg_backend_pid() AND state LIKE 'idle in transaction%'"
+                )
+            )
+        # One schema per transaction: dropping them all at once exhausts the lock table.
+        for name in names:
+            with admin.begin() as conn:
+                conn.execute(text(f'DROP SCHEMA "{name}" CASCADE'))
+        admin.dispose()
+
+    drop_all_test_schemas()
+    yield
+    drop_all_test_schemas()
 
 
 def seeded_session(model_dir, cfg: GenConfig = MEDIUM) -> Session:
@@ -215,3 +282,27 @@ def client(db):
         yield ApiClient(app)
     finally:
         app.dependency_overrides.clear()
+
+
+def run_jobs(db: Session) -> int:
+    """Runs every queued background job against the test database, as the worker would,
+    then expires the test session so it sees what the jobs wrote."""
+    from app import jobs
+
+    factory = sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
+    ran = jobs.run_pending(factory, worker_id="test-worker")
+    db.expire_all()
+    return ran
+
+
+def engine_job(env, response) -> dict:
+    """A queued engine job (202 from /api/admin/cycle or /play-out) run to completion; returns
+    the finished job. `env` is a test module's fixture tuple holding the session."""
+    assert response.status_code == 202, response.text
+    db = next(x for x in env if isinstance(x, Session))
+    run_jobs(db)
+    from app.models import Job
+
+    job = db.get(Job, response.json()["job"]["id"])
+    assert job.status == "succeeded", job.error
+    return {"id": job.id, "status": job.status, "result": job.result}

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import pytest
 from conftest import ApiClient, cookie_header, new_session, sign_in
 from sqlalchemy import select
+from sqlalchemy.orm import sessionmaker
 
 from app import cycle, panel_adherence, pipeline, scheduler, unify
 from app.core import clock
@@ -467,20 +468,22 @@ def test_new_settings_are_validated():
 
 def test_scheduled_cycle_runs_once_a_day_only_when_enabled(env):
     _, db, _ = env
+    factory = sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
     today = clock.get_today(db)
     morning = datetime.combine(today, datetime.min.time()).replace(hour=7)
-    assert scheduler.run_if_due(db, morning) is None  # off by default
+    assert scheduler.run_if_due(factory, morning) is None  # off by default
     set_config(db, "auto_cycle", {"enabled": True, "hour_utc": 6})
     db.commit()
     try:
         # A cycle already ran today (the fixture's): none is added.
-        assert scheduler.run_if_due(db, morning) is None
+        assert scheduler.run_if_due(factory, morning) is None
         tomorrow = morning + timedelta(days=1)
-        assert scheduler.run_if_due(db, tomorrow.replace(hour=5)) is None
+        assert scheduler.run_if_due(factory, tomorrow.replace(hour=5)) is None
         with clock.override(today + timedelta(days=1)):
-            cycle_id = scheduler.run_if_due(db, tomorrow)
+            cycle_id = scheduler.run_if_due(factory, tomorrow)
             assert cycle_id is not None
-            assert scheduler.run_if_due(db, tomorrow.replace(hour=9)) is None
+            assert scheduler.run_if_due(factory, tomorrow.replace(hour=9)) is None
+        db.expire_all()
         log = db.scalar(select(AuditLog).where(AuditLog.action == "cycle_scheduled"))
         assert log is not None and log.entity_id == str(cycle_id)
     finally:

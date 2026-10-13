@@ -12,7 +12,6 @@ from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api import serializers as out
 from app.api.deps import not_found, require_permission
 from app.api.schemas import StrictBody
 from app.clinical import vocabulary
@@ -31,16 +30,15 @@ from app.models import (
 )
 from app.models.enums import MlrStatus, NbaStatus, TargetType
 from app.models.tables import utcnow
+from app.services import content as content_service
+from app.services import serializers as out
 
 router = APIRouter(prefix="/api/content", tags=["content"])
 
 APPROVAL_VALID_DAYS = gov.APPROVAL_VALID_DAYS
 # Without the read-all permission, an account only sees material cleared for use,
 # for the audience its permission names.
-APPROVED_AUDIENCE = {
-    Permission.CONTENT_READ_APPROVED_HCP: TargetType.HCP,
-    Permission.CONTENT_READ_APPROVED_PATIENT: TargetType.PATIENT,
-}
+APPROVED_AUDIENCE = content_service.APPROVED_AUDIENCE
 readers = require_permission(
     Permission.CONTENT_READ_ALL, Permission.CONTENT_PROPOSE, *APPROVED_AUDIENCE
 )
@@ -125,36 +123,9 @@ def _names(db: Session, ids: set[int | None]) -> dict[int, str]:
     return {u.id: u.display_name for u in db.scalars(select(User).where(User.id.in_(ids)))}
 
 
-def _audiences(user: User) -> set[str]:
-    return {a for p, a in APPROVED_AUDIENCE.items() if can(user, p)}
-
-
-def _readable(db: Session, user: User, c: Content, today) -> bool:
-    if c.origin == "submitted" and c.author_user_id == user.id:
-        return True
-    if can(user, Permission.CONTENT_READ_ALL):
-        # A draft is private to its author until it is submitted.
-        return c.mlr_status != MlrStatus.DRAFT or c.origin == "library"
-    if out.content_out(c, today)["usable"] and c.audience in _audiences(user):
-        return True
-    # A representative keeps access to material they delivered, even once it is withdrawn or
-    # superseded: HCP questions about it reach them.
-    return can(user, Permission.CONTENT_PROPOSE) and _delivered_by(db, user, c)
-
-
-def _delivered_by(db: Session, user: User, c: Content) -> bool:
-    """Delivered to an HCP currently assigned to this representative (by them or whoever had
-    the HCP before): the conversation and context come with the HCP."""
-    return (
-        db.scalar(
-            select(Interaction.id).where(
-                Interaction.content_id == c.content_id,
-                Interaction.target_type == TargetType.HCP,
-                Interaction.target_id.in_(rbac.assigned_hcp_ids(user)),
-            )
-        )
-        is not None
-    )
+_audiences = content_service.audiences
+_readable = content_service.readable
+_delivered_by = content_service.delivered_by
 
 
 def summary(db: Session, user: User, c: Content, today, names: dict[int, str]) -> dict:
@@ -252,10 +223,7 @@ def options(user: User = Depends(readers)) -> dict:
 
 
 def _get(db: Session, user: User, content_id: str) -> Content:
-    c = db.get(Content, content_id)
-    if c is None or not _readable(db, user, c, clock.get_today(db)):
-        raise not_found("Content not found")
-    return c
+    return content_service.scoped_content(db, user, content_id)
 
 
 FIELDS = (

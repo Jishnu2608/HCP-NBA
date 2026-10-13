@@ -29,18 +29,25 @@ def upgrade() -> None:
         batch.add_column(sa.Column("closed_at", sa.DateTime(), nullable=True))
 
     bind = op.get_bind()
+
+    def field(key: str) -> str:
+        """A text value from the JSON `detail` column, in this database's dialect."""
+        if bind.dialect.name == "sqlite":
+            return f"json_extract(detail, '$.{key}')"
+        return f"(detail ->> '{key}')"
+
     answers = bind.execute(
         sa.text(
-            "SELECT CAST(json_extract(detail, '$.request') AS INTEGER), entity_id, "
-            "json_extract(detail, '$.hcp'), MAX(ts) FROM audit_log "
-            "WHERE action = 'consultation_answered' GROUP BY 1"
+            f"SELECT CAST({field('request')} AS INTEGER), entity_id, "
+            f"{field('hcp')}, MAX(ts) FROM audit_log "
+            "WHERE action = 'consultation_answered' GROUP BY 1, 2, 3"
         )
     ).fetchall()
     for request_id, patient_id, hcp_id, answered in answers:
         routed = bind.scalar(
             sa.text(
                 "SELECT MAX(ts) FROM audit_log WHERE action = 'hcp_assigned' "
-                "AND entity_id = :p AND json_extract(detail, '$.hcp') = :h AND ts <= :t"
+                f"AND entity_id = :p AND {field('hcp')} = :h AND ts <= :t"
             ),
             {"p": patient_id, "h": hcp_id, "t": answered},
         )
@@ -62,7 +69,7 @@ def upgrade() -> None:
         routed = bind.scalar(
             sa.text(
                 "SELECT MAX(ts) FROM audit_log WHERE action = 'hcp_assigned' "
-                "AND entity_id = :p AND json_extract(detail, '$.hcp') = :h"
+                f"AND entity_id = :p AND {field('hcp')} = :h"
             ),
             {"p": patient_id, "h": hcp_id},
         )
@@ -74,8 +81,8 @@ def upgrade() -> None:
         sa.text(
             "UPDATE care_request SET closed_at = (SELECT MAX(ts) FROM audit_log "
             "WHERE action = 'care_request_updated' "
-            "AND json_extract(detail, '$.status') = 'closed' "
-            "AND CAST(json_extract(detail, '$.request') AS INTEGER) = care_request.id) "
+            f"AND {field('status')} = 'closed' "
+            f"AND CAST({field('request')} AS INTEGER) = care_request.id) "
             "WHERE status = 'closed'"
         )
     )

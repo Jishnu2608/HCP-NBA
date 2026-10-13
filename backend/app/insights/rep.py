@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api import serializers as out
 from app.commercial import contact, tasks
 from app.core import rbac
 from app.features import engagement as eng
@@ -20,6 +19,7 @@ from app.features.population import load_population
 from app.insights import MIN_RATE_N, streaks
 from app.models import Hcp, HcpTask, Interaction, Nba, User
 from app.models.enums import NbaStatus, Outcome, TargetType
+from app.services import serializers as out
 
 ACTIVITY_DAYS = 90
 CALENDAR_DAYS = 14

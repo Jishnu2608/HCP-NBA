@@ -11,7 +11,6 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app import pipeline
-from app.api import serializers as out
 from app.core import rbac
 from app.insights import streaks
 from app.models import (
@@ -24,6 +23,7 @@ from app.models import (
     User,
 )
 from app.models.enums import CareRequestStatus, CareRequestType, TargetType
+from app.services import serializers as out
 
 
 def _latest_risk(db: Session, scope) -> dict[str, float]:

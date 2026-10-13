@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api.serializers import location_label
 from app.clinical import care, hcps
 from app.legal import consents, requests
 from app.models import (
@@ -25,6 +24,7 @@ from app.models import (
 )
 from app.models.enums import TargetType
 from app.models.tables import utcnow
+from app.services.serializers import location_label
 
 NOTE = (
     "Self-service copy of your data. Internal scores, model outputs and recommendations "

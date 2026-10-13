@@ -712,7 +712,7 @@ class Interaction(Base):
     type: Mapped[str] = mapped_column(String(32))
     outcome: Mapped[str] = mapped_column(String(16))
     outcome_ts: Mapped[datetime | None] = mapped_column(DateTime)
-    content_id: Mapped[str | None] = mapped_column(ForeignKey("content.content_id"))
+    content_id: Mapped[str | None] = mapped_column(ForeignKey("content.content_id"), index=True)
     # Patient outreach only: the therapy the touch was about.
     therapy_id: Mapped[int | None] = mapped_column(ForeignKey("patient_therapy.id"))
     nba_id: Mapped[int | None] = mapped_column(ForeignKey("nba.id"), index=True)
@@ -868,13 +868,15 @@ class AuditLog(Base):
     """Append-only. Rows are never updated or deleted by application code."""
 
     __tablename__ = "audit_log"
+    # Audit lookups filter by action and by the record concerned.
+    __table_args__ = (Index("ix_audit_log_entity", "entity_type", "entity_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     nba_id: Mapped[int | None] = mapped_column(ForeignKey("nba.id"), index=True)
     entity_type: Mapped[str] = mapped_column(String(32))
     entity_id: Mapped[str] = mapped_column(String(32))
-    action: Mapped[str] = mapped_column(String(48))
+    action: Mapped[str] = mapped_column(String(48), index=True)
     actor: Mapped[str] = mapped_column(String(64))
     # The account that acted, when an account did: the durable identity (an email can be
     # registered again after an account is deleted). No foreign key, so history survives.
@@ -909,6 +911,61 @@ class EngineConfig(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[Any] = mapped_column(JSON)
     updated_ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class Job(Base):
+    """Long-running engine work run by the worker (app/jobs.py), never inside a web request.
+
+    `lock_key` is "engine" while the job is queued or running and NULL afterwards; it is
+    unique, so at most one engine operation can be waiting or in progress at a time (NULLs do
+    not collide in SQLite or PostgreSQL). `result` holds only counts and ids; `error` a short
+    sanitised summary, never a stack trace or record contents."""
+
+    __tablename__ = "job"
+    __table_args__ = (
+        UniqueConstraint("lock_key", name="uq_job_lock_key"),
+        Index("ix_job_status_requested", "status", "requested_at"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    params: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    lock_key: Mapped[str | None] = mapped_column(String(32))
+    requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    worker_id: Mapped[str | None] = mapped_column(String(64))
+    progress: Mapped[str | None] = mapped_column(String(120))
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    error: Mapped[str | None] = mapped_column(String(300))
+
+
+class SummarySnapshot(Base):
+    """A summary computed once after a successful cycle and read many times (HCP panel
+    figures, learning tables, the dashboard's like-for-like comparison). Valid only for its
+    own cycle and calculation version; readers fall back to computing live otherwise
+    (analytics/snapshots.py). Holds aggregates only, never a patient."""
+
+    __tablename__ = "summary_snapshot"
+    __table_args__ = (
+        UniqueConstraint("kind", "scope_key", "cycle_id", name="uq_summary_snapshot_scope"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    scope_key: Mapped[str] = mapped_column(String(64))
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("engine_cycle.id"), index=True)
+    calc_version: Mapped[int] = mapped_column(Integer)
+    # What the figures depend on besides the cycle (for example the latest aggregate-consent
+    # change), so a change since publication sends readers back to live figures.
+    source_mark: Mapped[str | None] = mapped_column(String(64))
+    as_of: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    payload: Mapped[Any] = mapped_column(JSON)
 
 
 class SimLatent(Base):

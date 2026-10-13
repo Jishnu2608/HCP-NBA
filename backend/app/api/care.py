@@ -13,7 +13,6 @@ from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api import serializers as out
 from app.api.deps import get_current_user, not_found, require_permission
 from app.api.schemas import StrictBody
 from app.auth import invitations
@@ -24,6 +23,7 @@ from app.core.db import get_db
 from app.core.permissions import Permission, can_any
 from app.models import CareRequest, Patient, PatientCondition, PatientTherapy, User
 from app.models.enums import FillSource
+from app.services import serializers as out
 
 router = APIRouter(prefix="/api/care", tags=["care"])
 

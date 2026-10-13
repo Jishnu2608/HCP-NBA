@@ -298,11 +298,18 @@ From `backend`, using the virtual environment's Python.
 | `python -m app.cycle [--retrain]` | Refresh features, optionally retrain, generate recommendations and drafts |
 | `python -m app.pipeline` | Feature refresh and model training, with holdout metrics |
 | `python -m uvicorn app.main:app --reload --port 8000` | Run the API with auto-reload |
-| `python -m pytest` | Backend tests |
+| `python -m app.worker` | Background worker: queued engine cycles and play-outs, the scheduled daily cycle (`--once` runs what is queued and exits) |
+| `python -m app.backup create [FILE]` | Online backup of the configured database (SQLite backup API, or `pg_dump` for PostgreSQL) |
+| `python -m app.backup verify FILE [--into URL]` | Prove a backup restores: integrity check and row counts (PostgreSQL restores into a separate empty database) |
+| `python -m app.dbcopy SOURCE_URL TARGET_URL` | Copy all rows into an empty, migrated database (for example SQLite to PostgreSQL) and compare keys table by table |
+| `python -m pytest` | Backend tests (SQLite in memory) |
+| `NBA_TEST_DATABASE_URL=postgresql+psycopg://user@localhost/test_db python -m pytest` | The same tests on a disposable PostgreSQL database (one schema per test module; never the app database) |
 | `ruff check .` | Lint |
 | `alembic upgrade head` | Apply database migrations |
 
-From `frontend`: `npm run dev`, `npm run build`, `npm run typecheck`.
+From `frontend`: `npm run dev`, `npm run build`, `npm run typecheck`, `npm test` (component tests).
+
+**Background work.** Engine cycles and play-outs run as jobs, not inside web requests: the Engine page queues them (202 with a job) and follows the job. A local run (`NBA_ENVIRONMENT=local`) hosts the worker inside the web process, so `.\scripts\run.ps1` alone is enough. Otherwise set `NBA_WORKER_MODE=external` (the default outside a local run) and start `.\scripts\worker.ps1` (or `python -m app.worker`) beside the server. SQLite files run in WAL mode with a 15-second busy timeout so the web server and the worker can share them.
 
 ## Architecture
 

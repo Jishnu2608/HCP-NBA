@@ -109,16 +109,25 @@ def engagement_summary(db: Session) -> dict:
     return {
         "by_channel": rows,
         "awaiting_response": pending,
-        "like_for_like": like_for_like(db),
+        # Published with the latest cycle when available (analytics/snapshots.py).
+        "like_for_like": _like_for_like_current(db),
     }
 
 
-def like_for_like(db: Session) -> list[dict]:
+def _like_for_like_current(db: Session) -> list[dict]:
+    from app.analytics import snapshots
+
+    stored = snapshots.like_for_like(db)
+    return stored if stored is not None else like_for_like(db)
+
+
+def like_for_like(db: Session, *, pop=None, rows: list[dict] | None = None) -> list[dict]:
     """Patient outreach compared on equal terms: only touches made while the patient was
     already out of medication. The engine concentrates on these harder cases, so comparing
     it with all earlier outreach (mostly routine reminders) would understate it.
     """
-    rows = patient_training_rows(load_population(db), get_config(db, "pdc_window_days"))
+    if rows is None:
+        rows = patient_training_rows(pop or load_population(db), get_config(db, "pdc_window_days"))
     result = []
     for source, label in (("history", "baseline"), ("nba", "engine")):
         subset = [r for r in rows if r["source"] == source and r["gap_days"] > 0]

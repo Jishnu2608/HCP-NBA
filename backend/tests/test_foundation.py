@@ -8,6 +8,8 @@ from app.core.db import Base
 
 EXPECTED_TABLES = {
     "password_reset",
+    "job",
+    "summary_snapshot",
     "hcp", "patient", "patient_hcp", "user", "rep_hcp", "care_manager_patient",
     "patient_therapy", "medication_fill", "adherence_snapshot", "consent",
     "content", "content_review",

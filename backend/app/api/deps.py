@@ -58,3 +58,34 @@ def require_permission(*permissions: Permission):
 def not_found(what: str = "Not found") -> HTTPException:
     """Out-of-scope rows look exactly like missing rows, so ids cannot be probed."""
     return HTTPException(status.HTTP_404_NOT_FOUND, what)
+
+
+def read_errors(app) -> None:
+    """Domain errors from the read services (app/services) in the API's existing shapes: a
+    record out of scope is a plain 404, exactly like a missing one."""
+    from fastapi.responses import JSONResponse
+
+    from app.services.errors import Forbidden, NoRecord, NotFound
+
+    @app.exception_handler(NotFound)
+    async def _missing(_, exc: NotFound):
+        return JSONResponse({"detail": exc.message}, status_code=status.HTTP_404_NOT_FOUND)
+
+    @app.exception_handler(Forbidden)
+    async def _forbidden(_, exc: Forbidden):
+        return JSONResponse(
+            {
+                "detail": {
+                    "code": "forbidden",
+                    "message": "Your account is not permitted to do this.",
+                }
+            },
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    @app.exception_handler(NoRecord)
+    async def _no_record(_, exc: NoRecord):
+        return JSONResponse(
+            {"detail": {"code": "no_assignment", "message": exc.message}},
+            status_code=status.HTTP_409_CONFLICT,
+        )

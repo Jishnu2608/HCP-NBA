@@ -12,7 +12,6 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api import serializers as out
 from app.auth.errors import AuthError
 from app.clinical import activity, records, vocabulary
 from app.clinical import hcps as hcp_records
@@ -49,6 +48,7 @@ from app.models.enums import (
     TherapyOrigin,
 )
 from app.models.tables import utcnow
+from app.services import serializers as out
 
 PATIENT_REPORTED, CARE_MANAGER = TherapyOrigin.PATIENT_REPORTED, TherapyOrigin.CARE_MANAGER
 

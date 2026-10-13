@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 import pytest
-from conftest import ApiClient, auth, cookie_header, new_session, session_of
+from conftest import ApiClient, auth, cookie_header, engine_job, new_session, session_of
 from sqlalchemy import select
 
 from app import cycle
@@ -142,7 +142,7 @@ def test_patient_reads_message_then_refills_and_adherence_updates(env):
     assert (log.actor, log.actor_role, log.detail["outcome"]) == ("pat00001", "patient", "filled")
 
     # Next cycle: the gap is closed, risk falls, and no new reminder is raised.
-    assert call(env, "admin", "POST", "/api/admin/cycle").status_code == 200
+    engine_job(env, call(env, "admin", "POST", "/api/admin/cycle"))
     profile = call(env, "cm01", "GET", "/api/patients/PAT_00001").json()
     assert profile["therapies"][0]["gap_days"] == 0
     assert profile["risk_segment"] != "high"
@@ -287,9 +287,7 @@ def test_play_out_resolves_responses_and_real_days_bring_refills(env):
 
     # A week of real time has passed when the administrator plays the responses out.
     with clock.override(WEEK_LATER):
-        result = call(env, "admin", "POST", "/api/admin/play-out")
-        assert result.status_code == 200, result.text
-        body = result.json()
+        body = engine_job(env, call(env, "admin", "POST", "/api/admin/play-out"))["result"]
         assert body["as_of_date"] == WEEK_LATER.isoformat()
         assert clock.simulated_through(db) == WEEK_LATER
 

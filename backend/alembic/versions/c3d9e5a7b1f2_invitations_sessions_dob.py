@@ -94,7 +94,7 @@ def upgrade() -> None:
     op.create_index("ix_invitation_status", "invitation", ["status"])
 
     op.execute(
-        "UPDATE \"user\" SET professionally_verified = 1, verification_source = 'system', "
+        "UPDATE \"user\" SET professionally_verified = TRUE, verification_source = 'system', "
         "professionally_verified_at = CURRENT_TIMESTAMP "
         f"WHERE source = 'seed' AND role IN {PROFESSIONAL}"
     )

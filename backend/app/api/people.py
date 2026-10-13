@@ -4,32 +4,24 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app import audit, panel_adherence, pipeline, unify
-from app.api import serializers as out
-from app.api.deps import not_found, require_permission
-from app.clinical import activity, care, records
+from app import audit, unify
+from app.api.deps import require_permission
+from app.clinical import activity, records
 from app.clinical import hcps as hcp_records
-from app.commercial import contact, tasks
-from app.core import clock, rbac
+from app.core import rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can
-from app.insights import care as care_insights
 from app.models import (
-    Consent,
-    Content,
-    EngineCycle,
     Hcp,
     HcpSpecialty,
-    HcpTask,
-    Interaction,
-    MedicationFill,
-    Nba,
     Patient,
-    PatientHcp,
-    PatientTherapy,
     User,
 )
-from app.models.enums import Channel, ConsentPurpose, NbaStatus, ReviewStatus, TargetType
+from app.models.enums import Channel, TargetType
+from app.services import common, patients
+from app.services import hcps as hcps_service
+from app.services import serializers as out
+from app.services.schemas import HcpProfile, PatientProfile
 
 OUTREACH_CHANNELS = (Channel.SMS, Channel.EMAIL, Channel.PORTAL, Channel.PHONE)
 
@@ -37,52 +29,6 @@ router = APIRouter(prefix="/api", tags=["profiles"])
 
 patient_staff = require_permission(Permission.PATIENT_READ_ALL, Permission.PATIENT_READ_ASSIGNED)
 hcp_staff = require_permission(Permission.HCP_READ_ALL, Permission.HCP_READ_ASSIGNED)
-LIVE = (NbaStatus.READY_FOR_REVIEW, NbaStatus.APPROVED, NbaStatus.BLOCKED)
-
-
-def _sent_by(db: Session, user: User, actor_user_id: int | None, source: str) -> str | None:
-    """Who carried out an engine or representative touch, as the reader should see it. Work
-    done by someone no longer responsible for the HCP is labelled, never shown as the
-    reader's own."""
-    if source not in ("nba", "rep"):
-        return None
-    if actor_user_id == user.id:
-        return "You"
-    actor = db.get(User, actor_user_id) if actor_user_id else None
-    if actor is None or not can(actor, Permission.HCP_READ_ASSIGNED):
-        return "A previous representative" if actor is None else actor.display_name
-    return actor.display_name
-
-
-def _history(
-    db: Session, target_type: str, target_id: str, limit: int = 40, user: User | None = None
-) -> list[dict]:
-    rows = db.scalars(
-        select(Interaction)
-        .where(Interaction.target_type == target_type, Interaction.target_id == target_id)
-        .order_by(Interaction.int_ts.desc())
-        .limit(limit)
-    ).all()
-    contents = {
-        c.content_id: c
-        for c in db.scalars(
-            select(Content).where(Content.content_id.in_({r.content_id for r in rows}))
-        )
-    }
-    items = [out.interaction_out(r, contents) for r in rows]
-    if user is not None and target_type == TargetType.HCP:
-        for item, r in zip(items, rows, strict=True):
-            item["sent_by"] = _sent_by(db, user, r.actor_user_id, r.source)
-    return items
-
-
-def _open_nba(db: Session, target_type: str, target_id: str) -> dict | None:
-    nba = db.scalar(
-        select(Nba)
-        .where(Nba.target_type == target_type, Nba.target_id == target_id, Nba.status.in_(LIVE))
-        .order_by(Nba.id.desc())
-    )
-    return out.nba_summary(db, nba) if nba else None
 
 
 @router.get("/patients")
@@ -157,104 +103,19 @@ def _viewed(db: Session, user: User, target_type: str, target_id: str) -> None:
     db.commit()
 
 
-@router.get("/patients/{patient_id}")
+@router.get(
+    "/patients/{patient_id}", response_model=PatientProfile, response_model_exclude_unset=True
+)
 def patient_360(
     patient_id: str, user: User = Depends(patient_staff), db: Session = Depends(get_db)
-) -> dict:
-    p = db.scalar(
-        select(Patient).where(
-            Patient.patient_id == patient_id, rbac.patient_filter(user, Patient.patient_id)
-        )
-    )
-    if p is None:
-        raise not_found("Patient not found")
+) -> PatientProfile:
+    """Patient 360 (services/patients.py). Reading a full profile is audited."""
+    profile = patients.patient_profile(db, user, patient_id)
     _viewed(db, user, TargetType.PATIENT, patient_id)
-    today = clock.get_today(db)
-    # Adherence is measured on confirmed medications; reported ones appear under "health".
-    therapies = db.scalars(
-        select(PatientTherapy).where(
-            PatientTherapy.patient_id == patient_id,
-            PatientTherapy.review_status != ReviewStatus.REPORTED,
-        )
-    ).all()
-    fills = db.scalars(
-        select(MedicationFill)
-        .where(MedicationFill.patient_id == patient_id)
-        .order_by(MedicationFill.fill_date)
-    ).all()
-    hcps = db.execute(
-        select(Hcp, PatientHcp.is_primary)
-        .join(PatientHcp, PatientHcp.hcp_id == Hcp.hcp_id)
-        .where(PatientHcp.patient_id == patient_id)
-    ).all()
-    consents = db.scalars(
-        select(Consent).where(Consent.patient_id == patient_id).order_by(Consent.effective_from)
-    ).all()
-    return {
-        "patient_id": p.patient_id,
-        "name": out.patient_name(p),
-        "age": int((today - p.birth_date).days / 365.25),
-        "sex": p.sex,
-        "plan_type": p.plan_type,
-        **out.patient_brief(p),
-        "preferred_channel": p.preferred_channel,
-        "risk_segment": p.risk_segment,
-        # The risk score on each snapshot date: the same readers already see it per therapy.
-        "risk_history": care_insights.risk_history(db, p.patient_id),
-        "as_of_date": today,
-        "therapies": [out.therapy_out(db, t, today, with_risk=True) for t in therapies],
-        "fills": [
-            {"therapy_id": f.therapy_id, "fill_date": f.fill_date, "days_supply": f.days_supply}
-            for f in fills
-        ],
-        "care_team": [
-            {
-                "hcp_id": h.hcp_id,
-                "name": out.hcp_name(h),
-                "specialties": hcp_records.specialty_out(db, h.hcp_id),
-                "is_primary": primary,
-            }
-            for h, primary in hcps
-        ],
-        "consents": [consent_out(c, today) for c in consents],
-        # Of the four outreach channels, how many the patient allows today.
-        "outreach_channels_granted": sum(
-            1
-            for ch in OUTREACH_CHANNELS
-            if any(
-                c.granted
-                and c.purpose == ConsentPurpose.OUTREACH
-                and c.channel == ch
-                and c.effective_from <= today
-                and (c.effective_to is None or today < c.effective_to)
-                for c in consents
-            )
-        ),
-        "outreach_channels_total": len(OUTREACH_CHANNELS),
-        "care_managers": [
-            {"id": u.id, "name": u.display_name}
-            for u in records.responsible_care_managers(db, patient_id, active_only=True)
-        ],
-        "last_cycle_at": db.scalar(select(func.max(EngineCycle.finished_ts))),
-        "features": out.features_out(db, TargetType.PATIENT, patient_id, today),
-        "interactions": _history(db, TargetType.PATIENT, patient_id),
-        "open_nba": _open_nba(db, TargetType.PATIENT, patient_id),
-        # Conditions, reported and confirmed medications, care requests and notes.
-        "health": care.health_record(db, p, for_patient=False),
-    }
+    return profile
 
 
-def consent_out(c: Consent, today) -> dict:
-    in_effect = c.effective_from <= today and (c.effective_to is None or today < c.effective_to)
-    return {
-        "purpose": c.purpose,
-        "channel": c.channel,
-        "granted": c.granted,
-        "effective_from": c.effective_from,
-        "effective_to": c.effective_to,
-        "in_effect": in_effect,
-        "source": c.source,
-    }
+consent_out = common.consent_out
 
 
 @router.get("/hcps")
@@ -308,56 +169,14 @@ def list_hcps(
     }
 
 
-def _panel(db: Session, h: Hcp, today) -> dict:
-    settings = pipeline.engine_settings(db)
-    pts = panel_adherence.points_from_db(db, today, settings)
-    return panel_adherence.panel(h, panel_adherence.attributed_ids(db, h.hcp_id), pts, settings)
-
-
-@router.get("/hcps/{hcp_id}")
-def hcp_360(hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(get_db)) -> dict:
-    h = db.scalar(select(Hcp).where(Hcp.hcp_id == hcp_id, rbac.hcp_filter(user, Hcp.hcp_id)))
-    if h is None:
-        raise not_found("HCP not found")
+@router.get("/hcps/{hcp_id}", response_model=HcpProfile, response_model_exclude_unset=True)
+def hcp_360(
+    hcp_id: str, user: User = Depends(hcp_staff), db: Session = Depends(get_db)
+) -> HcpProfile:
+    """HCP 360 (services/hcps.py). Reading a full profile is audited."""
+    profile = hcps_service.hcp_profile(db, user, hcp_id)
     _viewed(db, user, TargetType.HCP, hcp_id)
-    today = clock.get_today(db)
-    return {
-        "hcp_id": h.hcp_id,
-        "npi": h.npi,
-        "name": out.hcp_name(h),
-        "specialties": hcp_records.specialty_out(db, h.hcp_id),
-        "origin": h.origin,
-        "taxonomy_code": h.taxonomy_code,
-        "organization": h.organization,
-        "city": h.city,
-        "state": h.state,
-        "country": h.country,
-        # City, state and country as known (an invited HCP: the country they gave).
-        "location": out.hcp_location_label(h),
-        "rx_volume_annual": h.rx_volume_annual,
-        "segment": h.segment,
-        "value_score": h.value_score,
-        "channel_affinity": h.channel_affinity,
-        "as_of_date": today,
-        "features": out.features_out(db, TargetType.HCP, hcp_id, today),
-        "interactions": _history(db, TargetType.HCP, hcp_id, user=user),
-        "open_nba": _open_nba(db, TargetType.HCP, hcp_id),
-        # How this HCP's patients are getting on with their medicines, as a de-identified group
-        # of consenting patients only, suppressed below the minimum group size.
-        "panel_adherence": _panel(db, h, today),
-        # Upstream records resolved to this profile (synthetic identity-resolution feeds).
-        "sources": unify.for_hcp(db, h),
-        # When the contact limits allow the next touch, and the open commercial work.
-        "contact_window": contact.contact_window(db, h),
-        "open_work": [
-            tasks.task_out(db, user, t)
-            for t in db.scalars(
-                select(HcpTask)
-                .where(HcpTask.hcp_id == hcp_id, HcpTask.status.in_(tasks.OPEN))
-                .order_by(HcpTask.due_date, HcpTask.id)
-            )
-        ],
-    }
+    return profile
 
 
 @router.get("/unification")

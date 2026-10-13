@@ -5,7 +5,7 @@ representative, follow-ups and meetings, richer outcomes, engine signals, reassi
 from datetime import date, datetime, time, timedelta
 
 import pytest
-from conftest import ApiClient, cookie_header, new_session, sign_in
+from conftest import ApiClient, cookie_header, engine_job, new_session, sign_in
 from sqlalchemy import select
 
 from app import cycle, pipeline
@@ -92,7 +92,7 @@ def test_rep_proposes_contact_through_the_engine_gates(env):
     assert nba.origin == "rep" and nba.status == NbaStatus.READY_FOR_REVIEW
     assert "Proposed by" in nba.rationale
     # The next cycle keeps the representative's proposal.
-    assert call(env, "admin", "POST", "/api/admin/cycle").status_code == 200
+    engine_job(env, call(env, "admin", "POST", "/api/admin/cycle"))
     db.refresh(nba)
     assert nba.status == NbaStatus.READY_FOR_REVIEW
     # Review and send as usual: governed wording, recorded on the delivery.
@@ -187,7 +187,7 @@ def test_hcp_intent_reaches_the_assigned_rep_and_becomes_a_meeting(env):
     assert m["status"] == "scheduled" and m["requested_by_hcp"] and m["timezone"] == "Europe/London"
     assert db.get(HcpTask, request["id"]).status == "done"
     # The engine proposes no other outreach while the meeting is open.
-    call(env, "admin", "POST", "/api/admin/cycle")
+    engine_job(env, call(env, "admin", "POST", "/api/admin/cycle"))
     latest = db.scalar(select(Nba.cycle_id).order_by(Nba.cycle_id.desc()))
     assert not db.scalar(select(Nba).where(Nba.cycle_id == latest, Nba.target_id == i.target_id))
     # Held: logged with a richer outcome and a note; it counts as a contact.

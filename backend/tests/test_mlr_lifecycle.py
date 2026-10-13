@@ -6,7 +6,7 @@ reviewer ownership and a demo reset that keeps governance."""
 from datetime import date
 
 import pytest
-from conftest import ApiClient, cookie_header, new_session, sign_in
+from conftest import ApiClient, cookie_header, engine_job, new_session, sign_in
 from sqlalchemy import select
 
 from app import cycle
@@ -207,7 +207,7 @@ def test_new_version_supersedes_old_and_engine_stops_using_it(env):
         c["content_id"] == old.content_id and c["usable"]
         for c in call(env, "rep", "GET", "/api/content").json()
     )
-    assert call(env, "admin", "POST", "/api/admin/cycle").status_code == 200
+    engine_job(env, call(env, "admin", "POST", "/api/admin/cycle"))
     latest = db.scalar(select(Nba.cycle_id).order_by(Nba.cycle_id.desc()))
     assert not db.scalar(
         select(Nba).where(Nba.cycle_id == latest, Nba.content_id == old.content_id)

@@ -20,15 +20,26 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+SQLITE_BUSY_MS = 15_000
+
+
 def make_engine(url: str, **kwargs) -> Engine:
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    connect_args.update(kwargs.pop("connect_args", {}))
     engine = create_engine(url, connect_args=connect_args, **kwargs)
     if url.startswith("sqlite"):
+        file_backed = engine.url.database not in (None, "", ":memory:")
 
         @event.listens_for(engine, "connect")
-        def _enable_foreign_keys(dbapi_connection, _record):
+        def _sqlite_pragmas(dbapi_connection, _record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            if file_backed:
+                # Readers no longer wait for a writer (write-ahead log), and a writer waits
+                # up to SQLITE_BUSY_MS for another writer instead of failing at once. The web
+                # server and the worker share one file. SQLite only: never sent to PostgreSQL.
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_MS}")
             cursor.close()
 
     return engine

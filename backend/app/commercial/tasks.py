@@ -387,6 +387,6 @@ def task_out(db: Session, user: User, t: HcpTask, names: dict[int, str] | None =
 def _hcp_name(hcp: Hcp | None) -> str | None:
     if hcp is None:
         return None
-    from app.api.serializers import hcp_name
+    from app.services.serializers import hcp_name
 
     return hcp_name(hcp)
