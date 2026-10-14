@@ -113,12 +113,14 @@ def _yn(value: bool) -> str:
     return "yes" if value else "no"
 
 
-def context_items(c: Case) -> list[tuple[str, str]]:
+def context_items(c: Case, show_patient_id: bool = True) -> list[tuple[str, str]]:
+    """Context shown to the model. From prompt v3 the patient id is withheld: the backend owns
+    identity and attaches it to the brief, so the model has nothing to copy or mistype."""
+    who = f"Synthetic patient {c.patient_id}" if show_patient_id else "Synthetic patient"
     items = [
         (
             "ctx:patient:1",
-            f"Synthetic patient {c.patient_id}, age {c.age}, enrolled in adherence programme "
-            f"since {c.enrolled.isoformat()}.",
+            f"{who}, age {c.age}, enrolled in adherence programme since {c.enrolled.isoformat()}.",
         )
     ]
     if c.last_refill and c.drug:

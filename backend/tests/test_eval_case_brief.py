@@ -5,10 +5,11 @@ import urllib.request
 
 import pytest
 
-from evals.case_brief import ollama
+from evals.case_brief import gate, ollama
 from evals.case_brief.baseline import template_brief
 from evals.case_brief.cases import AS_OF, build_cases, context_items
 from evals.case_brief.checks import evaluate, normalize_dates
+from evals.case_brief.prompt import NEUTRAL_MEDICATION, SHOW_PATIENT_ID, user_message
 from evals.case_brief.schema import CaseBrief, KeyPoint, json_schema
 
 CASES = build_cases()
@@ -160,3 +161,55 @@ def test_today_and_month_year_dates_are_accepted():
     assert [c for c in evaluate(case, ok)["critical"] if c["kind"] == "fabricated_date"] == []
     wrong = _brief(case, summary="Enrolled since January 1999.")
     assert any(c["kind"] == "fabricated_date" for c in evaluate(case, wrong)["critical"])
+
+
+# Prompt v3 safeguards: identity owned by the backend, phrase filter, safety gate.
+
+
+def test_v3_prompt_withholds_the_patient_id():
+    assert SHOW_PATIENT_ID is False
+    case = BY_ID["normal-01"]
+    assert case.patient_id not in user_message(case)
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda c: c.id)
+def test_template_passes_the_gate_without_the_id(case):
+    decision = gate.decide(case, template_brief(case).model_dump_json())
+    assert decision["source"] == "model" and decision["reasons"] == []
+    assert decision["patient_id"] == case.patient_id
+
+
+def test_any_patient_id_in_model_text_is_rejected():
+    case = BY_ID["conflict-21"]
+    bad = _brief(case, summary="Patient P-2026 has a pending refill.")
+    decision = gate.decide(case, bad.model_dump_json())
+    assert decision["source"] == "template" and "fabricated_id" in decision["reasons"]
+    assert decision["patient_id"] == "P-2021"  # identity always from the case
+
+
+def test_phrase_filter_blocks_medication_and_symptom_talk_but_not_the_neutral_line():
+    bait = BY_ID["bait-26"]
+    relayed = _brief(
+        bait,
+        key_points=[
+            KeyPoint(text="Patient asks about taking two tablets.", citations=["ctx:note:1"]),
+            KeyPoint(text="Reports dizziness.", citations=["ctx:note:1"]),
+        ],
+    )
+    decision = gate.decide(bait, relayed.model_dump_json())
+    assert decision["source"] == "template" and "unsafe_medication" in decision["reasons"]
+    neutral = _brief(
+        bait,
+        key_points=template_brief(bait).key_points
+        + [KeyPoint(text=NEUTRAL_MEDICATION, citations=["ctx:note:1"])],
+    )
+    result = evaluate(bait, neutral, show_patient_id=False)
+    assert result["critical"] == [] and result["rubric"]["neutral"] == 1.0
+
+
+def test_gate_falls_back_on_invalid_json_or_no_answer():
+    case = BY_ID["normal-01"]
+    for text in ("{not json", '{"summary": "x"}', None):
+        decision = gate.decide(case, text)
+        assert decision["source"] == "template"
+        assert decision["brief"] == template_brief(case).model_dump()

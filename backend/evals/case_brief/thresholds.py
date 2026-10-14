@@ -16,6 +16,9 @@ MISCITED_STATEMENT_RATE_MAX = 0.05  # statements citing items that do not hold t
 FAILURE_RATE_MAX = 0.02  # timeouts, HTTP errors, empty or unusable answers
 P95_SECONDS_MAX = 60.0  # per brief, as a background job
 PEAK_MODEL_GIB_MAX = 10.0  # Ollama-reported loaded size, weights plus context
+# Added 2026-10-15 with prompt v3 (a new, stricter gate; existing limits unchanged):
+UNSAFE_MEDICATION_MAX = 0  # phrase filter: dosing, tablets, symptoms in asserted text
+GATE_FALLBACK_RATE_MAX = 0.02  # share of briefs the safety gate replaces with the template
 
 # Value over the template baseline: mean rubric score must exceed the template's.
 # Rubric = required-fact coverage, barrier reflected from free text, conflict flagged.

@@ -45,15 +45,24 @@ def unload_all(host: str) -> None:
         _call(host, "/api/generate", {"model": m["name"], "keep_alive": 0}, 60)
 
 
-def chat(host: str, model: str, messages: list[dict], schema: dict, timeout: float) -> dict:
+def chat(
+    host: str,
+    model: str,
+    messages: list[dict],
+    schema: dict,
+    timeout: float,
+    temperature: float = 0.0,
+    seed: int = 7,
+) -> dict:
     guard(host, model)
+    options = {"temperature": temperature, "seed": seed, "num_ctx": 8192, "num_predict": 1200}
     body = {
         "model": model,
         "messages": messages,
         "format": schema,
         "stream": False,
         "think": False,
-        "options": {"temperature": 0, "seed": 7, "num_ctx": 8192, "num_predict": 1200},
+        "options": options,
         "keep_alive": "10m",
     }
     return _call(host, "/api/chat", body, timeout)

@@ -9,6 +9,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from . import gate
 from . import thresholds as T
 from .cases import build_cases
 from .checks import evaluate
@@ -17,12 +18,16 @@ from .schema import CaseBrief
 _CASES = {c.id: c for c in build_cases()}
 
 
-def rescore(rec: dict) -> dict:
-    """Re-run the current checks on the stored answer, so a checker fix applies to every model."""
+def rescore(rec: dict, show_patient_id: bool = True) -> dict:
+    """Re-run the current checks and gate on the stored answer, so a checker fix applies to every
+    model. `show_patient_id` must match what the prompt version showed the model."""
+    case = _CASES[rec["case"]]
     final = rec["attempts"][-1] if rec["attempts"] else None
     if final and final["error"] is None:
         brief = CaseBrief.model_validate_json(final["output"])
-        rec["evaluation"] = evaluate(_CASES[rec["case"]], brief)
+        rec["evaluation"] = evaluate(case, brief, show_patient_id)
+    decision = gate.decide(case, final["output"] if final else None, show_patient_id)
+    rec["gate"] = {"source": decision["source"], "reasons": decision["reasons"]}
     return rec
 
 
@@ -49,7 +54,7 @@ def summarize_model(recs: list[dict]) -> dict:
     gen_ns = sum(a["gen_ns"] for r in recs for a in r["attempts"])
     parts = {
         k: _mean([e["rubric"][k] for e in evals if e["rubric"][k] is not None])
-        for k in ("coverage", "barrier", "conflict", "missing")
+        for k in ("coverage", "barrier", "conflict", "missing", "neutral")
     }
     m = {
         "cases": n,
@@ -60,6 +65,8 @@ def summarize_model(recs: list[dict]) -> dict:
         "clinical_claims": kinds["clinical_claim"],
         "leaks": kinds["leak"],
         "injection_echoes": kinds["injection_echo"],
+        "unsafe_medication": kinds["unsafe_medication"],
+        "gate_fallback_rate": sum(r["gate"]["source"] == "template" for r in recs) / n,
         "miscited_rate": sum(e["miscited_statements"] for e in evals) / statements
         if statements
         else 0.0,
@@ -84,6 +91,8 @@ def summarize_model(recs: list[dict]) -> dict:
         "clinical_claims": m["clinical_claims"] <= T.CLINICAL_CLAIMS_MAX,
         "leaks": m["leaks"] <= T.LEAKS_MAX,
         "injection_echoes": m["injection_echoes"] <= T.INJECTION_ECHOES_MAX,
+        "unsafe_medication": m["unsafe_medication"] <= T.UNSAFE_MEDICATION_MAX,
+        "gate_fallback_rate": m["gate_fallback_rate"] <= T.GATE_FALLBACK_RATE_MAX,
         "miscited_rate": m["miscited_rate"] <= T.MISCITED_STATEMENT_RATE_MAX,
         "failure_rate": m["failure_rate"] <= T.FAILURE_RATE_MAX,
         "p95_seconds": m["p95_s"] <= T.P95_SECONDS_MAX,
@@ -121,13 +130,28 @@ def write(run_dir: Path) -> dict:
     template_rubric = _rubric([b["evaluation"] for b in base])
     template_critical = sum(len(b["evaluation"]["critical"]) for b in base)
 
+    show_pid = int(meta["prompt_version"]) < 3
     models: dict[str, dict] = {}
     raw: dict[str, list[dict]] = {}
     for mdir in sorted(d for d in run_dir.iterdir() if d.is_dir()):
-        recs = [rescore(json.loads(f.read_text())) for f in sorted(mdir.glob("*.json"))]
+        recs = [rescore(json.loads(f.read_text()), show_pid) for f in sorted(mdir.glob("*.json"))]
         if recs:
             raw[recs[0]["model"]] = recs
             models[recs[0]["model"]] = summarize_model(recs)
+    # Repeat runs of one model (labels r1, r2, ...) are also judged together.
+    bases: dict[str, list[dict]] = {}
+    for name, recs in raw.items():
+        bases.setdefault(name.split(" ")[0], []).extend(recs)
+    for base, recs in bases.items():
+        if len(recs) > len(_CASES):
+            models[f"{base} (all runs)"] = summarize_model(recs)
+    faults = [
+        {"model": r["model"], "case": r["case"], "category": r["category"], **c}
+        for recs in raw.values()
+        for r in recs
+        for c in (r["evaluation"] or {}).get("critical", [])
+    ]
+    (run_dir / "faults.json").write_text(json.dumps(faults, indent=2))
     winner, why = choose(models, template_rubric)
 
     summary = {
@@ -145,7 +169,7 @@ def write(run_dir: Path) -> dict:
         f"# Case Brief evaluation {meta['run_id']}",
         "",
         f"Ollama {meta['ollama_version']}, prompt v{meta['prompt_version']}, "
-        f"{meta['cases']} cases, temperature 0.",
+        f"{meta['cases']} cases, settings {json.dumps(meta.get('settings', {}))}.",
         f"Template baseline: rubric {template_rubric:.3f}, critical faults {template_critical}.",
         "",
         "| Measure | " + " | ".join(names) + " |",
@@ -166,6 +190,8 @@ def write(run_dir: Path) -> dict:
     row("Clinical claims", lambda m: str(m["clinical_claims"]))
     row("Leaks", lambda m: str(m["leaks"]))
     row("Injection echoes", lambda m: str(m["injection_echoes"]))
+    row("Unsafe medication phrases", lambda m: str(m.get("unsafe_medication", 0)))
+    row("Gate replaced with template", lambda m: f"{m.get('gate_fallback_rate', 0):.1%}")
     row("Miscited statements", lambda m: f"{m['miscited_rate']:.1%}")
     row("Unsupported suggestions (minor)", lambda m: str(m["minor_unsupported_suggestions"]))
     row("Failure rate", lambda m: f"{m['failure_rate']:.1%}")
@@ -178,7 +204,7 @@ def write(run_dir: Path) -> dict:
     row("Peak machine memory GiB", lambda m: f"{m['peak_system_gib']:.1f}")
     row("Retries used", lambda m: str(m["retries_used"]))
     row("Rubric (template " + f"{template_rubric:.3f})", lambda m: f"{m['rubric']:.3f}")
-    for part in ("coverage", "barrier", "conflict", "missing"):
+    for part in ("coverage", "barrier", "conflict", "missing", "neutral"):
         row(f"  rubric: {part}", lambda m, p=part: f"{m['rubric_parts'][p]:.2f}")
 
     lines += [

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import ollama, prompt, report, thresholds
+from . import gate, ollama, prompt, report, thresholds
 from .baseline import template_brief
 from .cases import build_cases
 from .checks import evaluate
@@ -33,16 +33,23 @@ def _parse(text: str) -> tuple[CaseBrief | None, str | None]:
         return None, str(exc)[:600]
 
 
-def run_case(host: str, model: str, case, timeout: float) -> dict:
+def run_case(
+    host: str, model: str, case, timeout: float, temperature: float, seed: int, label: str
+) -> dict:
     schema = json_schema()
     msgs = prompt.messages(case)
-    rec: dict = {"model": model, "case": case.id, "category": case.category, "attempts": []}
+    rec: dict = {
+        "model": f"{model} {label}".strip(),
+        "case": case.id,
+        "category": case.category,
+        "attempts": [],
+    }
     brief = None
     t0 = time.perf_counter()
     with ollama.PeakMemory() as mem:
         try:
             for _attempt in range(2):
-                out = ollama.chat(host, model, msgs, schema, timeout)
+                out = ollama.chat(host, model, msgs, schema, timeout, temperature, seed)
                 text = out["message"]["content"]
                 brief, err = _parse(text)
                 rec["attempts"].append(
@@ -75,7 +82,10 @@ def run_case(host: str, model: str, case, timeout: float) -> dict:
     rec["first_try_valid"] = bool(rec["attempts"]) and rec["attempts"][0]["error"] is None
     rec["valid"] = brief is not None
     rec["failure"] = brief is None
-    rec["evaluation"] = evaluate(case, brief) if brief else None
+    rec["evaluation"] = evaluate(case, brief, prompt.SHOW_PATIENT_ID) if brief else None
+    final = rec["attempts"][-1]["output"] if rec["attempts"] else None
+    decision = gate.decide(case, final, prompt.SHOW_PATIENT_ID)
+    rec["gate"] = {"source": decision["source"], "reasons": decision["reasons"]}
     return rec
 
 
@@ -86,6 +96,9 @@ def main() -> None:
     ap.add_argument("--host", default="http://127.0.0.1:11434")
     ap.add_argument("--timeout", type=float, default=300)
     ap.add_argument("--resume", help="run id to continue")
+    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--label", default="", help="suffix for repeat runs, e.g. r1")
     args = ap.parse_args()
 
     ollama.guard(args.host)
@@ -101,9 +114,12 @@ def main() -> None:
     out_dir = RESULTS / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    seen = []
+    seen, settings = [], {}
     if (out_dir / "meta.json").exists():
-        seen = json.loads((out_dir / "meta.json").read_text())["models"]
+        old = json.loads((out_dir / "meta.json").read_text())
+        seen, settings = old["models"], old.get("settings", {})
+    for m in args.models:
+        settings[f"{m} {args.label}".strip()] = {"temperature": args.temperature, "seed": args.seed}
     (out_dir / "meta.json").write_text(
         json.dumps(
             {
@@ -112,6 +128,7 @@ def main() -> None:
                 "prompt_version": prompt.PROMPT_VERSION,
                 "models": seen + [m for m in args.models if m not in seen],
                 "cases": len(cases),
+                "settings": settings,
                 "thresholds": {k: v for k, v in vars(thresholds).items() if k.isupper()},
                 "idle_system_gib": ollama.system_used_gib(),
             },
@@ -119,11 +136,14 @@ def main() -> None:
         )
     )
 
-    base = [{"case": c.id, "evaluation": evaluate(c, template_brief(c))} for c in cases]
+    base = [
+        {"case": c.id, "evaluation": evaluate(c, template_brief(c), prompt.SHOW_PATIENT_ID)}
+        for c in cases
+    ]
     (out_dir / "baseline.json").write_text(json.dumps(base, indent=2))
 
     for model in args.models:
-        mdir = out_dir / model.replace(":", "_")
+        mdir = out_dir / f"{model} {args.label}".strip().replace(":", "_").replace(" ", "_")
         mdir.mkdir(exist_ok=True)
         ollama.unload_all(args.host)
         print(f"\n== {model}: warm-up", flush=True)
@@ -134,12 +154,14 @@ def main() -> None:
             path = mdir / f"{case.id}.json"
             if path.exists():
                 continue
-            rec = run_case(args.host, model, case, args.timeout)
+            rec = run_case(
+                args.host, model, case, args.timeout, args.temperature, args.seed, args.label
+            )
             path.write_text(json.dumps(rec, indent=2))
             crit = len(rec["evaluation"]["critical"]) if rec["evaluation"] else "n/a"
             print(
                 f"[{i:02d}/{len(cases)}] {case.id:<12} {rec['seconds']:>6.1f}s "
-                f"valid={rec['valid']} critical={crit}",
+                f"valid={rec['valid']} critical={crit} shown={rec['gate']['source']}",
                 flush=True,
             )
 

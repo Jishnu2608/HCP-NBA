@@ -11,7 +11,7 @@ from .schema import CaseBrief, KeyPoint
 def template_brief(c: Case) -> CaseBrief:
     pts: list[KeyPoint] = [
         KeyPoint(
-            text=f"Patient {c.patient_id}, age {c.age}, enrolled since {c.enrolled.isoformat()}.",
+            text=f"Age {c.age}, enrolled since {c.enrolled.isoformat()}.",
             citations=["ctx:patient:1"],
         )
     ]
@@ -78,7 +78,7 @@ def template_brief(c: Case) -> CaseBrief:
         focus = "No open recommendation is recorded."
 
     return CaseBrief(
-        summary=f"{c.patient_id}: " + " ".join(p.text for p in pts[1:3]),
+        summary=" ".join(p.text for p in pts[1:3]) or pts[0].text,  # identity added by the gate
         key_points=pts[:8],
         suggested_focus=focus,
         not_recorded=missing,
