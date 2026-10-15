@@ -5,11 +5,23 @@ good brief must contain and the strings it must never repeat are all derived fro
 so the checks never depend on how a model happens to phrase something.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from random import Random
 
 AS_OF = date(2026, 10, 13)
+
+# A note that asks or reports something about medicine, doses or symptoms. Such a note gets the
+# fixed neutral line (written by the backend, never by the model) and, from prompt v5, is
+# withheld from the model so it cannot restate it.
+MEDICATION_QUESTION = re.compile(
+    r"\b(?:tablets?|pills?|capsules?|dos(?:e|es|age|ing)|medicine|medication|stronger|weaker"
+    r"|stop taking|side effects?|symptoms?|dizz\w*|cough\w*|heart failure)\b",
+    re.I,
+)
+NEUTRAL_MEDICATION = "Patient raised a medication question; clinician review needed."
+WITHHELD_NOTE = "Free-text note withheld: medication question for clinician review."
 DRUGS = ["Cardiozen", "Glucovia", "Pulmora", "Neurelle", "Respirox", "Lipidra", "Thyrovan"]
 ACTIONS = [
     "phone outreach about a refill barrier",
@@ -113,9 +125,17 @@ def _yn(value: bool) -> str:
     return "yes" if value else "no"
 
 
-def context_items(c: Case, show_patient_id: bool = True) -> list[tuple[str, str]]:
+def context_items(
+    c: Case,
+    show_patient_id: bool = True,
+    withhold_medication_notes: bool = False,
+    explicit_status: bool = False,
+) -> list[tuple[str, str]]:
     """Context shown to the model. From prompt v3 the patient id is withheld: the backend owns
-    identity and attaches it to the brief, so the model has nothing to copy or mistype."""
+    identity and attaches it to the brief, so the model has nothing to copy or mistype. From v5
+    a note with a medication or symptom question is replaced by `WITHHELD_NOTE`. From v6
+    (`explicit_status`) a refill due in the future says so, and one `ctx:absent:1` item lists
+    what the record does not hold, so absence is stated instead of left for the model to guess."""
     who = f"Synthetic patient {c.patient_id}" if show_patient_id else "Synthetic patient"
     items = [
         (
@@ -128,8 +148,12 @@ def context_items(c: Case, show_patient_id: bool = True) -> list[tuple[str, str]
             (
                 "ctx:rx:1",
                 f"Therapy: {c.drug} (synthetic), {c.supply}-day supply. Last refill "
-                f"{c.last_refill.isoformat()}. Next refill was due {c.due.isoformat()}; "
-                "not yet filled.",
+                f"{c.last_refill.isoformat()}. "
+                + (
+                    f"Next refill due {c.due.isoformat()} (not yet due)."
+                    if explicit_status and c.due > AS_OF
+                    else f"Next refill was due {c.due.isoformat()}; not yet filled."
+                ),
             )
         )
     if c.alt_refill and c.drug:
@@ -169,7 +193,8 @@ def context_items(c: Case, show_patient_id: bool = True) -> list[tuple[str, str]
             )
         )
     if c.note:
-        items.append(("ctx:note:1", f"Free-text note: {c.note}"))
+        withhold = withhold_medication_notes and MEDICATION_QUESTION.search(c.note)
+        items.append(("ctx:note:1", WITHHELD_NOTE if withhold else f"Free-text note: {c.note}"))
     if c.contact:
         x = c.contact
         items.append(
@@ -179,6 +204,22 @@ def context_items(c: Case, show_patient_id: bool = True) -> list[tuple[str, str]
                 f"{x['address']}, date of birth {x['dob']}.",
             )
         )
+    if explicit_status:
+        absent = [
+            name
+            for name, missing in (
+                ("open recommendation", not c.content_id),
+                ("consent record", c.consent is None),
+                ("outreach", not c.touches),
+                ("refill record", not (c.last_refill and c.drug)),
+                ("proportion of days covered", c.pdc is None),
+            )
+            if missing
+        ]
+        if absent:
+            items.append(
+                ("ctx:absent:1", "Not recorded for this patient: " + "; ".join(absent) + ".")
+            )
     return items
 
 

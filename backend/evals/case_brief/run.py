@@ -20,15 +20,14 @@ from . import gate, ollama, prompt, report, thresholds
 from .baseline import template_brief
 from .cases import build_cases
 from .checks import evaluate
-from .schema import CaseBrief, json_schema
 
 DEFAULT_MODELS = ["qwen3.5:9b-q4_K_M", "granite4.1:8b-q4_K_M", "qwen3.5:4b-q4_K_M"]
 RESULTS = Path(__file__).parent / "results"
 
 
-def _parse(text: str) -> tuple[CaseBrief | None, str | None]:
+def _parse(text: str) -> tuple[object | None, str | None]:
     try:
-        return CaseBrief.model_validate_json(text), None
+        return prompt.OUTPUT_MODEL.model_validate_json(text), None
     except (ValidationError, ValueError) as exc:
         return None, str(exc)[:600]
 
@@ -36,7 +35,7 @@ def _parse(text: str) -> tuple[CaseBrief | None, str | None]:
 def run_case(
     host: str, model: str, case, timeout: float, temperature: float, seed: int, label: str
 ) -> dict:
-    schema = json_schema()
+    schema = prompt.output_schema(case)
     msgs = prompt.messages(case)
     rec: dict = {
         "model": f"{model} {label}".strip(),
@@ -82,9 +81,8 @@ def run_case(
     rec["first_try_valid"] = bool(rec["attempts"]) and rec["attempts"][0]["error"] is None
     rec["valid"] = brief is not None
     rec["failure"] = brief is None
-    rec["evaluation"] = evaluate(case, brief, prompt.SHOW_PATIENT_ID) if brief else None
-    final = rec["attempts"][-1]["output"] if rec["attempts"] else None
-    decision = gate.decide(case, final, prompt.SHOW_PATIENT_ID)
+    final = rec["attempts"][-1]["output"] if rec["attempts"] and brief else None
+    rec["evaluation"], decision = gate.assess(case, final, int(prompt.PROMPT_VERSION))
     rec["gate"] = {"source": decision["source"], "reasons": decision["reasons"]}
     return rec
 
@@ -137,8 +135,7 @@ def main() -> None:
     )
 
     base = [
-        {"case": c.id, "evaluation": evaluate(c, template_brief(c), prompt.SHOW_PATIENT_ID)}
-        for c in cases
+        {"case": c.id, "evaluation": evaluate(c, template_brief(c), **prompt.VIEW)} for c in cases
     ]
     (out_dir / "baseline.json").write_text(json.dumps(base, indent=2))
 

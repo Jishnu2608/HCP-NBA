@@ -56,7 +56,15 @@ def test_no_credential_literal_in_tracked_files():
     literal = r"""["'][^"'\s<>{}$]{6,}["']"""
     assignment = re.compile(rf"(?i){name}\s*(:\s*[\w\[\] |]+)?\s*[:=]\s*{literal}")
     # Names that contain one of the words above but hold no secret.
-    harmless = ("password_hash", "token_type", "tokenUrl", "TOKEN_KEY", "CHALLENGE_KEY")
+    # `api_key_env` holds the NAME of the variable that holds a key, never the key itself.
+    harmless = (
+        "password_hash",
+        "token_type",
+        "tokenUrl",
+        "TOKEN_KEY",
+        "CHALLENGE_KEY",
+        "api_key_env=",
+    )
     checked = {".py", ".ts", ".tsx", ".yml", ".yaml", ".toml", ".ps1", ".json", ".example"}
     offenders = []
     for item in tracked:

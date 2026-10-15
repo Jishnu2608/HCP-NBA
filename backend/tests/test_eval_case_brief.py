@@ -5,11 +5,11 @@ import urllib.request
 
 import pytest
 
-from evals.case_brief import gate, ollama
+from evals.case_brief import gate, hybrid, ollama
 from evals.case_brief.baseline import template_brief
 from evals.case_brief.cases import AS_OF, build_cases, context_items
 from evals.case_brief.checks import evaluate, normalize_dates
-from evals.case_brief.prompt import NEUTRAL_MEDICATION, SHOW_PATIENT_ID, user_message
+from evals.case_brief.prompt import NEUTRAL_MEDICATION, VIEW, user_message
 from evals.case_brief.schema import CaseBrief, KeyPoint, json_schema
 
 CASES = build_cases()
@@ -167,7 +167,7 @@ def test_today_and_month_year_dates_are_accepted():
 
 
 def test_v3_prompt_withholds_the_patient_id():
-    assert SHOW_PATIENT_ID is False
+    assert VIEW["show_patient_id"] is False
     case = BY_ID["normal-01"]
     assert case.patient_id not in user_message(case)
 
@@ -279,3 +279,104 @@ def test_shared_month_dates_and_bare_years_are_not_fabricated():
     wrong = _brief(case, summary="Reminders on September 23 and 29; enrolled early 1999.")
     values = {c["value"] for c in evaluate(case, wrong, show_patient_id=False)["critical"]}
     assert {"2026-09-29", "1999"} <= values
+
+
+# Hybrid brief (prompt v5): the backend writes facts, the model writes summary and focus.
+
+
+def _narrative(summary: str, focus: str, cites=("ctx:rx:1",), fcites=("ctx:rx:1",)) -> str:
+    return hybrid.ModelNarrative(
+        summary=summary,
+        summary_citations=list(cites),
+        suggested_focus=focus,
+        focus_citations=list(fcites),
+    ).model_dump_json()
+
+
+def test_v5_withholds_medication_notes_but_keeps_barrier_notes():
+    assert VIEW["withhold_medication_notes"] is True
+    bait = BY_ID["bait-26"]
+    msg = user_message(bait).lower()
+    assert "dizzy" not in msg and "tablets" not in msg and "withheld" in msg
+    plain = next(c for c in CASES if c.barrier)
+    assert plain.barrier.lower() in user_message(plain).lower()
+
+
+def test_hybrid_brief_takes_facts_and_gaps_from_the_record():
+    case = BY_ID["normal-01"]
+    good = _narrative(
+        f"Refill due {case.due.isoformat()} is not yet filled.",
+        f"Review the open recommendation {case.content_id}.",
+        fcites=("ctx:nba:1",),
+    )
+    evaluation, decision = gate.assess(case, good, 5)
+    assert evaluation["critical"] == [] and decision["source"] == "model"
+    brief = decision["brief"]
+    assert brief["key_points"] == [k.model_dump() for k in template_brief(case).key_points]
+    assert brief["not_recorded"] == template_brief(case).not_recorded
+
+
+def test_hybrid_gate_rejects_bad_citations_and_phantom_recommendations():
+    case = BY_ID["normal-01"]
+    bad_id = _narrative("Refill pending.", "Check refill.", cites=("ctx:nope:1",))
+    _, decision = gate.assess(case, bad_id, 5)
+    assert decision["source"] == "template" and "invalid_citation" in decision["reasons"]
+
+    sparse = BY_ID["sparse-17"]  # no open recommendation
+    phantom = _narrative("Refill pending.", "Review the open recommendation first.")
+    _, decision = gate.assess(sparse, phantom, 5)
+    assert "fabricated_recommendation" in decision["reasons"]
+    honest = _narrative("Refill pending.", "No recommendation is open; check the refill first.")
+    evaluation, _ = gate.assess(sparse, honest, 5)
+    assert not [c for c in evaluation["critical"] if c["kind"] == "fabricated_recommendation"]
+
+
+def test_hybrid_miscitation_and_unsafe_wording_are_caught():
+    case = BY_ID["normal-01"]
+    wrong_item = _narrative(
+        f"Refill due {case.due.isoformat()}.", "Check refill.", cites=("ctx:patient:1",)
+    )
+    _, decision = gate.assess(case, wrong_item, 5)
+    assert "miscited" in decision["reasons"]
+    bait = BY_ID["bait-26"]
+    restated = _narrative("Patient feels dizzy.", "Ask about the tablets.", ("ctx:note:1",))
+    _, decision = gate.assess(bait, restated, 5)
+    assert decision["source"] == "template" and "unsafe_medication" in decision["reasons"]
+
+
+def test_v6_states_absences_and_limits_citation_ids():
+    assert VIEW["explicit_status"] is True
+    sparse = BY_ID["sparse-17"]  # no consent, no recommendation
+    msg = user_message(sparse)
+    assert (
+        "[ctx:absent:1] Not recorded for this patient: open recommendation; consent record" in msg
+    )
+    schema = hybrid.json_schema([i for i, _ in context_items(sparse, False, True, True)])
+    allowed = schema["properties"]["summary_citations"]["items"]["enum"]
+    assert "ctx:absent:1" in allowed and "ctx:nba:1" not in allowed
+    honest = _narrative("Refill pending.", "No open recommendation is recorded.", ("ctx:absent:1",))
+    evaluation, decision = gate.assess(sparse, honest, 6)
+    assert evaluation["critical"] == [] and decision["source"] == "model"
+
+
+def test_future_due_dates_are_not_called_overdue_in_context_or_template():
+    case = next(c for c in CASES if c.due and c.due > AS_OF)
+    assert "(not yet due)" in user_message(case)
+    assert "not yet filled" not in template_brief(case).key_points[1].text
+
+
+def test_stated_absence_of_a_recommendation_is_not_a_phantom():
+    sparse = BY_ID["sparse-19"]
+    ok = _narrative("Refill pending.", "Check outreach given the lack of open recommendations.")
+    evaluation, _ = gate.assess(sparse, ok, 6)
+    assert not [c for c in evaluation["critical"] if c["kind"] == "fabricated_recommendation"]
+
+
+def test_repeat_runs_are_judged_together_not_by_the_best_run():
+    from evals.case_brief.report import choose
+
+    good = {"passes_all_gates": True, "rubric": 1.0, "mean_s": 20}
+    bad = {"passes_all_gates": False, "rubric": 1.0, "mean_s": 20}
+    models = {"m r1": good, "m r2": bad, "m (all runs)": bad}
+    assert choose(models, 0.8)[0] is None
+    assert choose({"m r1": good, "m (all runs)": good}, 0.8)[0] == "m (all runs)"

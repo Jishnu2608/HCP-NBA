@@ -75,6 +75,17 @@ qualifies, the template stays.
 - Both gated at 0. Not caught yet (found by hand): an open recommendation named where none
   exists; categories outside the list above, such as age.
 
+## Hybrid brief (prompts v5 and v6, 2026-10-15)
+
+- `hybrid.py`: the model returns only `summary` and `suggested_focus` with citations
+  (`ModelNarrative`); `compose` adds the template's key points and not-recorded list (and the
+  neutral line when the note itself raises a medication question); `gate.assess` checks the
+  composed brief plus the model's citations.
+- v5: notes with a medication or symptom question are withheld from the model.
+- v6: citations limited to the case's item ids by a schema enum; `ctx:absent:1` states what is
+  not recorded; future due dates are worded as not yet due; `fabricated_recommendation` check.
+- With repeat runs, a model is judged on all its runs together ("(all runs)" column).
+
 ## Checker rules to know
 
 - Dates in any common form are normalised to `YYYY-MM-DD`; a date with no year is read as 2026.

@@ -1,10 +1,11 @@
 """Deterministic template brief: the fallback every model must justify itself against.
 
 Built only from the structured case fields, so it cannot invent anything. It does not read the
-free-text note (untrusted text), which is exactly the value a model has to add.
+free-text note (untrusted text), which is exactly the value a model has to add; it only checks
+whether the note raises a medication question, and if so adds the fixed neutral line.
 """
 
-from .cases import Case
+from .cases import AS_OF, MEDICATION_QUESTION, NEUTRAL_MEDICATION, Case
 from .schema import CaseBrief, KeyPoint
 
 
@@ -19,8 +20,12 @@ def template_brief(c: Case) -> CaseBrief:
     if c.last_refill and c.drug:
         pts.append(
             KeyPoint(
-                text=f"{c.drug}: last refill {c.last_refill.isoformat()}, next refill was due "
-                f"{c.due.isoformat()} and is not yet filled.",
+                text=f"{c.drug}: last refill {c.last_refill.isoformat()}, "
+                + (
+                    f"next refill due {c.due.isoformat()}."
+                    if c.due > AS_OF
+                    else f"next refill was due {c.due.isoformat()} and is not yet filled."
+                ),
                 citations=["ctx:rx:1"],
             )
         )
@@ -65,6 +70,8 @@ def template_brief(c: Case) -> CaseBrief:
         )
     else:
         missing.append("No outreach recorded.")
+    if c.note and MEDICATION_QUESTION.search(c.note):
+        pts.append(KeyPoint(text=NEUTRAL_MEDICATION, citations=["ctx:note:1"]))
     if c.content_id:
         pts.append(
             KeyPoint(

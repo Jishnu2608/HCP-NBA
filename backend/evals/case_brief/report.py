@@ -12,21 +12,17 @@ from pathlib import Path
 from . import gate
 from . import thresholds as T
 from .cases import build_cases
-from .checks import evaluate
-from .schema import CaseBrief
 
 _CASES = {c.id: c for c in build_cases()}
 
 
-def rescore(rec: dict, show_patient_id: bool = True) -> dict:
+def rescore(rec: dict, version: int) -> dict:
     """Re-run the current checks and gate on the stored answer, so a checker fix applies to every
-    model. `show_patient_id` must match what the prompt version showed the model."""
-    case = _CASES[rec["case"]]
+    model. `version` is the prompt version the answer was produced with."""
     final = rec["attempts"][-1] if rec["attempts"] else None
-    if final and final["error"] is None:
-        brief = CaseBrief.model_validate_json(final["output"])
-        rec["evaluation"] = evaluate(case, brief, show_patient_id)
-    decision = gate.decide(case, final["output"] if final else None, show_patient_id)
+    text = final["output"] if final and final["error"] is None else None
+    evaluation, decision = gate.assess(_CASES[rec["case"]], text, version)
+    rec["evaluation"] = evaluation
     rec["gate"] = {"source": decision["source"], "reasons": decision["reasons"]}
     return rec
 
@@ -107,6 +103,10 @@ def summarize_model(recs: list[dict]) -> dict:
 
 
 def choose(models: dict[str, dict], template_rubric: float) -> tuple[str | None, str]:
+    # With repeat runs, a model is judged on all its runs together, never on its best run.
+    combined = {k: v for k, v in models.items() if k.endswith("(all runs)")}
+    judged_bases = {k.split(" ")[0] for k in combined}
+    models = combined | {k: v for k, v in models.items() if k.split(" ")[0] not in judged_bases}
     ok = {k: v for k, v in models.items() if v["passes_all_gates"]}
     if not ok:
         return None, "No model passes every gate. Keep the deterministic template."
@@ -134,11 +134,11 @@ def write(run_dir: Path) -> dict:
     template_rubric = _rubric([b["evaluation"] for b in base])
     template_critical = sum(len(b["evaluation"]["critical"]) for b in base)
 
-    show_pid = int(meta["prompt_version"]) < 3
+    version = int(meta["prompt_version"])
     models: dict[str, dict] = {}
     raw: dict[str, list[dict]] = {}
     for mdir in sorted(d for d in run_dir.iterdir() if d.is_dir()):
-        recs = [rescore(json.loads(f.read_text()), show_pid) for f in sorted(mdir.glob("*.json"))]
+        recs = [rescore(json.loads(f.read_text()), version) for f in sorted(mdir.glob("*.json"))]
         if recs:
             raw[recs[0]["model"]] = recs
             models[recs[0]["model"]] = summarize_model(recs)
