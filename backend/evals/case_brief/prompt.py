@@ -4,6 +4,8 @@ v1  pilot only.
 v2  run1: dates as YYYY-MM-DD, name the open recommendation's content id.
 v3  identity withheld from the model (the gate attaches it); patient medication or symptom
     questions are replaced by one neutral sentence instead of being repeated.
+v4  not_recorded may list only what no item records; the neutral line only for an item that
+    itself asks or reports about medicine or symptoms (both also enforced by the gate).
 """
 
 import json
@@ -11,7 +13,7 @@ import json
 from .cases import AS_OF, Case, context_items
 from .schema import json_schema
 
-PROMPT_VERSION = "3"
+PROMPT_VERSION = "4"
 SHOW_PATIENT_ID = False  # v3: the backend, not the model, owns the patient's identity
 NEUTRAL_MEDICATION = "Patient raised a medication question; clinician review needed."
 
@@ -39,6 +41,11 @@ SYSTEM = (
     "content id in a key point and in suggested_focus.\n"
     "- If two items disagree, say they conflict and give both values with their citations.\n"
     "- List what a care manager would expect to see but the context lacks under not_recorded.\n"
+    "  not_recorded lists only things that no context item records. If an item records consent, "
+    "a refill, days covered, outreach, enrolment or a recommendation, never list that as not "
+    "recorded. You may list reasons or details beyond what an item records.\n"
+    "- Use the neutral medication line only for an item that itself asks or reports something "
+    "about medicine, doses or symptoms, and cite that item. Never use it otherwise.\n"
     "- Be brief: summary under 60 words, each key point one sentence under 30 words, "
     "suggested_focus one sentence.\n"
     f"Today is {AS_OF.isoformat()}. Answer with JSON only, matching this schema: "

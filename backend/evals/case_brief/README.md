@@ -65,6 +65,16 @@ qualifies, the template stays.
 - Repeat runs: `--label r1 --temperature 0 --seed 7` and so on; the report adds an
   "(all runs)" column judged on every run together.
 
+## Step 2 checks (2026-10-15, prompt v4)
+
+- `false_not_recorded`: a not_recorded entry may not name consent, a refill, days covered,
+  outreach, enrolment or a recommendation when an item records it (asking for reasons or
+  details beyond the record is allowed).
+- `unsupported_neutral_line`: the neutral medication line must cite an item whose own text holds
+  a medication or symptom question.
+- Both gated at 0. Not caught yet (found by hand): an open recommendation named where none
+  exists; categories outside the list above, such as age.
+
 ## Checker rules to know
 
 - Dates in any common form are normalised to `YYYY-MM-DD`; a date with no year is read as 2026.

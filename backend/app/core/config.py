@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     # "template" needs no key and no network; other providers are plugged in later.
     llm_provider: str = "template"
 
+    # Shared AI layer (app/ai, V2; not yet used by any feature). See docs/ai-architecture.md.
+    # "ollama" = local model on this machine (default), "cloud" = organisation-funded API
+    # (adapter not implemented yet, so it never calls out), "off" = no generation.
+    # Selected here on the server only; no automatic fallback between providers.
+    ai_provider: str = "ollama"
+    ai_ollama_base_url: str = "http://127.0.0.1:11434"
+    ai_ollama_model: str = "qwen3.5:9b-q4_K_M"
+    ai_timeout_seconds: float = 300.0
+    ai_cloud_vendor: str = ""  # e.g. anthropic, azure_openai, bedrock, vertex
+    ai_cloud_model: str = ""
+    ai_cloud_base_url: str = ""  # only for vendors that need one
+    # NAME of the environment variable holding the key, never the key itself.
+    ai_cloud_api_key_env: str = ""
+
     datagen_seed: int = 20260101
 
     admin_email: str = "admin@admin.com"

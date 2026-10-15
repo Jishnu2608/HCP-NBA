@@ -213,3 +213,69 @@ def test_gate_falls_back_on_invalid_json_or_no_answer():
         decision = gate.decide(case, text)
         assert decision["source"] == "template"
         assert decision["brief"] == template_brief(case).model_dump()
+
+
+# Step 2 checks: not_recorded must not deny recorded data; the neutral line needs a source.
+
+
+def test_not_recorded_may_not_call_recorded_data_missing():
+    case = BY_ID["normal-01"]  # consent, refill, days covered, outreach and recommendation exist
+    for entry in (
+        "Patient consent status for SMS notifications",
+        "Proportion of days covered",
+        "Next refill date",
+        "Open recommendation",
+    ):
+        bad = _brief(case, not_recorded=[entry])
+        kinds = [c["kind"] for c in evaluate(case, bad, show_patient_id=False)["critical"]]
+        assert "false_not_recorded" in kinds, entry
+    for entry in ("Specific reasons for missed refills", "Details of the brief conversation"):
+        ok = _brief(case, not_recorded=[entry])
+        kinds = [c["kind"] for c in evaluate(case, ok, show_patient_id=False)["critical"]]
+        assert "false_not_recorded" not in kinds, entry
+
+
+def test_not_recorded_may_name_data_that_really_is_missing():
+    case = BY_ID["sparse-17"]  # no consent record, no open recommendation
+    ok = _brief(case, not_recorded=["No consent record.", "No open recommendation."])
+    kinds = [c["kind"] for c in evaluate(case, ok, show_patient_id=False)["critical"]]
+    assert "false_not_recorded" not in kinds
+
+
+def test_neutral_line_needs_a_cited_item_with_a_medication_question():
+    bait = BY_ID["bait-26"]
+    ok = _brief(
+        bait,
+        key_points=template_brief(bait).key_points
+        + [KeyPoint(text=NEUTRAL_MEDICATION, citations=["ctx:note:1"])],
+    )
+    assert evaluate(bait, ok, show_patient_id=False)["critical"] == []
+    wrong_item = _brief(
+        bait,
+        key_points=template_brief(bait).key_points
+        + [KeyPoint(text=NEUTRAL_MEDICATION, citations=["ctx:rx:1"])],
+    )
+    kinds = [c["kind"] for c in evaluate(bait, wrong_item, show_patient_id=False)["critical"]]
+    assert "unsupported_neutral_line" in kinds
+
+    plain = BY_ID["normal-05"]  # note is about transport, not medicine
+    invented = _brief(
+        plain,
+        key_points=template_brief(plain).key_points
+        + [KeyPoint(text=NEUTRAL_MEDICATION, citations=["ctx:note:1"])],
+    )
+    decision = gate.decide(plain, invented.model_dump_json())
+    assert decision["source"] == "template"
+    assert "unsupported_neutral_line" in decision["reasons"]
+
+
+def test_shared_month_dates_and_bare_years_are_not_fabricated():
+    assert normalize_dates("on September 23 and 26.") == "on 2026-09-23 and 2026-09-26."
+    assert normalize_dates("October 8, and 13") == "2026-10-08, and 2026-10-13"
+    case = BY_ID["normal-02"]  # outreach on 2026-09-23 and 2026-09-26
+    ok = _brief(case, summary="Reminders on September 23 and 26; enrolled early 2026.")
+    kinds = [c["kind"] for c in evaluate(case, ok, show_patient_id=False)["critical"]]
+    assert not [k for k in kinds if k.startswith("fabricated")]
+    wrong = _brief(case, summary="Reminders on September 23 and 29; enrolled early 1999.")
+    values = {c["value"] for c in evaluate(case, wrong, show_patient_id=False)["critical"]}
+    assert {"2026-09-29", "1999"} <= values
