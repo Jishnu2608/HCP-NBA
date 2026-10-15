@@ -22,6 +22,20 @@ MEDICATION_QUESTION = re.compile(
 )
 NEUTRAL_MEDICATION = "Patient raised a medication question; clinician review needed."
 WITHHELD_NOTE = "Free-text note withheld: medication question for clinician review."
+
+# A note that reads as instructions to a system or assistant rather than information about the
+# patient (prompt injection, or staff writing commands). From prompt v7 it is withheld from the
+# model and flagged for staff review by the backend; it never gets the neutral medication line.
+INSTRUCTION_LIKE = re.compile(
+    r"\b(?:ignore|disregard|override|forget)\b.{0,40}\b(?:rules?|instructions?|prompts?|above)\b"
+    r"|\b(?:system|assistant|developer)\s*(?:override)?\s*:"
+    r"|\b(?:system|admin) override\b"
+    r"|\breply only\b|\brespond only\b|\bstop writing\b|\bact as\b|\bnew instructions?\b"
+    r"|\b(?:send|email|forward)\b.{0,40}\bto\b\s*\S+@\S+",
+    re.I,
+)
+WITHHELD_INSTRUCTION = "Free-text note withheld: it contains instructions, not patient information."
+INSTRUCTION_NOTICE = "A free-text note was withheld for staff review: it contains instructions."
 DRUGS = ["Cardiozen", "Glucovia", "Pulmora", "Neurelle", "Respirox", "Lipidra", "Thyrovan"]
 ACTIONS = [
     "phone outreach about a refill barrier",
@@ -130,6 +144,7 @@ def context_items(
     show_patient_id: bool = True,
     withhold_medication_notes: bool = False,
     explicit_status: bool = False,
+    withhold_instruction_notes: bool = False,
 ) -> list[tuple[str, str]]:
     """Context shown to the model. From prompt v3 the patient id is withheld: the backend owns
     identity and attaches it to the brief, so the model has nothing to copy or mistype. From v5
@@ -193,8 +208,13 @@ def context_items(
             )
         )
     if c.note:
-        withhold = withhold_medication_notes and MEDICATION_QUESTION.search(c.note)
-        items.append(("ctx:note:1", WITHHELD_NOTE if withhold else f"Free-text note: {c.note}"))
+        if withhold_instruction_notes and INSTRUCTION_LIKE.search(c.note):
+            text = WITHHELD_INSTRUCTION
+        elif withhold_medication_notes and MEDICATION_QUESTION.search(c.note):
+            text = WITHHELD_NOTE
+        else:
+            text = f"Free-text note: {c.note}"
+        items.append(("ctx:note:1", text))
     if c.contact:
         x = c.contact
         items.append(

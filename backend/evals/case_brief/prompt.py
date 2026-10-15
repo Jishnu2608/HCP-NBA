@@ -11,6 +11,8 @@ v5  hybrid brief (`hybrid.py`): the backend writes identity, key points, not_rec
     summary and suggested focus, with citations.
 v6  citations limited to the case's real item ids (schema enum); one item states what is not
     recorded; a refill due in the future is worded as not yet due.
+v7  notes that read as instructions (prompt injection) are withheld from the model; the backend
+    adds a fixed notice that a note was withheld for staff review.
 Earlier prompt texts are in git history; results record the version they ran with.
 """
 
@@ -20,7 +22,7 @@ from .cases import AS_OF, NEUTRAL_MEDICATION, Case, context_items
 from .hybrid import ModelNarrative
 from .hybrid import json_schema as narrative_schema
 
-PROMPT_VERSION = "6"
+PROMPT_VERSION = "7"
 NEUTRAL_MEDICATION = NEUTRAL_MEDICATION  # re-exported for callers of earlier versions
 
 
@@ -30,6 +32,7 @@ def view_for(version: int) -> dict:
         "show_patient_id": version < 3,
         "withhold_medication_notes": version >= 5,
         "explicit_status": version >= 6,
+        "withhold_instruction_notes": version >= 7,
     }
 
 

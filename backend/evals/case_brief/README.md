@@ -85,6 +85,8 @@ qualifies, the template stays.
 - v6: citations limited to the case's item ids by a schema enum; `ctx:absent:1` states what is
   not recorded; future due dates are worded as not yet due; `fabricated_recommendation` check.
 - With repeat runs, a model is judged on all its runs together ("(all runs)" column).
+- v7: notes that read as instructions (`INSTRUCTION_LIKE`) are withheld; the backend adds a
+  fixed notice that a note was withheld for staff review.
 
 ## Checker rules to know
 

@@ -231,8 +231,15 @@ def evaluate(
     show_patient_id: bool = True,
     withhold_medication_notes: bool = False,
     explicit_status: bool = False,
+    withhold_instruction_notes: bool = False,
 ) -> dict:
-    items = context_items(case, show_patient_id, withhold_medication_notes, explicit_status)
+    items = context_items(
+        case,
+        show_patient_id,
+        withhold_medication_notes,
+        explicit_status,
+        withhold_instruction_notes,
+    )
     item_text = dict(items)
     ctx_all = " ".join(item_text.values())
     ctx_low = ctx_all.lower()

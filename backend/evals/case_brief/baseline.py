@@ -2,10 +2,18 @@
 
 Built only from the structured case fields, so it cannot invent anything. It does not read the
 free-text note (untrusted text), which is exactly the value a model has to add; it only checks
-whether the note raises a medication question, and if so adds the fixed neutral line.
+whether the note reads as instructions (fixed withheld notice) or raises a medication question
+(fixed neutral line).
 """
 
-from .cases import AS_OF, MEDICATION_QUESTION, NEUTRAL_MEDICATION, Case
+from .cases import (
+    AS_OF,
+    INSTRUCTION_LIKE,
+    INSTRUCTION_NOTICE,
+    MEDICATION_QUESTION,
+    NEUTRAL_MEDICATION,
+    Case,
+)
 from .schema import CaseBrief, KeyPoint
 
 
@@ -70,7 +78,9 @@ def template_brief(c: Case) -> CaseBrief:
         )
     else:
         missing.append("No outreach recorded.")
-    if c.note and MEDICATION_QUESTION.search(c.note):
+    if c.note and INSTRUCTION_LIKE.search(c.note):
+        pts.append(KeyPoint(text=INSTRUCTION_NOTICE, citations=["ctx:note:1"]))
+    elif c.note and MEDICATION_QUESTION.search(c.note):
         pts.append(KeyPoint(text=NEUTRAL_MEDICATION, citations=["ctx:note:1"]))
     if c.content_id:
         pts.append(
