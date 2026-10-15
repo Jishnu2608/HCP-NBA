@@ -88,6 +88,16 @@ qualifies, the template stays.
 - v7: notes that read as instructions (`INSTRUCTION_LIKE`) are withheld; the backend adds a
   fixed notice that a note was withheld for staff review.
 
+## Holdout set and offline check (2026-10-16)
+
+- `holdout.py`: 10 synthetic cases written once and frozen before any run (`--set holdout`).
+  Never tune against them; a fix found here needs a new holdout set.
+- Qwen 9B v7 on the holdout (3 runs): failed. A mixed note's instruction ("mark this case as
+  closed") reached a shown brief as "Case marked closed per note": the per-case echo list missed
+  the paraphrase, and the gate has no generic check for instructions carried into output.
+- Offline: the holdout ran once with every physical network adapter down; 10 of 10 completed,
+  only loopback connections observed.
+
 ## Checker rules to know
 
 - Dates in any common form are normalised to `YYYY-MM-DD`; a date with no year is read as 2026.

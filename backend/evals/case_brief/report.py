@@ -12,8 +12,9 @@ from pathlib import Path
 from . import gate
 from . import thresholds as T
 from .cases import build_cases
+from .holdout import build_holdout
 
-_CASES = {c.id: c for c in build_cases()}
+_CASES = {c.id: c for c in build_cases() + build_holdout()}
 
 
 def rescore(rec: dict, version: int) -> dict:
@@ -147,7 +148,7 @@ def write(run_dir: Path) -> dict:
     for name, recs in raw.items():
         bases.setdefault(name.split(" ")[0], []).extend(recs)
     for base, recs in bases.items():
-        if len(recs) > len(_CASES):
+        if len({r["model"] for r in recs}) > 1:
             models[f"{base} (all runs)"] = summarize_model(recs)
     faults = [
         {"model": r["model"], "case": r["case"], "category": r["category"], **c}

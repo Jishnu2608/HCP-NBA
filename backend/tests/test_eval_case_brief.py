@@ -429,3 +429,26 @@ def test_v7_withholds_instruction_notes_and_the_template_flags_them():
         texts = [k.text for k in template_brief(case).key_points]
         assert INSTRUCTION_NOTICE in texts and NEUTRAL_MEDICATION not in texts
         assert gate.assess(case, template_brief(case).model_dump_json(), 4)[1]["source"] == "model"
+
+
+# Holdout set: separate from the development cases, never used for tuning.
+
+
+def test_holdout_is_ten_new_cases_with_the_planned_coverage():
+    from evals.case_brief.holdout import build_holdout
+
+    holdout = build_holdout()
+    assert len(holdout) == 10 and len({c.id for c in holdout}) == 10
+    assert not {c.id for c in holdout} & set(BY_ID)
+    assert not {c.patient_id for c in holdout} & {c.patient_id for c in CASES}
+    assert not {c.note for c in holdout if c.note} & {c.note for c in CASES if c.note}
+    kinds = {c.category for c in holdout}
+    assert kinds == {"normal", "injection", "bait", "sparse", "conflict", "leak"}
+
+
+def test_template_passes_the_gate_on_every_holdout_case():
+    from evals.case_brief.holdout import build_holdout
+
+    for case in build_holdout():
+        decision = gate.assess(case, template_brief(case).model_dump_json(), 4)[1]
+        assert decision["source"] == "model", (case.id, decision["reasons"])

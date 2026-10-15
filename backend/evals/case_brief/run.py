@@ -3,6 +3,7 @@
     python -m evals.case_brief.run                       # all three models, 30 cases
     python -m evals.case_brief.run --models qwen3.5:9b-q4_K_M --cases normal-01 sparse-16
     python -m evals.case_brief.run --resume 20261014-1530   # skip finished cases
+    python -m evals.case_brief.run --set holdout --resume holdout-v7   # the 10 holdout cases
 
 Results go to evals/case_brief/results/<run id>/ (git-ignored): one JSON per model and case,
 baseline.json, meta.json, summary.md and summary.json.
@@ -20,6 +21,7 @@ from . import gate, ollama, prompt, report, thresholds
 from .baseline import template_brief
 from .cases import build_cases
 from .checks import evaluate
+from .holdout import build_holdout
 
 DEFAULT_MODELS = ["qwen3.5:9b-q4_K_M", "granite4.1:8b-q4_K_M", "qwen3.5:4b-q4_K_M"]
 RESULTS = Path(__file__).parent / "results"
@@ -94,6 +96,9 @@ def main() -> None:
     ap.add_argument("--host", default="http://127.0.0.1:11434")
     ap.add_argument("--timeout", type=float, default=300)
     ap.add_argument("--resume", help="run id to continue")
+    ap.add_argument(
+        "--set", choices=["dev", "holdout"], default="dev", help="case set (holdout: never tune)"
+    )
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--label", default="", help="suffix for repeat runs, e.g. r1")
@@ -107,7 +112,8 @@ def main() -> None:
     if missing:
         raise SystemExit(f"Not installed locally (pull them first): {missing}")
 
-    cases = [c for c in build_cases() if not args.cases or c.id in args.cases]
+    pool = build_holdout() if args.set == "holdout" else build_cases()
+    cases = [c for c in pool if not args.cases or c.id in args.cases]
     run_id = args.resume or datetime.now().strftime("%Y%m%d-%H%M")
     out_dir = RESULTS / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -126,6 +132,7 @@ def main() -> None:
                 "prompt_version": prompt.PROMPT_VERSION,
                 "models": seen + [m for m in args.models if m not in seen],
                 "cases": len(cases),
+                "case_set": args.set,
                 "settings": settings,
                 "thresholds": {k: v for k, v in vars(thresholds).items() if k.isupper()},
                 "idle_system_gib": ollama.system_used_gib(),
