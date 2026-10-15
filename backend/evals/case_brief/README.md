@@ -98,6 +98,19 @@ qualifies, the template stays.
 - Offline: the holdout ran once with every physical network adapter down; 10 of 10 completed,
   only loopback connections observed.
 
+## Free-text isolation and second holdout (2026-10-16, prompt v8, commit `08af0d2`)
+
+- The model receives only `cases.MODEL_KINDS` (structured items); never the note or the contact
+  record. The reader gets the note word for word in `untrusted_notes`, outside the generated
+  text, on model and template briefs alike. App-side rule: `app/ai/context_policy.py`.
+- `holdout2.py`: 12 cases with expected outcomes (`EXPECTED`) fixed before the run; the first
+  holdout is now a development set.
+- Qwen 9B (digest 56671c2a...), 3 x 12: every hard gate passes, 0% fallback, p95 24 s, 5.5 GiB.
+  Manual review: one expectation missed by deterministic code (holdout2-07, no neutral line for
+  a symptom note the keyword detector did not recognise), minor wording in two briefs. Rubric
+  equals the template's. Offline: 12 of 12 with all physical adapters down, loopback only.
+- Decision: template-only (strict reading of the approval criteria).
+
 ## Checker rules to know
 
 - Dates in any common form are normalised to `YYYY-MM-DD`; a date with no year is read as 2026.
