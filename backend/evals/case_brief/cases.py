@@ -34,6 +34,10 @@ INSTRUCTION_LIKE = re.compile(
     r"|\b(?:send|email|forward)\b.{0,40}\bto\b\s*\S+@\S+",
     re.I,
 )
+# From prompt v8 the model receives only these structured item kinds: no free-text note and no
+# contact record, by any route. The note is shown to the reader verbatim, as untrusted data.
+MODEL_KINDS = ("patient", "rx", "pdc", "consent", "touch", "nba", "absent")
+UNTRUSTED_NOTE_LABEL = "Free-text note, shown as written (untrusted; not checked or summarised)"
 WITHHELD_INSTRUCTION = "Free-text note withheld: it contains instructions, not patient information."
 INSTRUCTION_NOTICE = "A free-text note was withheld for staff review: it contains instructions."
 DRUGS = ["Cardiozen", "Glucovia", "Pulmora", "Neurelle", "Respirox", "Lipidra", "Thyrovan"]
@@ -145,6 +149,7 @@ def context_items(
     withhold_medication_notes: bool = False,
     explicit_status: bool = False,
     withhold_instruction_notes: bool = False,
+    structured_only: bool = False,
 ) -> list[tuple[str, str]]:
     """Context shown to the model. From prompt v3 the patient id is withheld: the backend owns
     identity and attaches it to the brief, so the model has nothing to copy or mistype. From v5
@@ -240,6 +245,8 @@ def context_items(
             items.append(
                 ("ctx:absent:1", "Not recorded for this patient: " + "; ".join(absent) + ".")
             )
+    if structured_only:
+        items = [(i, t) for i, t in items if i.split(":")[1] in MODEL_KINDS]
     return items
 
 

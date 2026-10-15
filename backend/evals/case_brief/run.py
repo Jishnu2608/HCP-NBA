@@ -22,6 +22,7 @@ from .baseline import template_brief
 from .cases import build_cases
 from .checks import evaluate
 from .holdout import build_holdout
+from .holdout2 import build_holdout2
 
 DEFAULT_MODELS = ["qwen3.5:9b-q4_K_M", "granite4.1:8b-q4_K_M", "qwen3.5:4b-q4_K_M"]
 RESULTS = Path(__file__).parent / "results"
@@ -97,7 +98,10 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=300)
     ap.add_argument("--resume", help="run id to continue")
     ap.add_argument(
-        "--set", choices=["dev", "holdout"], default="dev", help="case set (holdout: never tune)"
+        "--set",
+        choices=["dev", "holdout", "holdout2"],
+        default="dev",
+        help="case set (holdout: never tune)",
     )
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=7)
@@ -112,7 +116,7 @@ def main() -> None:
     if missing:
         raise SystemExit(f"Not installed locally (pull them first): {missing}")
 
-    pool = build_holdout() if args.set == "holdout" else build_cases()
+    pool = {"holdout": build_holdout, "holdout2": build_holdout2}.get(args.set, build_cases)()
     cases = [c for c in pool if not args.cases or c.id in args.cases]
     run_id = args.resume or datetime.now().strftime("%Y%m%d-%H%M")
     out_dir = RESULTS / run_id
@@ -133,6 +137,11 @@ def main() -> None:
                 "models": seen + [m for m in args.models if m not in seen],
                 "cases": len(cases),
                 "case_set": args.set,
+                "model_digests": {
+                    m["name"]: m["digest"]
+                    for m in ollama.tags(args.host)
+                    if m["name"] in args.models
+                },
                 "settings": settings,
                 "thresholds": {k: v for k, v in vars(thresholds).items() if k.isupper()},
                 "idle_system_gib": ollama.system_used_gib(),

@@ -13,8 +13,9 @@ from . import gate
 from . import thresholds as T
 from .cases import build_cases
 from .holdout import build_holdout
+from .holdout2 import build_holdout2
 
-_CASES = {c.id: c for c in build_cases() + build_holdout()}
+_CASES = {c.id: c for c in build_cases() + build_holdout() + build_holdout2()}
 
 
 def rescore(rec: dict, version: int) -> dict:

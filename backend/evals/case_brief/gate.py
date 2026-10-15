@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from . import hybrid
 from .baseline import template_brief
-from .cases import Case
+from .cases import UNTRUSTED_NOTE_LABEL, Case
 from .checks import evaluate
 from .prompt import view_for
 from .schema import CaseBrief
@@ -33,7 +33,7 @@ def assess(case: Case, text: str | None, version: int) -> tuple[dict | None, dic
         except (ValidationError, ValueError):
             reasons.append("schema")
     if brief is not None:
-        evaluation = evaluate(case, brief, **view)
+        evaluation = evaluate(case, brief, **(view | {"structured_only": False}))
         evaluation["critical"] += extra
         evaluation["miscited_statements"] += miscited
         evaluation["statements"] += 2 if version >= 5 else 0
@@ -46,6 +46,13 @@ def assess(case: Case, text: str | None, version: int) -> tuple[dict | None, dic
         "source": "template" if reasons else "model",
         "brief": shown.model_dump(),
         "reasons": reasons,
+        # The note, word for word, for the authorised reader: data, outside the generated and
+        # checked text, shown whether the model or the template wrote the brief.
+        "untrusted_notes": (
+            [{"label": UNTRUSTED_NOTE_LABEL, "text": case.note, "citation": "ctx:note:1"}]
+            if case.note
+            else []
+        ),
     }
     return evaluation, decision
 

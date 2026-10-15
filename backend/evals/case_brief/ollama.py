@@ -32,6 +32,10 @@ def version(host: str) -> str:
     return _call(host, "/api/version", None, 10)["version"]
 
 
+def tags(host: str) -> list[dict]:
+    return _call(host, "/api/tags", None, 10)["models"]
+
+
 def installed(host: str) -> set[str]:
     return {m["name"] for m in _call(host, "/api/tags", None, 10)["models"]}
 

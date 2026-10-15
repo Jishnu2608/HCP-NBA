@@ -232,7 +232,10 @@ def evaluate(
     withhold_medication_notes: bool = False,
     explicit_status: bool = False,
     withhold_instruction_notes: bool = False,
+    structured_only: bool = False,
 ) -> dict:
+    # Checks run against everything the brief may cite (the backend's own key points cite the
+    # note); what the model may cite is limited separately (`hybrid.check_citations`).
     items = context_items(
         case,
         show_patient_id,
