@@ -162,8 +162,11 @@ template-only.
   manager" instead of the patient (v10-05 r3, v10-10 r3), "pharmacy system" for the record
   (v10-05 r3). Rubric 0.958, equal to the template. Online watcher: the Ollama server and Python
   stayed on 127.0.0.1; the Ollama desktop tray app (`ollama app.exe`) made 3 HTTPS connections at
-  11:47 (20.207.73.82, 34.36.133.15, 185.199.110.133; likely its update check). Offline not yet
-  run on v10.
+  11:47 (20.207.73.82, 34.36.133.15, 185.199.110.133; likely its update check).
+- Offline (`results/offline-v10-qwen3`, v10 set once at temperature 0): every physical adapter down
+  from 12:03:21 to 12:06:54 (script check), 12 of 12 completed, every hard gate passed, outputs
+  identical to the online run, connection watcher saw only 127.0.0.1. Limits: the watcher polls
+  every 2 s and covers Ollama and Python processes only; it is not a firewall-level proof.
 
 ## Checker rules to know
 
