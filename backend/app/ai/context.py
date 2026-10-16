@@ -158,7 +158,9 @@ def _patient_items(
         outcome = str(r["outcome"]).replace("_", " ")
         text = f"{day.isoformat()} {r['channel_label']} {r['type_label'].lower()}; {outcome}."
         cid = add("touch", n, text, "interactions", raw.id, day)
-        facts["touches"].append({"day": day, "text": text, "item": cid})
+        facts["touches"].append(
+            {"day": day, "text": text, "item": cid, "outcome": str(r["outcome"])}
+        )
 
     nba = model.get("open_nba")
     if nba:

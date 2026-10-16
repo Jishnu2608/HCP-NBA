@@ -21,7 +21,7 @@ from app.ai.registry import register
 from app.core.permissions import Permission
 
 ID = "case_brief"
-VERSION = "1"
+VERSION = "2"  # 2: outreach-response line in the template (2026-10-16)
 PROMPT_VERSION = "10"
 # What the model may read. Consent, notes, contact records and identifiers are not here.
 MODEL_KINDS = ("patient", "rx", "pdc", "touch", "nba", "absent")
@@ -55,7 +55,7 @@ class CaseBriefView(BaseModel):
 
     summary: Statement
     suggested_focus: Statement
-    key_points: list[Statement] = Field(max_length=10)
+    key_points: list[Statement] = Field(max_length=12)
     not_recorded: list[str] = Field(max_length=8)
 
 
@@ -134,6 +134,27 @@ def _cap(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+def outreach_pattern(touches: list[dict]) -> Statement | None:
+    """How many of the recent outreach records got no response, counted from their recorded
+    outcomes (only "no_response" counts; opened, completed, filled and pending do not). Cites
+    exactly the unanswered records. None when every one was answered."""
+    unanswered = [t for t in touches if t["outcome"] == "no_response"]
+    if not unanswered:
+        return None
+    latest = max(t["day"] for t in unanswered).isoformat()
+    n, total = len(unanswered), len(touches)
+    text = (
+        f"No response to the last outreach record ({latest})."
+        if total == 1
+        else f"No response to {n} of the last {total} outreach records (latest {latest})."
+    )
+    return Statement(
+        text=text,
+        citations=[t["item"] for t in unanswered],
+        origin="record",
+    )
+
+
 def _key_points(ctx: AuthorizedContext) -> tuple[list[Statement], list[str]]:
     f = ctx.facts
     points = [Statement(text=f"Age {f['age']}.", citations=[f["patient_item"]], origin="record")]
@@ -179,6 +200,9 @@ def _key_points(ctx: AuthorizedContext) -> tuple[list[Statement], list[str]]:
                 text=f"Last outreach {last['text']}", citations=[last["item"]], origin="record"
             )
         )
+        pattern = outreach_pattern(f["touches"])
+        if pattern:
+            points.append(pattern)
     if f["nba"]:
         n = f["nba"]
         using = f" using {n['content_id']}" if n.get("content_id") else ""
@@ -197,13 +221,17 @@ def _key_points(ctx: AuthorizedContext) -> tuple[list[Statement], list[str]]:
         "proportion of days covered": "Proportion of days covered is not recorded.",
     }
     missing += [labels[a] for a in f["absent"]]
-    return points[:10], missing
+    return points[:12], missing
 
 
 def fallback(ctx: AuthorizedContext) -> dict:
     """The deterministic template: built from structured facts only, never from a note."""
     points, missing = _key_points(ctx)
+    # The first two facts after age, plus the outreach-response line when there is one.
     body = points[1:3] or points[:1]
+    pattern = next((p for p in points if p.text.startswith("No response to ")), None)
+    if pattern is not None and pattern not in body:
+        body = [*body, pattern]
     summary = Statement(
         text=" ".join(p.text for p in body),
         citations=[c for p in body for c in p.citations],

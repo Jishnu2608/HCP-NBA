@@ -177,8 +177,11 @@ audit and API need no change. No operation is approved beyond the Case Brief.
 
 ## Case Brief
 
-Prompt v10 (`app/ai/operations/case_brief.py`). The server writes key points, consent, what is
-not recorded and the template summary and focus; the model writes `summary` and
+Prompt v10, operation version 2 (`app/ai/operations/case_brief.py`). The server writes key
+points, consent, what is not recorded and the template summary and focus; since version 2 the
+template also states unanswered outreach from recorded outcomes ("No response to 4 of the last 5
+outreach records (latest 2026-09-09).", citing exactly those records), so the template carries
+the outreach pattern the model wording added in testing; the model writes `summary` and
 `suggested_focus` with citations, constrained to the item ids of the call. Evaluation history:
 `backend/evals/case_brief/` (standalone, frozen copy of the checks); integrated evaluation on the
 application path: `backend/evals/case_brief_app/`. Known wording limits from the v10 hand read

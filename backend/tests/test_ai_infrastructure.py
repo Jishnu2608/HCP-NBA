@@ -839,3 +839,57 @@ def test_dates_inside_text_are_not_mistaken_for_phone_numbers(db):
     if rx_dates:
         findings, _ = safety.check_text_fields(ctx, {"summary": (f"Due {rx_dates[0]}.", [])})
         assert "leak:contact" not in {f.kind for f in findings}
+
+
+# --- Template: outreach-response line --------------------------------------------------------
+
+
+def test_template_states_unanswered_outreach_from_recorded_outcomes(db):
+    seen_line = False
+    for pid in panel(db, user(db, "cm01")):
+        ctx = ctx_for(db, pid)
+        touches = ctx.facts["touches"]
+        brief = case_brief.fallback(ctx)
+        lines = [kp for kp in brief["key_points"] if kp["text"].startswith("No response to ")]
+        unanswered = [t for t in touches if t["outcome"] == "no_response"]
+        if unanswered:
+            seen_line = True
+            latest = max(t["day"] for t in unanswered).isoformat()
+            expected = (
+                f"No response to the last outreach record ({latest})."
+                if len(touches) == 1
+                else f"No response to {len(unanswered)} of the last {len(touches)} "
+                f"outreach records (latest {latest})."
+            )
+            assert lines == [
+                {
+                    "text": expected,
+                    "citations": [t["item"] for t in unanswered],
+                    "origin": "record",
+                }
+            ]
+            assert lines[0]["text"] in brief["summary"]["text"]
+            assert set(lines[0]["citations"]) <= set(brief["summary"]["citations"])
+        else:
+            assert lines == []
+        assert any(kp["text"].startswith("Open recommendation") for kp in brief["key_points"]) == (
+            ctx.facts["nba"] is not None
+        )
+    assert seen_line  # the world has patients with unanswered outreach
+
+
+def test_outreach_pattern_counts_only_no_response():
+    from datetime import date
+
+    touches = [
+        {"day": date(2026, 2, 5), "item": "ctx:touch:1", "outcome": "completed"},
+        {"day": date(2026, 4, 8), "item": "ctx:touch:2", "outcome": "no_response"},
+        {"day": date(2026, 6, 8), "item": "ctx:touch:3", "outcome": "pending"},
+        {"day": date(2026, 9, 9), "item": "ctx:touch:4", "outcome": "no_response"},
+    ]
+    line = case_brief.outreach_pattern(touches)
+    assert line.text == "No response to 2 of the last 4 outreach records (latest 2026-09-09)."
+    assert line.citations == ["ctx:touch:2", "ctx:touch:4"]
+    assert case_brief.outreach_pattern(touches[:1]) is None
+    one = case_brief.outreach_pattern(touches[1:2])
+    assert one.text == "No response to the last outreach record (2026-04-08)."
