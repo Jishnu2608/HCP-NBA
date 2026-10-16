@@ -1,4 +1,5 @@
-"""Feasibility probes of the shared AI layer for the 15 candidate artifacts in AI_Artifacts.md.
+"""Feasibility probes of the shared AI layer for the 15 candidate artifacts in the local report
+docs/Reports/AI_Artifacts.md (git-ignored).
 
 These tests build no artifact. They exercise the shared components (contracts, context
 service, field policy, registry, orchestrator, safety checks, jobs, audit, read services and
