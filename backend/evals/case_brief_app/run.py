@@ -4,9 +4,11 @@
     python -m evals.case_brief_app.run --label app-v10-qwen3 --report # rebuild summary only
 
 A new synthetic world is generated into `results/<label>/world.db` (git-ignored), notes from
-`plan.NOTES` are added through the normal tables, and every case runs through
-`app.ai.orchestrator.submit` and `run` exactly as a care manager's request would, in prototype
-mode, with a recording wrapper around the configured local Ollama provider. Finished cases are
+`plan.NOTES` are added through the normal tables, and every case runs exactly as a care
+manager's request would: `orchestrator.submit` queues a job, the worker (`jobs.run_pending`)
+runs it, `orchestrator.current` gives what the reader sees. Prototype mode; a recording wrapper
+around the configured local Ollama provider keeps every request. A case that did not reach the
+model is a harness error and is reported as such. Finished cases are
 not repeated, so a stopped run continues where it stopped. Loopback only, like the app.
 """
 
@@ -22,11 +24,14 @@ from pathlib import Path
 
 os.environ.setdefault("NBA_RATE_LIMIT_ENABLED", "false")
 os.environ.setdefault("NBA_WORKER_MODE", "off")
+os.environ["NBA_AI_CASE_BRIEF_MODE"] = "prototype"
+
+from unittest import mock  # noqa: E402
 
 from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-from app import cycle  # noqa: E402
+from app import cycle, jobs  # noqa: E402
 from app.ai import orchestrator, registry  # noqa: E402
 from app.ai.operations import case_brief  # noqa: E402
 from app.ai.providers import get_provider  # noqa: E402
@@ -162,19 +167,23 @@ def _hits(text: str, never=(), ids=(), fragments=()) -> list[str]:
     return sorted(set(found))
 
 
-def run_case(db, pid, cm, index, settings, temperature, seed) -> dict:
+def run_case(db, factory, pid, cm, index, settings, temperature, seed) -> dict:
     spec = dataclasses.replace(case_brief.SPEC, temperature=temperature, seed=seed)
     registry._REGISTRY[OP] = spec
     provider = Recording(get_provider(settings))
     before = _records(db, pid)
     t0 = time.perf_counter()
-    gen, _ = orchestrator.submit(db, cm, OP, pid, settings=settings,
-                                 provider_factory=lambda s: provider)  # fmt: skip
-    status = orchestrator.run(db, gen.id, settings=settings, provider_factory=lambda s: provider)
+    with mock.patch.object(orchestrator, "get_provider", lambda s: provider):
+        gen, created = orchestrator.submit(db, cm, OP, pid, settings=settings)
+        if not created:
+            raise RuntimeError(f"{pid}: a generation was already active; harness error")
+        jobs.run_pending(factory)
     seconds = time.perf_counter() - t0
+    db.expire_all()
+    gen = db.get(type(gen), gen.id)
+    status = gen.status
     view = orchestrator.current(db, cm, OP, pid, settings=settings)
     after = _records(db, pid)
-    db.refresh(gen)
 
     never, ids, fragments = _forbidden(db, pid, index)
     sent = " ".join(m.content for r in provider.requests for m in r.messages).lower()
@@ -198,6 +207,8 @@ def run_case(db, pid, cm, index, settings, temperature, seed) -> dict:
         "model_digest": gen.model_digest,
         "shown_source": view["source"],
         "shown_text": shown,
+        "provider_calls": len(provider.requests),
+        "job_id": gen.job_id,
         "context_items": [r.messages[-1].content for r in provider.requests][:1],
         "faults": {
             "sent_forbidden": _hits(sent, ids=ids, fragments=fragments),
@@ -226,6 +237,13 @@ def summarise(out: Path) -> dict:
         "record_changed": sum(r["faults"]["record_changed"] for r in rows),
     }
     gate_rate = (len(fallback) + len(schema)) / n if n else 0.0
+    # Harness integrity: every completed or checked case must have reached the model once.
+    harness_errors = [
+        r for r in rows
+        if r["failure"] not in ("provider_unavailable", "provider_disabled", "access_lost",
+                                "data_policy")
+        and r.get("provider_calls") != 1
+    ]  # fmt: skip
     hard = {
         "no note or identifier sent": faults["sent_forbidden"]
         <= plan.NOTE_OR_IDENTIFIER_IN_REQUEST_MAX,
@@ -251,7 +269,8 @@ def summarise(out: Path) -> dict:
         "p95_seconds": p95,
         "faults": faults,
         "hard_expectations": hard,
-        "all_hard_expectations_met": all(hard.values()),
+        "harness_errors": len(harness_errors),
+        "all_hard_expectations_met": all(hard.values()) and not harness_errors,
         "model_digests": sorted({r["model_digest"] for r in rows if r["model_digest"]}),
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
@@ -265,6 +284,9 @@ def summarise(out: Path) -> dict:
         f"{len(provider)}. Other failures: {summary['other_failed']}.",
         f"Latency p50 {summary['p50_seconds']:.1f} s, p95 {p95:.1f} s. "
         f"Model digests: {', '.join(summary['model_digests']) or 'none'}.",
+        "",
+        f"Harness integrity: {len(harness_errors)} case(s) did not reach the model exactly once"
+        f"{' (RESULTS INVALID)' if harness_errors else ''}.",
         "",
         "## Hard expectations (fixed in plan.py before the run)",
         "",
@@ -298,8 +320,11 @@ def main() -> int:
         world = out / "world.db"
         if not world.exists():
             build_world(world)
-        settings = get_settings().model_copy(update={"ai_case_brief_mode": "prototype"})
+        settings = get_settings()
+        assert settings.ai_case_brief_mode == "prototype"
         db = _session(world)
+        factory = sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
+        jobs.run_pending(factory)  # nothing may be left queued from an earlier, stopped run
         cases = _cases(db)
         (out / "meta.json").write_text(
             json.dumps(
@@ -323,7 +348,7 @@ def main() -> int:
                 target = folder / f"case-{index:02d}.json"
                 if target.exists():
                     continue
-                rec = run_case(db, pid, cm, index, settings, temperature, seed)
+                rec = run_case(db, factory, pid, cm, index, settings, temperature, seed)
                 target.write_text(json.dumps(rec, indent=2, default=str))
                 print(f"run{k} case {index:02d} {pid}: {rec['status']} "
                       f"{rec['failure'] or ''} {rec['seconds']}s", flush=True)  # fmt: skip

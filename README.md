@@ -210,6 +210,10 @@ If PowerShell refuses to run the scripts, allow local scripts for your user once
 
 Add the `NBA_SMTP_*` values from [.env.example](.env.example) to `.env` and restart the server. See "Verification code delivery" above.
 
+### Optional: AI-worded Case Brief (synthetic-data prototype)
+
+Care managers see a Case Brief on each assigned patient. By default it is a deterministic template and no model runs. To try local-model wording, install [Ollama](https://ollama.com), pull `qwen3.5:9b-q4_K_M`, start it with `OLLAMA_NO_CLOUD=1`, run `alembic upgrade head`, and set `NBA_AI_CASE_BRIEF_MODE=prototype` in `.env`. Only a local model on this machine is used; cloud inference is disabled. Model wording is shown only after the server's checks pass, and it is marked for review. Design: [docs/ai-architecture.md](docs/ai-architecture.md).
+
 ### Working on the code
 
 Run the API and the frontend dev server side by side for instant reload:

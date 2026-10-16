@@ -620,6 +620,25 @@ def test_duplicate_submission_returns_the_active_generation(db):
     assert job.params == {"generation_id": first.id}  # no record content in the job row
 
 
+def test_a_finished_generation_is_never_returned_for_a_new_request(db):
+    """If a generation finished while its job still holds the subject's lock (run outside the
+    worker), a new request is refused rather than answered with the old result."""
+    pid = patient_of(db)
+    fake = FakeProvider(narrative())
+    gen, _ = orchestrator.submit(db, user(db, "cm01"), OP, pid, provider_factory=lambda s: fake)
+    assert orchestrator.run(db, gen.id, provider_factory=lambda s: fake) == "completed"
+    assert db.get(Job, gen.job_id).status == jobs.QUEUED  # the lock is still held
+    with pytest.raises(orchestrator.GenerationRefused) as exc:
+        orchestrator.submit(db, user(db, "cm01"), OP, pid, provider_factory=lambda s: fake)
+    assert exc.value.status == 409
+    jobs.run_pending(factory(db))  # the worker then runs the job: a no-op that frees the lock
+    db.expire_all()
+    again, created = orchestrator.submit(
+        db, user(db, "cm01"), OP, pid, provider_factory=lambda s: fake
+    )
+    assert created and again.id != gen.id
+
+
 def test_ai_jobs_do_not_take_or_wait_for_the_engine_lock(db):
     gen, _ = orchestrator.submit(
         db, user(db, "cm01"), OP, patient_of(db), provider_factory=lambda s: FakeProvider("x")

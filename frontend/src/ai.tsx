@@ -231,8 +231,9 @@ export function GenerationMeta({ generation }: { generation: Generation | null }
   const rows: Array<[string, ReactNode]> = [
     ["Model", g.model ? `${g.model} (${g.provider === "ollama" ? "local" : g.provider})` : "none"],
     ["Brief version", `${g.operation_version} · prompt v${g.prompt_version}`],
-    ["Requested", fmtDateTime(g.requested_at)],
-    ["Finished", g.finished_at ? fmtDateTime(g.finished_at) : "—"],
+    // Instants from the API are naive UTC: mark them as such before showing local time.
+    ["Requested", fmtDateTime(`${g.requested_at}Z`)],
+    ["Finished", g.finished_at ? fmtDateTime(`${g.finished_at}Z`) : "—"],
     ["Took", g.duration_ms !== null ? `${(g.duration_ms / 1000).toFixed(1)} s` : "—"],
   ];
   return (

@@ -296,13 +296,15 @@ def submit(
             db, JOB_KIND, user, {"generation_id": gen.id}, lock_key=lock_key(spec, subject_id)
         )
     except jobs.JobConflict:
-        # Another request for the same subject won the race; its generation is the one.
+        # Another request for the same subject holds the lock. Hand back its generation only
+        # if that one is still queued or running; a finished result is never passed off as the
+        # answer to a new request.
         existing = latest(db, spec, subject_id)
-        if existing is None:
-            raise GenerationRefused(
-                409, "ai_busy", "A generation is already in progress."
-            ) from None
-        return existing, False
+        if existing is not None and existing.status in ACTIVE_STATUSES:
+            return existing, False
+        raise GenerationRefused(
+            409, "ai_busy", "A generation for this patient is still finishing. Try again shortly."
+        ) from None
     gen = db.get(AiGeneration, gen.id)
     gen.job_id = job.id
     _prune(db, spec, subject_id, settings.ai_keep_generations)
