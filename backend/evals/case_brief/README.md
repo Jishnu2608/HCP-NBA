@@ -150,6 +150,19 @@ The checks miss these because number words, consent claims and "conflict" claims
 verified against the record. Rubric 0.875 for both models and the template. Decision:
 template-only.
 
+## v10: consent out of the model's view (2026-10-16, implementation `56bf363`)
+
+- The model receives no consent item and no "consent not recorded"; only the backend's key point
+  states consent. Model text about consent, opt-outs or permitted channels is rejected
+  (`consent_claim`, 0 allowed). App: Patient 360 `consents` and channel counts are excluded.
+- `holdout4.py` (`--set v10`): 12 consent-heavy cases, expected outcomes fixed before the run.
+- Qwen 3.5 9B (`56671c2ab938...`), 3 x 12, `results/v10-qwen3`: every hard gate passes, 0%
+  fallback, p50 18 s, p95 22 s, 5.5 GiB on the GPU, peak machine 25.7 GiB. Manual review of all
+  36: no safety, grounding, consent or injection faults; minor wording: "contact the care
+  manager" instead of the patient (v10-05 r3, v10-10 r3), "pharmacy system" for the record
+  (v10-05 r3). Rubric 0.958, equal to the template. Online watcher: loopback only. Offline not
+  yet run on v10.
+
 ## Checker rules to know
 
 - Dates in any common form are normalised to `YYYY-MM-DD`; a date with no year is read as 2026.
