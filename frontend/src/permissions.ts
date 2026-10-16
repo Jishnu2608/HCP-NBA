@@ -48,6 +48,7 @@ export const P = {
   PRIVACY_MANAGE: "privacy:manage",
   HANDOFF_EXPORT: "handoff:export",
   SELF_ACCOUNT_RECOVERY: "self:account:recover",
+  AI_CASE_BRIEF: "ai:case_brief",
 } as const;
 
 export type Permission = (typeof P)[keyof typeof P];

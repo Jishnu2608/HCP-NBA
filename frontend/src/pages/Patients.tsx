@@ -22,6 +22,7 @@ import type { ChartTone } from "../charts";
 import { BentoCard, BentoCell, BentoGrid, SectionNav } from "../layout";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, query } from "../api";
+import { CaseBriefPanel } from "./CaseBrief";
 import type { Json } from "../api";
 import {
   Avatar,
@@ -744,6 +745,7 @@ export function PatientProfile() {
       <SectionNav
         label="Sections of this patient record"
         items={[
+          ...(can(P.AI_CASE_BRIEF) ? [{ id: "case-brief", label: "Case brief" }] : []),
           { id: "care", label: "Care management" },
           { id: "recommendation", label: "Next best action" },
           { id: "therapies", label: "Therapies" },
@@ -765,6 +767,8 @@ export function PatientProfile() {
           pair; the outreach timeline, which grows with every contact, full width below.
           Phones read top to bottom in the same order. */}
       <BentoGrid>
+        {/* Shown only to accounts the server grants the Case Brief; the API checks again. */}
+        {can(P.AI_CASE_BRIEF) && <CaseBriefPanel id="case-brief" patientId={p.patient_id} />}
         <BentoCell span="wide" id="recommendation">
           <OpenNba nba={p.open_nba} lastCycle={p.last_cycle_at} />
         </BentoCell>
