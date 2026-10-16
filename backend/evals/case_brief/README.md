@@ -160,8 +160,10 @@ template-only.
   fallback, p50 18 s, p95 22 s, 5.5 GiB on the GPU, peak machine 25.7 GiB. Manual review of all
   36: no safety, grounding, consent or injection faults; minor wording: "contact the care
   manager" instead of the patient (v10-05 r3, v10-10 r3), "pharmacy system" for the record
-  (v10-05 r3). Rubric 0.958, equal to the template. Online watcher: loopback only. Offline not
-  yet run on v10.
+  (v10-05 r3). Rubric 0.958, equal to the template. Online watcher: the Ollama server and Python
+  stayed on 127.0.0.1; the Ollama desktop tray app (`ollama app.exe`) made 3 HTTPS connections at
+  11:47 (20.207.73.82, 34.36.133.15, 185.199.110.133; likely its update check). Offline not yet
+  run on v10.
 
 ## Checker rules to know
 
