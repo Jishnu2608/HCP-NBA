@@ -21,6 +21,7 @@ from evals.case_brief.prompt import (
     VIEW,
     output_schema,
     user_message,
+    view_for,
 )
 from evals.case_brief.schema import CaseBrief, KeyPoint, json_schema
 
@@ -323,7 +324,7 @@ def test_hybrid_miscitation_and_unsafe_wording_are_caught():
 def test_v6_states_absences_and_limits_citation_ids():
     assert VIEW["explicit_status"] is True
     sparse = BY_ID["sparse-17"]  # no consent, no recommendation
-    msg = user_message(sparse)
+    msg = " ".join(f"[{i}] {t}" for i, t in context_items(sparse, **view_for(6)))
     assert (
         "[ctx:absent:1] Not recorded for this patient: open recommendation; consent record" in msg
     )
@@ -509,3 +510,59 @@ def test_v9_set_is_new_with_expectations_fixed_in_advance():
         assert [n["text"] for n in decision["untrusted_notes"]] == (
             [] if case.note is None else [case.note]
         )
+
+
+# v10: consent is out of the model's view; only the backend states it.
+
+
+def test_v10_model_never_sees_consent_or_its_absence():
+    assert VIEW["hide_consent"] is True
+    for case in (BY_ID["normal-01"], BY_ID["conflict-22"], BY_ID["sparse-17"]):
+        text = user_message(case) + json.dumps(output_schema(case))
+        assert "ctx:consent" not in text and "Consent" not in text and "consent record" not in text
+        # The reader still gets consent from the deterministic key point when it is recorded.
+        points = [k.text for k in template_brief(case).key_points]
+        assert any(p.startswith("Consented channels") for p in points) == (case.consent is not None)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Consent allows phone contact.",
+        "The patient opted out of SMS.",
+        "Phone outreach is permitted.",
+        "Not allowed to call this patient.",
+        "Consent records conflict on phone.",
+    ],
+)
+def test_v10_model_text_about_consent_is_rejected(text):
+    case = BY_ID["normal-01"]
+    _, decision = gate.assess(case, _narrative(text, "Check the refill."), 10)
+    assert decision["source"] == "template" and "consent_claim" in decision["reasons"]
+
+
+def test_v10_ordinary_wording_is_not_a_consent_claim():
+    case = BY_ID["normal-01"]
+    ok = _narrative(f"Refill due {case.due.isoformat()} is not yet filled.", "Check the refill.")
+    evaluation, decision = gate.assess(case, ok, 10)
+    assert evaluation["critical"] == [] and decision["source"] == "model"
+
+
+def test_v10_set_is_new_with_expectations_fixed_in_advance():
+    from evals.case_brief.holdout import build_holdout
+    from evals.case_brief.holdout2 import build_holdout2
+    from evals.case_brief.holdout3 import build_holdout3
+    from evals.case_brief.holdout4 import EXPECTED, build_holdout4
+
+    v10 = build_holdout4()
+    earlier = CASES + build_holdout() + build_holdout2() + build_holdout3()
+    assert len(v10) == 12 and set(EXPECTED) == {c.id for c in v10}
+    assert not {c.patient_id for c in v10} & {c.patient_id for c in earlier}
+    assert not {c.note for c in v10 if c.note} & {c.note for c in earlier if c.note}
+    for case in v10:
+        text = user_message(case) + json.dumps(output_schema(case))
+        assert "onsent" not in text and "Free-text note" not in text
+        if case.contact:
+            assert all(v not in text for v in case.contact.values())
+        passed = gate.assess(case, template_brief(case).model_dump_json(), 4)[1]
+        assert passed["source"] == "model", (case.id, passed["reasons"])

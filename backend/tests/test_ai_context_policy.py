@@ -55,6 +55,8 @@ def test_every_patient_360_and_interaction_field_is_classified():
     assert policy.PATIENT_360["health"] is policy.Use.READER_ONLY
     assert policy.INTERACTION["note"] is policy.Use.READER_ONLY
     assert policy.INTERACTION["outcome_reason"] is policy.Use.READER_ONLY
+    for name in ("consents", "outreach_channels_granted", "outreach_channels_total"):
+        assert policy.PATIENT_360[name] is policy.Use.EXCLUDED  # consent: server text only
     for name in ("patient_id", "name", "city", "care_team", "care_managers"):
         assert policy.PATIENT_360[name] is policy.Use.EXCLUDED
 

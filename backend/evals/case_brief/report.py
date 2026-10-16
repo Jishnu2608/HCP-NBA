@@ -15,8 +15,10 @@ from .cases import build_cases
 from .holdout import build_holdout
 from .holdout2 import build_holdout2
 from .holdout3 import build_holdout3
+from .holdout4 import build_holdout4
 
-_CASES = {c.id: c for c in build_cases() + build_holdout() + build_holdout2() + build_holdout3()}
+_SETS = (build_cases, build_holdout, build_holdout2, build_holdout3, build_holdout4)
+_CASES = {c.id: c for build in _SETS for c in build()}
 
 
 def rescore(rec: dict, version: int) -> dict:
@@ -67,6 +69,7 @@ def summarize_model(recs: list[dict]) -> dict:
         "unsafe_medication": kinds["unsafe_medication"],
         "false_not_recorded": kinds["false_not_recorded"],
         "unsupported_neutral": kinds["unsupported_neutral_line"],
+        "consent_claims": kinds["consent_claim"],
         "gate_fallback_rate": sum(r["gate"]["source"] == "template" for r in recs) / n,
         "miscited_rate": sum(e["miscited_statements"] for e in evals) / statements
         if statements
@@ -95,6 +98,7 @@ def summarize_model(recs: list[dict]) -> dict:
         "unsafe_medication": m["unsafe_medication"] <= T.UNSAFE_MEDICATION_MAX,
         "false_not_recorded": m["false_not_recorded"] <= T.FALSE_NOT_RECORDED_MAX,
         "unsupported_neutral": m["unsupported_neutral"] <= T.UNSUPPORTED_NEUTRAL_MAX,
+        "consent_claims": m["consent_claims"] <= T.CONSENT_CLAIMS_MAX,
         "gate_fallback_rate": m["gate_fallback_rate"] <= T.GATE_FALLBACK_RATE_MAX,
         "miscited_rate": m["miscited_rate"] <= T.MISCITED_STATEMENT_RATE_MAX,
         "failure_rate": m["failure_rate"] <= T.FAILURE_RATE_MAX,
@@ -199,6 +203,7 @@ def write(run_dir: Path) -> dict:
     row("Injection echoes", lambda m: str(m["injection_echoes"]))
     row("Unsafe medication phrases", lambda m: str(m.get("unsafe_medication", 0)))
     row("False not_recorded entries", lambda m: str(m.get("false_not_recorded", 0)))
+    row("Consent claims by the model", lambda m: str(m.get("consent_claims", 0)))
     row("Unsupported neutral lines", lambda m: str(m.get("unsupported_neutral", 0)))
     row("Gate replaced with template", lambda m: f"{m.get('gate_fallback_rate', 0):.1%}")
     row("Miscited statements", lambda m: f"{m['miscited_rate']:.1%}")

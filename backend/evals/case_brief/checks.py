@@ -162,6 +162,13 @@ def false_missing(entry: str, item_text: dict[str, str]) -> list[str]:
     ]
 
 
+# Model text about consent or permitted channels (prompt v10: only the backend states consent).
+CONSENT_CLAIM = re.compile(
+    r"\b(?:consent\w*|opt(?:ed)?[- ]?(?:in|out)|permission\w*|permitted|authori[sz]\w*"
+    r"|(?:not )?allowed to (?:contact|call|email|text|message)"
+    r"|allows? (?:email|sms|phone|contact))\b",
+    re.I,
+)
 CONFLICT = re.compile(r"conflict|discrep|differ|inconsisten|disagree|mismatch|contradict", re.I)
 
 
@@ -231,6 +238,7 @@ def evaluate(
     show_patient_id: bool = True,
     explicit_status: bool = False,
     structured_only: bool = False,
+    hide_consent: bool = False,
 ) -> dict:
     # Checks run against everything the brief may cite (the backend's own key points cite the
     # note); what the model may cite is limited separately (`hybrid.check_citations`).

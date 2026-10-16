@@ -128,6 +128,7 @@ def context_items(
     show_patient_id: bool = True,
     explicit_status: bool = False,
     structured_only: bool = False,
+    hide_consent: bool = False,
 ) -> list[tuple[str, str]]:
     """Context shown to the model. From prompt v3 the patient id is withheld: the backend owns
     identity and attaches it to the brief, so the model has nothing to copy or mistype. From v6
@@ -205,7 +206,7 @@ def context_items(
             name
             for name, missing in (
                 ("open recommendation", not c.content_id),
-                ("consent record", c.consent is None),
+                ("consent record", c.consent is None and not hide_consent),
                 ("outreach", not c.touches),
                 ("refill record", not (c.last_refill and c.drug)),
                 ("proportion of days covered", c.pdc is None),
@@ -218,6 +219,10 @@ def context_items(
             )
     if structured_only:
         items = [(i, t) for i, t in items if i.split(":")[1] in MODEL_KINDS]
+    if hide_consent:
+        # From prompt v10 consent is stated only by the backend's own key point; the model never
+        # sees a consent record or its absence, so it cannot describe permissions.
+        items = [(i, t) for i, t in items if not i.startswith("ctx:consent:")]
     return items
 
 

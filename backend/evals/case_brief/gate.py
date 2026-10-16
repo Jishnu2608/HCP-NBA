@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from . import hybrid
 from .baseline import template_brief
 from .cases import UNTRUSTED_NOTE_LABEL, Case
-from .checks import evaluate
+from .checks import CONSENT_CLAIM, evaluate
 from .prompt import view_for
 from .schema import CaseBrief
 
@@ -19,7 +19,7 @@ def assess(case: Case, text: str | None, version: int) -> tuple[dict | None, dic
     """(evaluation or None, decision) for one stored or fresh answer of a prompt version."""
     view = view_for(version)
     reasons: list[str] = []
-    brief = evaluation = None
+    brief = evaluation = narrative = None
     if text is None:
         reasons.append("no_answer")
     else:
@@ -33,8 +33,19 @@ def assess(case: Case, text: str | None, version: int) -> tuple[dict | None, dic
         except (ValidationError, ValueError):
             reasons.append("schema")
     if brief is not None:
-        evaluation = evaluate(case, brief, **(view | {"structured_only": False}))
+        evaluation = evaluate(
+            case, brief, **(view | {"structured_only": False, "hide_consent": False})
+        )
         evaluation["critical"] += extra
+        if view.get("hide_consent") and narrative is not None:
+            for where, text in (
+                ("summary", narrative.summary),
+                ("suggested_focus", narrative.suggested_focus),
+            ):
+                for m in CONSENT_CLAIM.finditer(text):
+                    evaluation["critical"].append(
+                        {"kind": "consent_claim", "where": where, "value": m.group()}
+                    )
         evaluation["miscited_statements"] += miscited
         evaluation["statements"] += 2 if version >= 5 else 0
         reasons += sorted({c["kind"].split(":")[0] for c in evaluation["critical"]})

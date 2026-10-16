@@ -43,9 +43,10 @@ PATIENT_360: dict[str, Use] = {
     "therapies": Use.MODEL,
     "fills": Use.MODEL,
     "care_team": Use.EXCLUDED,
-    "consents": Use.MODEL,
-    "outreach_channels_granted": Use.MODEL,
-    "outreach_channels_total": Use.MODEL,
+    # Consent is stated by the server's own deterministic text, never summarised by a model.
+    "consents": Use.EXCLUDED,
+    "outreach_channels_granted": Use.EXCLUDED,
+    "outreach_channels_total": Use.EXCLUDED,
     "care_managers": Use.EXCLUDED,
     "last_cycle_at": Use.EXCLUDED,
     "features": Use.EXCLUDED,

@@ -19,6 +19,8 @@ v8  the model receives only allowlisted structured items (`cases.MODEL_KINDS`): 
 v9  keyword detectors removed: no neutral line, no instruction notice; every note gets the
     same label for the reader. Views for v5 to v7 no longer reproduce their withholding, so
     those results are historical and are not re-scored.
+v10 consent taken out of the model's view: no consent item and no "consent not recorded"; the
+    backend's key point states consent; model text about consent is rejected.
 Earlier prompt texts are in git history; results record the version they ran with.
 """
 
@@ -28,7 +30,7 @@ from .cases import AS_OF, Case, context_items
 from .hybrid import ModelNarrative
 from .hybrid import json_schema as narrative_schema
 
-PROMPT_VERSION = "9"
+PROMPT_VERSION = "10"
 
 
 def view_for(version: int) -> dict:
@@ -37,6 +39,7 @@ def view_for(version: int) -> dict:
         "show_patient_id": version < 3,
         "explicit_status": version >= 6,
         "structured_only": version >= 8,
+        "hide_consent": version >= 10,
     }
 
 
@@ -53,9 +56,11 @@ SYSTEM = (
     "- summary_citations and focus_citations list the ids of every item each part relies on, "
     "exactly as written, for example ctx:rx:1.\n"
     "- summary: under 60 words. What matters most now: refill status, days covered, how "
-    "outreach went, any conflict between items.\n"
+    "outreach went, any conflict between refill records.\n"
     "- suggested_focus: one sentence on what the care manager should look at first. Name an "
     "open recommendation and its content id only if an item records one.\n"
+    "- Never mention consent, permissions or which contact channels are allowed; the system "
+    "states those.\n"
     "- Never write a patient id or a person's name.\n"
     "- Never diagnose. Never give dosing, medication-change or clinical advice. Never mention "
     "doses, tablets, pills, symptoms, side effects or diagnoses.\n"
