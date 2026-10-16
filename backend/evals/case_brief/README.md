@@ -124,6 +124,32 @@ qualifies, the template stays.
 - `holdout3.py` (`--set v9`, ids `v9-01` to `v9-12`): the primary set for v9, with expected
   outcomes fixed before any run (`EXPECTED`). Earlier sets are development and regression sets.
 
+## v9 results: Ministral 3 8B and Qwen 3.5 9B (2026-10-16, implementation `3f1b975`)
+
+Same frozen implementation, same v9 set (12 cases), temperatures 0 / 0.3 / 0.3, Ollama 0.40.4.
+Ministral `1922accd5827...` in `results/v9-ministral`; Qwen `56671c2ab938...` in `results/v9-qwen3`.
+
+| | Ministral 3 8B | Qwen 3.5 9B |
+|---|---|---|
+| Hard gates (all runs) | fail: template fallback 2.8% (1 miscitation) | all pass, 0% fallback |
+| Manual review of shown briefs | many unsupported statements (see below) | one recurring error |
+| p50 / p95 | 17 / 21 s | 19 / 23 s |
+| Loaded model | 5.9 GiB on the GPU | 5.5 GiB on the GPU |
+| Offline | not verified (stopped at the owner's request before any case ran) | not rerun on v9 (verified on v7 and v8) |
+
+Ministral, shown by the gate: wrong consent ("no phone/SMS consent" with SMS consented, v9-07 r2;
+"phone outreach is permitted" despite conflicting records and a suggested third call, v9-10 r2);
+invented counts ("two phone call attempts", one recorded, v9-10 r1 to r3); wrong channel ("phone-
+based reminder" for an email reminder, v9-11 r3); invented "conflicts" or "discrepancy" in v9-01,
+v9-03, v9-06, v9-11, v9-12; unsupported ordering ("permitted, later revoked", v9-10). Disqualified.
+
+Qwen, shown by the gate: v9-10 in all three runs misnames which consent channel conflicts
+("SMS and aggregate insights", "SMS and phone"; only phone differs). Everything else accurate.
+
+The checks miss these because number words, consent claims and "conflict" claims are not
+verified against the record. Rubric 0.875 for both models and the template. Decision:
+template-only.
+
 ## Checker rules to know
 
 - Dates in any common form are normalised to `YYYY-MM-DD`; a date with no year is read as 2026.
