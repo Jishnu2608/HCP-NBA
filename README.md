@@ -212,7 +212,7 @@ Add the `NBA_SMTP_*` values from [.env.example](.env.example) to `.env` and rest
 
 ### Optional: AI-worded Case Brief (synthetic-data prototype)
 
-Care managers see a Case Brief on each assigned patient. By default it is a deterministic template and no model runs. To try local-model wording, install [Ollama](https://ollama.com), pull `qwen3.5:9b-q4_K_M`, start it with `OLLAMA_NO_CLOUD=1`, run `alembic upgrade head`, and set `NBA_AI_CASE_BRIEF_MODE=prototype` in `.env`. Only a local model on this machine is used; cloud inference is disabled. Model wording is shown only after the server's checks pass, and it is marked for review. Design: [docs/ai-architecture.md](docs/ai-architecture.md).
+Care managers see a Case Brief on each assigned patient. By default it is a deterministic template and no model runs. To try local-model wording, install [Ollama](https://ollama.com), pull `qwen3.5:9b-q4_K_M`, start it with `OLLAMA_NO_CLOUD=1`, set `NBA_DATABASE_PROFILE=ai` and `NBA_AI_CASE_BRIEF_MODE=prototype` in `.env` (the AI tables live only in the AI database; see "Two databases" below). Only a local model on this machine is used; cloud inference is disabled. Model wording is shown only after the server's checks pass, and it is marked for review. Design: [docs/ai-architecture.md](docs/ai-architecture.md).
 
 ### Working on the code
 
@@ -253,6 +253,16 @@ cd ../backend && .venv/bin/python -m app.bootstrap && .venv/bin/alembic upgrade 
 
 The server listens only on this computer by default. To open it from a phone on the same, trusted Wi-Fi, start it with `--host 0.0.0.0`, allow port 8000 for private networks in the firewall, and open `http://<computer's IPv4 address>:8000` on the phone. Stop it when done; anyone on that network can reach the sign-in page while it runs.
 
+### Two databases: traditional and AI
+
+`data/nba_demo.db` is the traditional database and stays as it is. `data/nba_demodb_ai.db` is a verified copy of it where AI work happens: it alone carries the AI tables (migration `b4f8d2a6c9e1`). Both are git-ignored.
+
+- **Choose** with `NBA_DATABASE_PROFILE=traditional` (default) or `ai` in `.env`, then restart. Nothing switches, creates, merges or migrates a database on its own; a missing file stops the server with a message instead of creating an empty one.
+- **Migrate** only the AI database: `$env:NBA_DATABASE_PROFILE="ai"; .venv\Scripts\alembic upgrade head` from `backend`. Alembic refuses to change the schema of the existing traditional file unless you add `-x allow_traditional=yes` on purpose (back it up first).
+- **On the traditional database** everything works except AI features: the Case Brief panel says it is not available here and the AI endpoints answer 503. `/api/meta` reports `database_profile` and `ai_tables`.
+- **If AI work breaks the AI database**, set `NBA_DATABASE_PROFILE=traditional` and restart: the app runs on the untouched original without the Case Brief. To start the AI copy again, stop the server and copy a verified backup over it (`python -m app.backup create` and `python -m app.backup verify <file>`, in `backups\`), then `alembic upgrade head` with the `ai` profile.
+- **Limits**: the two databases drift apart once either is used; nothing copies changes between them. Accounts, patients or content created in one do not exist in the other.
+
 ### Resetting the data
 
 The Engine page has **Reset to seeded data**, which keeps registered and invited accounts, real patients with everything recorded for them, invitations, the security audit trail, and all content with its versions, MLR decisions and conversations, and signs everyone out. It never creates Compliance accounts. Account and invitation ids are never reused, not even after a deletion or a reset, so the audit history of one account can never appear under another; demo and administrator accounts get new, higher ids after each reset. `python -m app.datagen` from `backend` does the same from the command line. Deleting `data\nba_demo.db` and rerunning `setup.ps1` starts completely fresh.
@@ -273,7 +283,8 @@ Set through `NBA_`-prefixed environment variables or `.env`. Names only; see [.e
 
 | Variable | Purpose |
 |---|---|
-| `NBA_DATABASE_URL` | Database. SQLite file by default; any SQLAlchemy URL, for example PostgreSQL |
+| `NBA_DATABASE_PROFILE` | `traditional` (default, `data/nba_demo.db`) or `ai` (`data/nba_demodb_ai.db`). See "Two databases" below |
+| `NBA_DATABASE_URL` | Instead of the profile: any SQLAlchemy URL, for example PostgreSQL. Setting both is refused |
 | `NBA_JWT_SECRET` | Master signing secret (verification step, CSRF, code hashing). Required. |
 | `NBA_ADMIN_EMAIL`, `NBA_ADMIN_PASSWORD` | The administrator account. Password required. |
 | `NBA_SEED_DEMO_ACCOUNTS`, `NBA_DEMO_PASSWORD` | Whether demo accounts are created with the synthetic data, and their password |

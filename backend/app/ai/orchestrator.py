@@ -50,6 +50,7 @@ from app.ai.providers import (
 from app.ai.registry import resolve
 from app.core import ratelimit
 from app.core.config import Settings, get_settings
+from app.core.db import has_table
 from app.models import AiGeneration, Job, User
 from app.models.tables import utcnow
 from app.services.errors import Forbidden, NotFound
@@ -76,6 +77,22 @@ class GenerationRefused(Exception):
     def __init__(self, status: int, code: str, message: str):
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
+
+
+class AiUnavailable(GenerationRefused):
+    """This database has no AI tables (the traditional database, or one not migrated). AI
+    routes answer 503; nothing else in the application depends on these tables."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            503,
+            "ai_unavailable",
+            "AI features are not available on this database. Everything else works as usual.",
+        )
+
+
+def ai_tables_present(db: Session) -> bool:
+    return has_table(db, AiGeneration.__tablename__)
 
 
 def mode_for(spec: OperationSpec, settings: Settings | None = None) -> Mode:
@@ -249,6 +266,10 @@ def submit(
     except (Forbidden, NotFound) as exc:
         _reject(db, user, spec, subject_id, type(exc).__name__.lower(), mode)
         raise
+    # Access first (403 / 404 as everywhere), then whether this database has the AI tables.
+    if not ai_tables_present(db):
+        _reject(db, user, spec, subject_id, "ai_unavailable", mode)
+        raise AiUnavailable()
     if mode is Mode.TEMPLATE:
         _reject(db, user, spec, subject_id, "mode_template", mode)
         raise GenerationRefused(
@@ -355,6 +376,8 @@ def run(
     """Runs one queued generation to its end state. Returns the final status."""
     settings = settings or get_settings()
     provider_factory = provider_factory or get_provider
+    if not ai_tables_present(db):
+        return GenerationStatus.FAILED
     gen = db.get(AiGeneration, generation_id)
     if gen is None or gen.status != GenerationStatus.QUEUED:
         return gen.status if gen else GenerationStatus.FAILED
@@ -474,6 +497,8 @@ def current(
     spec = resolve(operation)
     mode = mode_for(spec, settings)
     ctx = _context(db, user, spec, subject_id)
+    if not ai_tables_present(db):
+        raise AiUnavailable()
     gen = latest(db, spec, subject_id)
     if gen is not None:
         reconcile(db, gen, spec)

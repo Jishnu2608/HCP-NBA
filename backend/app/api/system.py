@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.clock import get_today
 from app.core.config import get_settings
-from app.core.db import Base, get_db
+from app.core.db import get_db, has_table, present_tables
 from app.core.permissions import Permission
 from app.models import User
 
@@ -26,12 +26,14 @@ def meta(
     settings = get_settings()
     counts = {
         table.name: db.scalar(select(func.count()).select_from(table))
-        for table in Base.metadata.sorted_tables
+        for table in present_tables(db)
     }
     return {
         "app": settings.app_name,
         "environment": settings.environment,
         "database": settings.database_url.split(":", 1)[0],
+        "database_profile": settings.database_label,
+        "ai_tables": has_table(db, "ai_generation"),
         "llm_provider": settings.llm_provider,
         "as_of_date": get_today(db).isoformat(),
         "row_counts": counts,

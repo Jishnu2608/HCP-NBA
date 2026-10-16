@@ -33,7 +33,7 @@ from app.clinical.hcps import separate_real_hcps
 from app.clinical.records import adopt_unassigned, separate_real_patients
 from app.core import http_security
 from app.core.config import REPO_ROOT, get_settings
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, engine, has_table, require_existing
 from app.maintenance import purge_expired
 from app.pipeline import refresh_real_patients
 
@@ -44,6 +44,18 @@ settings = get_settings()
 async def lifespan(_: FastAPI):
     """Make sure the fixed administrator account exists before the first request."""
     settings.secret("jwt_secret")  # refuse to start without a signing secret
+    # The configured database must exist: never start on a new, empty file instead.
+    require_existing(settings.database_url)
+    log = logging.getLogger("nba")
+    try:
+        ai_tables = has_table(engine, "ai_generation")
+    except SQLAlchemyError:
+        ai_tables = False
+    log.info(
+        "Database profile %s; AI features %s",
+        settings.database_label,
+        "available" if ai_tables else "unavailable (no AI tables in this database)",
+    )
     try:
         with SessionLocal() as db:
             ensure_system_admin(db)

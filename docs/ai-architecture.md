@@ -126,6 +126,27 @@ The `ai_generation` row keeps the composed result only when every check passed (
 it); rejected model text is never stored. Rows beyond `NBA_AI_KEEP_GENERATIONS` (5) per subject
 are deleted; all rows go when the patient is deleted.
 
+## Databases: traditional and AI
+
+The AI tables live only in `data/nba_demodb_ai.db`, a verified copy of the traditional
+`data/nba_demo.db` (created 2026-10-16 from backup `backups/nba_demo-20261016T102429Z.db`,
+integrity ok, equal row counts; then migrated to `b4f8d2a6c9e1`). The traditional file stays at
+`a7d2e9c4b1f6` and unchanged.
+
+- `NBA_DATABASE_PROFILE=traditional|ai` selects the file (default traditional); setting it
+  together with `NBA_DATABASE_URL` is refused; an unknown value is refused.
+- The web process and the worker refuse to start if the configured SQLite file is missing
+  (`core.db.require_existing`), so no empty replacement is ever created.
+- `alembic/env.py` refuses `upgrade`, `downgrade` and `stamp` on the existing traditional file
+  unless `-x allow_traditional=yes`; reading commands are unaffected.
+- Without the AI tables: AI routes answer 503 `ai_unavailable` after the usual 403/404 access
+  check (the refusal is audited); a queued job cannot write; the frontend panel says the Case
+  Brief is not available here. Loops over every model table (demo reset wipe and counts, patient
+  erasure, `/api/meta`) use `core.db.present_tables`, so the rest of the app works unchanged.
+  `/api/meta` reports `database_profile` and `ai_tables`; start-up logs both.
+- Fallback is an explicit switch to `traditional` and a restart. The two databases then
+  diverge; nothing is copied or merged between them.
+
 ## Provider configuration and the cloud-disabled guarantee
 
 | Variable | Meaning |
@@ -168,6 +189,7 @@ result is marked for review.
 
 ```powershell
 cd backend
+$env:NBA_DATABASE_PROFILE = "ai"            # the AI tables live only in the AI database
 .\.venv\Scripts\alembic upgrade head
 $env:NBA_AI_CASE_BRIEF_MODE = "prototype"   # or set it in .env; default is template
 .\.venv\Scripts\python -m uvicorn app.main:app --port 8000

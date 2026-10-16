@@ -189,4 +189,16 @@ describe("Case brief panel", () => {
     await screen.findByText("AI wording is switched off here.");
     expect(screen.queryByRole("button", { name: /generate/i })).toBeNull();
   });
+
+  it("says the case brief is not available when the database has no AI tables", async () => {
+    mockServer({
+      [`GET ${GET}`]: [
+        { status: 503, body: { detail: { code: "ai_unavailable", message: "AI features are not available on this database." } } },
+      ],
+    });
+    renderPanel();
+    await screen.findByText("Case brief not available here");
+    expect(screen.queryByRole("button", { name: /generate/i })).toBeNull();
+    expect(screen.queryByText("The case brief could not be loaded")).toBeNull();
+  });
 });

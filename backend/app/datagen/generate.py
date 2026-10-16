@@ -20,7 +20,7 @@ from app.clinical import hcps as hcps_module
 from app.content import governance as content_governance
 from app.core import clock
 from app.core.config import get_settings
-from app.core.db import Base
+from app.core.db import present_tables
 from app.core.permissions import PROFESSIONAL_ROLES
 from app.core.security import hash_password
 from app.datagen import behavior
@@ -106,7 +106,7 @@ def patient_key(i: int) -> str:
 
 
 def wipe(db: Session) -> None:
-    for table in reversed(Base.metadata.sorted_tables):
+    for table in reversed(present_tables(db)):
         db.execute(table.delete())
     # Rows were deleted in bulk; drop any stale objects the session still holds.
     db.expunge_all()
@@ -817,5 +817,5 @@ def generate(db: Session, cfg: GenConfig | None = None) -> dict[str, int]:
     db.commit()
     return {
         table.name: db.scalar(select(func.count()).select_from(table))
-        for table in Base.metadata.sorted_tables
+        for table in present_tables(db)
     }

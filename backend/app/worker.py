@@ -19,7 +19,7 @@ import time
 
 from app import jobs, scheduler
 from app.core.config import get_settings
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, require_existing
 
 log = logging.getLogger("nba.worker")
 
@@ -56,6 +56,7 @@ def start_embedded(poll_seconds: float) -> threading.Event:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     get_settings().secret("jwt_secret")  # same configuration checks as the web process
+    require_existing(get_settings().database_url)
     if "--once" in sys.argv:
         ran = tick()
         print(f"Ran {ran} job(s)")

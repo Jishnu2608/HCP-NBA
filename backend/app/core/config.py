@@ -1,11 +1,18 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data"
 ENV_FILE = REPO_ROOT / ".env"
+# The two local databases, chosen explicitly with NBA_DATABASE_PROFILE (never switched or
+# created silently): the original one, and its copy where AI tables and AI work live.
+DATABASE_FILES = {
+    "traditional": DATA_DIR / "nba_demo.db",
+    "ai": DATA_DIR / "nba_demodb_ai.db",
+}
 
 
 class MissingSecret(RuntimeError):
@@ -28,8 +35,11 @@ class Settings(BaseSettings):
     app_name: str = "Healthcare NBA"
     environment: str = "local"
 
-    # SQLite for the laptop demo; any SQLAlchemy URL (Postgres) for hosted deployments.
-    database_url: str = f"sqlite:///{(DATA_DIR / 'nba_demo.db').as_posix()}"
+    # Which local database: "traditional" (default, data/nba_demo.db) or "ai"
+    # (data/nba_demodb_ai.db, the copy that holds the AI tables). Or set database_url to any
+    # SQLAlchemy URL (Postgres) instead; setting both is refused.
+    database_profile: str = ""
+    database_url: str = ""
 
     # --- Secrets: no defaults. Read them through `secret()`. ---
     jwt_secret: str | None = None
@@ -136,6 +146,28 @@ class Settings(BaseSettings):
     # What a newly verified account is given from the synthetic pool.
     signup_panel_patients: int = 30
     signup_panel_hcps: int = 15
+
+    @model_validator(mode="after")
+    def _resolve_database(self) -> "Settings":
+        """One database, chosen explicitly. Nothing here falls back to another one."""
+        profile = self.database_profile.strip().lower()
+        if profile and self.database_url:
+            raise ValueError("Set NBA_DATABASE_PROFILE or NBA_DATABASE_URL, not both.")
+        if self.database_url:
+            return self
+        profile = profile or "traditional"
+        if profile not in DATABASE_FILES:
+            raise ValueError(
+                f"NBA_DATABASE_PROFILE must be one of {sorted(DATABASE_FILES)}, not {profile!r}."
+            )
+        self.database_profile = profile
+        self.database_url = f"sqlite:///{DATABASE_FILES[profile].as_posix()}"
+        return self
+
+    @property
+    def database_label(self) -> str:
+        """ "traditional", "ai", or "custom" for an explicit NBA_DATABASE_URL."""
+        return self.database_profile or "custom"
 
     @property
     def is_local(self) -> bool:

@@ -7,7 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
-import { api, post } from "../api";
+import { ApiError, api, post } from "../api";
 import type { Json } from "../api";
 import {
   GenerateButton,
@@ -21,7 +21,7 @@ import {
 } from "../ai";
 import type { Generation, ReaderNote, Statement } from "../ai";
 import { BentoCard } from "../layout";
-import { ErrorNote, ErrorState, LoadingRows } from "../ui";
+import { Alert, ErrorNote, ErrorState, LoadingRows } from "../ui";
 
 const POLL_MS = 2500;
 
@@ -66,6 +66,12 @@ export function CaseBriefPanel({ patientId, id }: { patientId: string; id?: stri
     >
       {brief.isLoading ? (
         <LoadingRows rows={4} label="Loading the case brief" />
+      ) : isUnavailable(brief.error) ? (
+        // The server runs on a database without the AI tables (the traditional one). Nothing
+        // else on this page depends on them.
+        <Alert tone="info" title="Case brief not available here">
+          This server uses a database without the AI features. The rest of the patient record works as usual.
+        </Alert>
       ) : brief.error ? (
         <ErrorState error={brief.error} title="The case brief could not be loaded" retry={() => void brief.refetch()} />
       ) : (
@@ -73,6 +79,10 @@ export function CaseBriefPanel({ patientId, id }: { patientId: string; id?: stri
       )}
     </BentoCard>
   );
+}
+
+function isUnavailable(error: unknown) {
+  return error instanceof ApiError && error.status === 503 && error.code === "ai_unavailable";
 }
 
 function CaseBriefBody({ data, generation, mutationError }: { data: Json; generation: Generation | null; mutationError: unknown }) {

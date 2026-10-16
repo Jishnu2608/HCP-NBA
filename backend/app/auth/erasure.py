@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.auth.errors import AuthError
 from app.clinical import records
-from app.core.db import Base
+from app.core.db import has_table, present_tables
 from app.core.permissions import Permission, can
 from app.models import (
     AdherenceSnapshot,
@@ -102,11 +102,12 @@ def _delete_patient_data(db: Session, patient_id: str) -> dict:
         )
     db.execute(delete(CareRequest).where(CareRequest.patient_id == patient_id))
     db.execute(delete(CareNote).where(CareNote.patient_id == patient_id))
-    db.execute(
-        delete(AiGeneration).where(
-            AiGeneration.subject_type == "patient", AiGeneration.subject_id == patient_id
+    if has_table(db, AiGeneration.__tablename__):  # absent from the traditional database
+        db.execute(
+            delete(AiGeneration).where(
+                AiGeneration.subject_type == "patient", AiGeneration.subject_id == patient_id
+            )
         )
-    )
     for model in (AdherenceSnapshot, MedicationFill, PatientCondition, Consent):
         db.execute(delete(model).where(model.patient_id == patient_id))
     db.execute(delete(PatientTherapy).where(PatientTherapy.patient_id == patient_id))
@@ -120,7 +121,7 @@ def _delete_patient_data(db: Session, patient_id: str) -> dict:
 def _clear_user_references(db: Session, user_id: int) -> None:
     """Any remaining pointer to the account (for example who confirmed or edited something)
     is emptied, so no row can lead back to it."""
-    for table in Base.metadata.sorted_tables:
+    for table in present_tables(db):
         for column in table.columns:
             refs = {fk.column.table.name for fk in column.foreign_keys}
             if "user" in refs and column.nullable and table.name != "user":

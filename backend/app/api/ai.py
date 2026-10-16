@@ -40,6 +40,8 @@ def current_result(
         view = orchestrator.current(db, user, operation, patient_id)
     except UnknownOperation:
         raise _unknown() from None
+    except orchestrator.GenerationRefused as exc:  # AI tables missing: 503, nothing else breaks
+        raise HTTPException(exc.status, {"code": exc.code, "message": exc.message}) from None
     db.commit()
     return jsonable_encoder(view)
 
