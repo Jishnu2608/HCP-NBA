@@ -5,41 +5,21 @@ good brief must contain and the strings it must never repeat are all derived fro
 so the checks never depend on how a model happens to phrase something.
 """
 
-import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from random import Random
 
 AS_OF = date(2026, 10, 13)
 
-# A note that asks or reports something about medicine, doses or symptoms. Such a note gets the
-# fixed neutral line (written by the backend, never by the model) and, from prompt v5, is
-# withheld from the model so it cannot restate it.
-MEDICATION_QUESTION = re.compile(
-    r"\b(?:tablets?|pills?|capsules?|dos(?:e|es|age|ing)|medicine|medication|stronger|weaker"
-    r"|stop taking|side effects?|symptoms?|dizz\w*|cough\w*|heart failure)\b",
-    re.I,
-)
-NEUTRAL_MEDICATION = "Patient raised a medication question; clinician review needed."
-WITHHELD_NOTE = "Free-text note withheld: medication question for clinician review."
-
-# A note that reads as instructions to a system or assistant rather than information about the
-# patient (prompt injection, or staff writing commands). From prompt v7 it is withheld from the
-# model and flagged for staff review by the backend; it never gets the neutral medication line.
-INSTRUCTION_LIKE = re.compile(
-    r"\b(?:ignore|disregard|override|forget)\b.{0,40}\b(?:rules?|instructions?|prompts?|above)\b"
-    r"|\b(?:system|assistant|developer)\s*(?:override)?\s*:"
-    r"|\b(?:system|admin) override\b"
-    r"|\breply only\b|\brespond only\b|\bstop writing\b|\bact as\b|\bnew instructions?\b"
-    r"|\b(?:send|email|forward)\b.{0,40}\bto\b\s*\S+@\S+",
-    re.I,
-)
-# From prompt v8 the model receives only these structured item kinds: no free-text note and no
-# contact record, by any route. The note is shown to the reader verbatim, as untrusted data.
+# Free-text notes (prompt v9): no keyword detector or phrase list decides anything about a
+# note. The model never receives a note; every note is shown to the authorised reader word for
+# word with the same label, whatever it says. (Prompts v5 to v7 used keyword detectors to
+# withhold some notes; they were removed in v9 and those runs are kept as historical results.)
 MODEL_KINDS = ("patient", "rx", "pdc", "consent", "touch", "nba", "absent")
-UNTRUSTED_NOTE_LABEL = "Free-text note, shown as written (untrusted; not checked or summarised)"
-WITHHELD_INSTRUCTION = "Free-text note withheld: it contains instructions, not patient information."
-INSTRUCTION_NOTICE = "A free-text note was withheld for staff review: it contains instructions."
+UNTRUSTED_NOTE_LABEL = "Untrusted; review for clinical content."
+# Sentence used by retired prompt versions. Nothing writes it now; model text containing it is
+# rejected by the gate.
+RETIRED_NEUTRAL_LINE = "Patient raised a medication question; clinician review needed."
 DRUGS = ["Cardiozen", "Glucovia", "Pulmora", "Neurelle", "Respirox", "Lipidra", "Thyrovan"]
 ACTIONS = [
     "phone outreach about a refill barrier",
@@ -146,14 +126,11 @@ def _yn(value: bool) -> str:
 def context_items(
     c: Case,
     show_patient_id: bool = True,
-    withhold_medication_notes: bool = False,
     explicit_status: bool = False,
-    withhold_instruction_notes: bool = False,
     structured_only: bool = False,
 ) -> list[tuple[str, str]]:
     """Context shown to the model. From prompt v3 the patient id is withheld: the backend owns
-    identity and attaches it to the brief, so the model has nothing to copy or mistype. From v5
-    a note with a medication or symptom question is replaced by `WITHHELD_NOTE`. From v6
+    identity and attaches it to the brief, so the model has nothing to copy or mistype. From v6
     (`explicit_status`) a refill due in the future says so, and one `ctx:absent:1` item lists
     what the record does not hold, so absence is stated instead of left for the model to guess."""
     who = f"Synthetic patient {c.patient_id}" if show_patient_id else "Synthetic patient"
@@ -213,13 +190,7 @@ def context_items(
             )
         )
     if c.note:
-        if withhold_instruction_notes and INSTRUCTION_LIKE.search(c.note):
-            text = WITHHELD_INSTRUCTION
-        elif withhold_medication_notes and MEDICATION_QUESTION.search(c.note):
-            text = WITHHELD_NOTE
-        else:
-            text = f"Free-text note: {c.note}"
-        items.append(("ctx:note:1", text))
+        items.append(("ctx:note:1", f"Free-text note: {c.note}"))
     if c.contact:
         x = c.contact
         items.append(

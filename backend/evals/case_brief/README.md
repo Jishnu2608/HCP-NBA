@@ -111,6 +111,19 @@ qualifies, the template stays.
   equals the template's. Offline: 12 of 12 with all physical adapters down, loopback only.
 - Decision: template-only (strict reading of the approval criteria).
 
+## Uniform note label and the v9 set (2026-10-16, prompt v9)
+
+- No keyword detector or phrase list decides anything about a note. The neutral medication line,
+  the instruction notice and the v5 to v7 withholding detectors are removed. Every note is shown
+  to the reader verbatim with the label "Untrusted; review for clinical content."
+  (`cases.UNTRUSTED_NOTE_LABEL`, equal to `app.ai.context_policy.UNTRUSTED_NOTE_LABEL`), on model
+  and template briefs alike; no note means no label. The model still receives structured items
+  only. Model text containing the retired neutral sentence is rejected.
+- Results of prompts v5 to v7 are historical: their views can no longer be reproduced, so they
+  are not re-scored.
+- `holdout3.py` (`--set v9`, ids `v9-01` to `v9-12`): the primary set for v9, with expected
+  outcomes fixed before any run (`EXPECTED`). Earlier sets are development and regression sets.
+
 ## Checker rules to know
 
 - Dates in any common form are normalised to `YYYY-MM-DD`; a date with no year is read as 2026.

@@ -140,3 +140,9 @@ def test_model_items_refuse_free_text_personal_data_and_unlisted_kinds():
     with pytest.raises(policy.UntrustedContentError):
         policy.model_items([ok], ("pdc",))
     assert policy.reader_notes([ok, note, person]) == [note]
+
+
+def test_every_note_gets_the_same_label_whatever_it_says():
+    labelled = policy.label_notes(NOTES + ["", "Ordinary barrier: works night shifts."])
+    assert {n["label"] for n in labelled} == {"Untrusted; review for clinical content."}
+    assert [n["text"] for n in labelled] == NOTES + ["", "Ordinary barrier: works night shifts."]

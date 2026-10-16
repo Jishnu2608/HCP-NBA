@@ -78,6 +78,16 @@ INTERACTION: dict[str, Use] = {
 }
 
 
+# The one label every free-text note carries when shown to an authorised reader. Nothing about
+# the note's wording changes it: no keyword detector or phrase list decides how a note is treated.
+UNTRUSTED_NOTE_LABEL = "Untrusted; review for clinical content."
+
+
+def label_notes(texts: list[str]) -> list[dict]:
+    """Notes for the reader: each verbatim, each with the same label, in the order given."""
+    return [{"label": UNTRUSTED_NOTE_LABEL, "text": t} for t in texts]
+
+
 class UntrustedContentError(ValueError):
     """A free-text or personal item, or note text, was about to reach a model."""
 

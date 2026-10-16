@@ -50,7 +50,7 @@ def assess(case: Case, text: str | None, version: int) -> tuple[dict | None, dic
         # checked text, shown whether the model or the template wrote the brief.
         "untrusted_notes": (
             [{"label": UNTRUSTED_NOTE_LABEL, "text": case.note, "citation": "ctx:note:1"}]
-            if case.note
+            if case.note is not None
             else []
         ),
     }

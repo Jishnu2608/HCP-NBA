@@ -16,26 +16,26 @@ v7  notes that read as instructions (prompt injection) are withheld from the mod
 v8  the model receives only allowlisted structured items (`cases.MODEL_KINDS`): no free-text
     note and no contact record by any route; the reader sees the note verbatim, labelled as
     untrusted, outside the generated text.
+v9  keyword detectors removed: no neutral line, no instruction notice; every note gets the
+    same label for the reader. Views for v5 to v7 no longer reproduce their withholding, so
+    those results are historical and are not re-scored.
 Earlier prompt texts are in git history; results record the version they ran with.
 """
 
 import json
 
-from .cases import AS_OF, NEUTRAL_MEDICATION, Case, context_items
+from .cases import AS_OF, Case, context_items
 from .hybrid import ModelNarrative
 from .hybrid import json_schema as narrative_schema
 
-PROMPT_VERSION = "8"
-NEUTRAL_MEDICATION = NEUTRAL_MEDICATION  # re-exported for callers of earlier versions
+PROMPT_VERSION = "9"
 
 
 def view_for(version: int) -> dict:
     """What a given prompt version showed the model, so stored answers are re-checked fairly."""
     return {
         "show_patient_id": version < 3,
-        "withhold_medication_notes": version >= 5,
         "explicit_status": version >= 6,
-        "withhold_instruction_notes": version >= 7,
         "structured_only": version >= 8,
     }
 
@@ -46,7 +46,7 @@ OUTPUT_MODEL = ModelNarrative
 SYSTEM = (
     "You write two parts of a Case Brief for a care manager: summary and suggested_focus. "
     "The system already writes the key facts, the patient's identity, the list of missing "
-    "information and any medication-question notice. Do not do those jobs.\n"
+    "information. Do not do those jobs.\n"
     "Rules:\n"
     "- Use only facts that appear in the context items. Do not add numbers, dates, drug names "
     "or conditions that are not there.\n"

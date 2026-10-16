@@ -14,8 +14,9 @@ from . import thresholds as T
 from .cases import build_cases
 from .holdout import build_holdout
 from .holdout2 import build_holdout2
+from .holdout3 import build_holdout3
 
-_CASES = {c.id: c for c in build_cases() + build_holdout() + build_holdout2()}
+_CASES = {c.id: c for c in build_cases() + build_holdout() + build_holdout2() + build_holdout3()}
 
 
 def rescore(rec: dict, version: int) -> dict:
@@ -51,8 +52,8 @@ def summarize_model(recs: list[dict]) -> dict:
     gen_tokens = sum(a["gen_tokens"] for r in recs for a in r["attempts"])
     gen_ns = sum(a["gen_ns"] for r in recs for a in r["attempts"])
     parts = {
-        k: _mean([e["rubric"][k] for e in evals if e["rubric"][k] is not None])
-        for k in ("coverage", "barrier", "conflict", "missing", "neutral")
+        k: _mean([e["rubric"].get(k) for e in evals if e["rubric"].get(k) is not None])
+        for k in ("coverage", "barrier", "conflict", "missing")
     }
     m = {
         "cases": n,
@@ -212,7 +213,7 @@ def write(run_dir: Path) -> dict:
     row("Peak machine memory GiB", lambda m: f"{m['peak_system_gib']:.1f}")
     row("Retries used", lambda m: str(m["retries_used"]))
     row("Rubric (template " + f"{template_rubric:.3f})", lambda m: f"{m['rubric']:.3f}")
-    for part in ("coverage", "barrier", "conflict", "missing", "neutral"):
+    for part in ("coverage", "barrier", "conflict", "missing"):
         row(f"  rubric: {part}", lambda m, p=part: f"{m['rubric_parts'][p]:.2f}")
 
     lines += [

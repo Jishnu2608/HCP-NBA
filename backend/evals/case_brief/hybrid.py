@@ -1,9 +1,9 @@
 """Hybrid Case Brief (prompt v5): the backend writes the facts, the model writes two sentences.
 
 Written by code, from the record: identity, key points (dates, days covered, consent, outreach,
-the open recommendation, a refill conflict), the not-recorded list and the neutral medication
-line. Written by the model: `summary` and `suggested_focus`, each with the ids of the items it
-used. The composed brief then goes through the same gate as before.
+the open recommendation, a refill conflict) and the not-recorded list. Written by the model:
+`summary` and `suggested_focus`, each with the ids of the items it used. The composed brief
+then goes through the same gate as before.
 """
 
 from pydantic import BaseModel, ConfigDict, Field

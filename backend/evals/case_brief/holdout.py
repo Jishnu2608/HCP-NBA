@@ -5,7 +5,7 @@ Rules for this file:
   reuse these cases as independent evidence. A fix found here needs a new holdout set.
 - New wordings on purpose: barriers, medication bait and prompt injections are phrased
   differently from the development cases, and some injections are deliberately not matched by
-  `INSTRUCTION_LIKE`, so the model and the gate are tested, not only the detector.
+  the instruction detector of that time (removed in v9), so the model and the gate were tested.
 
 Frozen on 2026-10-16.
 """

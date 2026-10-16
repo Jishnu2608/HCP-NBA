@@ -23,6 +23,7 @@ from .cases import build_cases
 from .checks import evaluate
 from .holdout import build_holdout
 from .holdout2 import build_holdout2
+from .holdout3 import build_holdout3
 
 DEFAULT_MODELS = ["qwen3.5:9b-q4_K_M", "granite4.1:8b-q4_K_M", "qwen3.5:4b-q4_K_M"]
 RESULTS = Path(__file__).parent / "results"
@@ -99,7 +100,7 @@ def main() -> None:
     ap.add_argument("--resume", help="run id to continue")
     ap.add_argument(
         "--set",
-        choices=["dev", "holdout", "holdout2"],
+        choices=["dev", "holdout", "holdout2", "v9"],
         default="dev",
         help="case set (holdout: never tune)",
     )
@@ -116,7 +117,8 @@ def main() -> None:
     if missing:
         raise SystemExit(f"Not installed locally (pull them first): {missing}")
 
-    pool = {"holdout": build_holdout, "holdout2": build_holdout2}.get(args.set, build_cases)()
+    sets = {"holdout": build_holdout, "holdout2": build_holdout2, "v9": build_holdout3}
+    pool = sets.get(args.set, build_cases)()
     cases = [c for c in pool if not args.cases or c.id in args.cases]
     run_id = args.resume or datetime.now().strftime("%Y%m%d-%H%M")
     out_dir = RESULTS / run_id
