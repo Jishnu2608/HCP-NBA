@@ -24,6 +24,7 @@ from app.core.db import Base
 from app.core.permissions import Permission, can
 from app.models import (
     AdherenceSnapshot,
+    AiGeneration,
     AuditLog,
     CareManagerPatient,
     CareNote,
@@ -101,6 +102,11 @@ def _delete_patient_data(db: Session, patient_id: str) -> dict:
         )
     db.execute(delete(CareRequest).where(CareRequest.patient_id == patient_id))
     db.execute(delete(CareNote).where(CareNote.patient_id == patient_id))
+    db.execute(
+        delete(AiGeneration).where(
+            AiGeneration.subject_type == "patient", AiGeneration.subject_id == patient_id
+        )
+    )
     for model in (AdherenceSnapshot, MedicationFill, PatientCondition, Consent):
         db.execute(delete(model).where(model.patient_id == patient_id))
     db.execute(delete(PatientTherapy).where(PatientTherapy.patient_id == patient_id))

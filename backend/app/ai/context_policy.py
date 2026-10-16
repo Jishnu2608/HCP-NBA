@@ -14,7 +14,7 @@ import json
 import re
 from enum import StrEnum
 
-from app.ai.contracts import ContextItem, GenerationRequest, Sensitivity
+from app.ai.contracts import UNTRUSTED_NOTE_LABEL, ContextItem, GenerationRequest, Sensitivity
 
 
 class Use(StrEnum):
@@ -79,9 +79,63 @@ INTERACTION: dict[str, Use] = {
 }
 
 
-# The one label every free-text note carries when shown to an authorised reader. Nothing about
-# the note's wording changes it: no keyword detector or phrase list decides how a note is treated.
-UNTRUSTED_NOTE_LABEL = "Untrusted; review for clinical content."
+# Nested records a model may read in part. Every field is classified, as above.
+# One therapy (`TherapyOut`). The STAR measure names a condition, so it stays out.
+THERAPY: dict[str, Use] = {
+    "therapy_id": Use.EXCLUDED,
+    "measure": Use.EXCLUDED,
+    "drug_name": Use.MODEL,
+    "start_date": Use.MODEL,
+    "days_supply": Use.MODEL,
+    "prescriber_hcp_id": Use.EXCLUDED,
+    "pdc": Use.MODEL,
+    "gap_days": Use.EXCLUDED,
+    "last_fill_date": Use.MODEL,
+    "adherent": Use.EXCLUDED,
+    "copay": Use.EXCLUDED,
+    "mpr": Use.EXCLUDED,
+    "risk_score": Use.EXCLUDED,
+    "risk_segment": Use.EXCLUDED,
+    "persistence": Use.EXCLUDED,
+}
+
+# One fill (`FillOut`).
+FILL: dict[str, Use] = {"therapy_id": Use.MODEL, "fill_date": Use.MODEL, "days_supply": Use.MODEL}
+
+# The open recommendation (`RecommendationSummary`): what, how and when, never who or why.
+RECOMMENDATION: dict[str, Use] = {
+    "id": Use.EXCLUDED,
+    "cycle_id": Use.EXCLUDED,
+    "target_type": Use.EXCLUDED,
+    "target_id": Use.EXCLUDED,
+    "target_name": Use.EXCLUDED,
+    "target_origin": Use.EXCLUDED,
+    "segment": Use.EXCLUDED,
+    "action": Use.EXCLUDED,
+    "action_label": Use.MODEL,
+    "channel": Use.EXCLUDED,
+    "channel_label": Use.MODEL,
+    "status": Use.MODEL,
+    "score": Use.EXCLUDED,
+    "priority": Use.EXCLUDED,
+    "scheduled_for": Use.MODEL,
+    "timing_note": Use.EXCLUDED,
+    "rationale_summary": Use.EXCLUDED,
+    "content_id": Use.MODEL,
+    "content_title": Use.EXCLUDED,
+    "has_withheld": Use.EXCLUDED,
+    "block_reason": Use.EXCLUDED,
+    "as_of_date": Use.EXCLUDED,
+    "gate_now": Use.EXCLUDED,
+    "response_reviewed_ts": Use.EXCLUDED,
+}
+
+NESTED: dict[str, dict[str, Use]] = {
+    "interactions": INTERACTION,
+    "therapies": THERAPY,
+    "fills": FILL,
+    "open_nba": RECOMMENDATION,
+}
 
 
 def label_notes(texts: list[str]) -> list[dict]:
@@ -121,11 +175,26 @@ def _strings(value) -> list[str]:
     return []
 
 
+def _nested(key: str, row: dict, reader: list[str]) -> dict:
+    """The model fields of one nested record; its reader-only text goes to `reader`."""
+    fields = NESTED[key]
+    unknown = set(row) - set(fields)
+    if unknown:
+        raise UntrustedContentError(f"{key} fields not classified: {sorted(unknown)}")
+    reader += [
+        s
+        for k, u in fields.items()
+        if u is Use.READER_ONLY and row.get(k)
+        for s in _strings(row[k])
+    ]
+    return {k: v for k, v in row.items() if fields[k] is Use.MODEL}
+
+
 def split_patient_360(profile: dict) -> tuple[dict, list[str]]:
     """(fields a model may read, narrative texts withheld from it) from a Patient 360 dump that
     the read service already authorised. The withheld texts feed `assert_no_free_text`; the
-    reader sees the full record from the read service itself. An unclassified field is refused,
-    never passed through."""
+    reader sees the full record from the read service itself. An unclassified field, at the top
+    level or inside a nested record, is refused, never passed through."""
     model: dict = {}
     reader: list[str] = []
     for key, value in profile.items():
@@ -134,20 +203,11 @@ def split_patient_360(profile: dict) -> tuple[dict, list[str]]:
             raise UntrustedContentError(f"Patient 360 field {key!r} is not classified")
         if use is Use.READER_ONLY:
             reader += _strings(value)
-        elif use is Use.MODEL and key == "interactions":
-            rows = []
-            for row in value or []:
-                unknown = set(row) - set(INTERACTION)
-                if unknown:
-                    raise UntrustedContentError(f"interaction fields not classified: {unknown}")
-                rows.append({k: v for k, v in row.items() if INTERACTION[k] is Use.MODEL})
-                reader += [
-                    s
-                    for k, u in INTERACTION.items()
-                    if u is Use.READER_ONLY and row.get(k)
-                    for s in _strings(row[k])
-                ]
-            model[key] = rows
+        elif use is Use.MODEL and key in NESTED:
+            if isinstance(value, list):
+                model[key] = [_nested(key, row, reader) for row in value]
+            else:
+                model[key] = _nested(key, value, reader) if value else None
         elif use is Use.MODEL:
             model[key] = value
     return model, reader

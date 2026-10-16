@@ -80,15 +80,24 @@ def job_out(job: Job) -> dict:
     }
 
 
-def submit(db: Session, kind: str, user: User | None, params: dict | None = None) -> Job:
-    """Queues an engine job and commits. Raises JobConflict if one is already active."""
+def submit(
+    db: Session,
+    kind: str,
+    user: User | None,
+    params: dict | None = None,
+    *,
+    lock_key: str = ENGINE_LOCK,
+) -> Job:
+    """Queues a job and commits. Raises JobConflict if one holding the same lock is already
+    active. Engine work takes the engine lock; an AI generation takes its own per-subject lock
+    (`ai:<hash>`), so it neither waits for nor blocks an engine operation."""
     if kind not in HANDLERS:
         raise ValueError(f"unknown job kind {kind}")
     job = Job(
         kind=kind,
         status=QUEUED,
         params=params or {},
-        lock_key=ENGINE_LOCK,
+        lock_key=lock_key,
         requested_by_user_id=user.id if user else None,
         requested_at=utcnow(),
     )
@@ -97,7 +106,7 @@ def submit(db: Session, kind: str, user: User | None, params: dict | None = None
         db.flush()
     except IntegrityError:
         db.rollback()
-        raise JobConflict(active(db)) from None
+        raise JobConflict(db.scalar(select(Job).where(Job.lock_key == lock_key))) from None
     audit.record(
         db, "job_queued", "job", job.id,
         actor=user.username if user else audit.log.SYSTEM_ACTOR,
@@ -306,4 +315,20 @@ def _play_out(db: Session, job: Job, progress: Callable[[str], None]) -> dict:
     return {**result, "as_of_date": result["as_of_date"].isoformat()}
 
 
-HANDLERS: dict[str, Callable] = {"cycle": _cycle, "play_out": _play_out}
+def _ai_generation(db: Session, job: Job, progress: Callable[[str], None]) -> dict:
+    """One AI generation (app/ai/orchestrator.py). Its outcome, fallback included, is recorded
+    on the generation row; the job only carries the id and the final status. Not retried
+    automatically: the person asks again, which is a new generation."""
+    from app.ai import orchestrator
+
+    progress("Generating with the local model")
+    generation_id = int((job.params or {})["generation_id"])
+    status = orchestrator.run(db, generation_id)
+    return {"generation_id": generation_id, "status": str(status)}
+
+
+HANDLERS: dict[str, Callable] = {
+    "cycle": _cycle,
+    "play_out": _play_out,
+    "ai_generation": _ai_generation,
+}

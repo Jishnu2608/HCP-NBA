@@ -1,18 +1,22 @@
-"""Shared AI infrastructure (V2). Architecture prepared, not yet wired to any feature.
+"""Shared AI infrastructure. See docs/ai-architecture.md.
 
-Layers, outermost first (see docs/ai-architecture.md):
+Modules, outermost first:
 
-1. Artifact service: one per AI artifact (Case Brief first). Owns its permission, output schema,
-   prompt version, validation policy and deterministic fallback. Runs as a background job.
-2. Context layer (`app.context`, later): builds typed, minimum-necessary `ContextItem`s through
-   the scoped read services (`app.services`) for the acting user. Authorization, consent and
-   scope are decided there, in code, before any model sees anything.
-3. Safety gate: schema, citations, grounding, clinical-claim, leak and injection checks. Model
-   text reaches a reader only when every check passes; otherwise the artifact's template.
-4. Provider adapter (`app.ai.providers`): local Ollama by default; an organisation-funded cloud
-   API only when the server is configured for it. Selected on the server, never by a client,
-   and never switched silently: a failing provider means the deterministic fallback.
+- `registry` and `operations/`: approved operations, each an `OperationSpec` (identifier,
+  version, permission, context allowlist, prompt, output schema, checks, fallback). Only
+  registered operations exist. Case Brief is the one registered today.
+- `orchestrator`: the single generation path (submit, run as a background job, current
+  result), with mode, rate and capacity controls, staleness, audit and fallback.
+- `context` and `context_policy`: the context service. Authorisation, consent and scope are
+  decided by the read services (`app.services`) for the acting user; every field is classified
+  before anything is built; free text and identifiers never reach a model.
+- `safety`: shared deterministic checks on model text. A model never judges a model, and a
+  model cannot mark its own output safe.
+- `providers`: local Ollama only. Cloud inference is refused in this phase; a provider that is
+  off or failing means the operation's deterministic template, never another provider.
+- `contracts`: strict, provider- and operation-neutral types for all of the above.
 
 Core business modules never import this package (enforced by tests): NBA eligibility, consent,
-MLR approval, delivery and access control stay deterministic and authoritative.
+MLR approval, delivery and access control stay deterministic and authoritative. Model output
+never writes a record, a consent, a permission or a workflow state.
 """

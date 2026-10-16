@@ -944,6 +944,47 @@ class Job(Base):
     error: Mapped[str | None] = mapped_column(String(300))
 
 
+class AiGeneration(Base):
+    """One AI generation attempt (app/ai/orchestrator.py), linked to its job and audit rows.
+
+    Holds versions, provider and model, the context fingerprint (to recognise a stale result),
+    minimised provenance (context item ids and record pointers, no text), gate outcome codes,
+    timings and, only when every check passed, the reader-facing result. Never a prompt, a
+    note, or model text that failed a check. Deleted with the patient; older rows beyond
+    `ai_keep_generations` per subject are pruned (audit rows stay)."""
+
+    __tablename__ = "ai_generation"
+    __table_args__ = (
+        Index("ix_ai_generation_subject", "operation", "subject_type", "subject_id", "id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    operation: Mapped[str] = mapped_column(String(48))
+    operation_version: Mapped[str] = mapped_column(String(16))
+    prompt_version: Mapped[str] = mapped_column(String(16))
+    mode: Mapped[str] = mapped_column(String(16))
+    subject_type: Mapped[str] = mapped_column(String(16))
+    subject_id: Mapped[str] = mapped_column(String(32))
+    requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("job.id"))
+    status: Mapped[str] = mapped_column(String(16))
+    provider: Mapped[str | None] = mapped_column(String(32))
+    model: Mapped[str | None] = mapped_column(String(64))
+    model_digest: Mapped[str | None] = mapped_column(String(16))
+    context_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    provenance: Mapped[list[Any] | None] = mapped_column(JSON(none_as_null=True))
+    gate_reasons: Mapped[list[Any] | None] = mapped_column(JSON(none_as_null=True))
+    failure: Mapped[str | None] = mapped_column(String(32))
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+
+
 class SummarySnapshot(Base):
     """A summary computed once after a successful cycle and read many times (HCP panel
     figures, learning tables, the dashboard's like-for-like comparison). Valid only for its

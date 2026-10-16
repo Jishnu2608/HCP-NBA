@@ -90,6 +90,9 @@ def test_admin_has_every_staff_permission_except_content_approval():
     care = {P.PATIENT_CARE_MANAGE, P.INVITE_PATIENT}
     # The administrator handles privacy requests and does not submit their own.
     care |= {P.PRIVACY_REQUEST}
+    # The AI Case Brief is a care manager's tool for their own panel (owner decision,
+    # 2026-10-16): the administrator reads patients but does not generate briefs.
+    care |= {P.AI_CASE_BRIEF}
     # Content decisions belong to Compliance and proposals to representatives (separation of
     # duties: the administrator neither writes nor approves governed material).
     content = {P.CONTENT_APPROVE, P.CONTENT_PROPOSE}

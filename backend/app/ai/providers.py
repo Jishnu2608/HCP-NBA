@@ -1,8 +1,12 @@
-"""Provider adapters behind one interface: local Ollama (default) and a cloud channel (prepared).
+"""Provider adapters behind one interface. Local Ollama is the only provider that can be selected.
 
-Selection happens on the server from settings (`NBA_AI_PROVIDER`). There is no automatic
-fallback from one provider to another: a provider that is off, misconfigured or failing raises,
-and the calling artifact shows its deterministic template instead.
+Selection happens on the server from settings (`NBA_AI_PROVIDER`): "ollama" or "off". There
+is no automatic fallback from one provider to another: a provider that is off, misconfigured
+or failing raises, and the calling operation shows its deterministic template instead.
+
+Cloud inference is disabled in this phase. `CloudProvider` is a placeholder that never sends
+anything, and `get_provider` refuses "cloud" whatever else is configured, so no setting can
+cause a cloud call or a charge. Enabling a cloud provider later is a reviewed code change.
 """
 
 import json
@@ -73,6 +77,19 @@ class OllamaProvider:
         with self._opener.open(req, timeout=self.timeout) as response:
             return json.load(response)
 
+    def digest(self) -> str | None:
+        """The local model's content digest (first 12 characters), for the audit record."""
+        try:
+            req = urllib.request.Request(self.base_url + "/api/tags")
+            with self._opener.open(req, timeout=5) as response:
+                tags = json.load(response)
+        except Exception:  # noqa: BLE001 - the digest is informative only
+            return None
+        for m in tags.get("models", []):
+            if m.get("name") == self.model or m.get("model") == self.model:
+                return (m.get("digest") or "")[:12] or None
+        return None
+
     def generate(self, request: GenerationRequest) -> GenerationResult:
         options: dict = {
             "temperature": request.temperature,
@@ -140,8 +157,8 @@ def get_provider(settings: Settings | None = None) -> ModelProvider:
     if choice == "ollama":
         return OllamaProvider(s.ai_ollama_base_url, s.ai_ollama_model, s.ai_timeout_seconds)
     if choice == "cloud":
-        return CloudProvider(
-            s.ai_cloud_vendor, s.ai_cloud_model, s.ai_cloud_base_url, s.ai_cloud_api_key_env
+        raise ProviderNotConfigured(
+            "cloud inference is disabled in this phase; use NBA_AI_PROVIDER=ollama or off"
         )
     if choice == "off":
         raise ProviderNotConfigured("AI generation is switched off (NBA_AI_PROVIDER=off)")

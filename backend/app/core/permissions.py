@@ -88,6 +88,9 @@ class Permission(StrEnum):
     # Export approved recommendations and their delivery outcomes for a CRM or automation
     # system (integration/crm.py), within the reader's own recommendation scope.
     HANDOFF_EXPORT = "handoff:export"
+    # AI Case Brief for an assigned patient: read the brief and request a generation
+    # (app/ai). The record scope is the reader's patient scope; the AI layer adds no access.
+    AI_CASE_BRIEF = "ai:case_brief"
 
 
 P = Permission
@@ -155,6 +158,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.NBA_REVIEW_PATIENT,
             P.CONTENT_READ_APPROVED_PATIENT,
             P.PATIENT_CARE_MANAGE,
+            P.AI_CASE_BRIEF,
             # Clinic patients only, for a record this care manager is responsible for.
             P.INVITE_PATIENT,
             P.HANDOFF_EXPORT,

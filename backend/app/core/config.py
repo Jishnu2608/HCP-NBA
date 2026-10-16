@@ -59,14 +59,23 @@ class Settings(BaseSettings):
     # "template" needs no key and no network; other providers are plugged in later.
     llm_provider: str = "template"
 
-    # Shared AI layer (app/ai, V2; not yet used by any feature). See docs/ai-architecture.md.
-    # "ollama" = local model on this machine (default), "cloud" = organisation-funded API
-    # (adapter not implemented yet, so it never calls out), "off" = no generation.
-    # Selected here on the server only; no automatic fallback between providers.
+    # Shared AI layer (app/ai). See docs/ai-architecture.md.
+    # "ollama" = local model on this machine (default), "off" = no generation. "cloud" is
+    # refused in this phase: no cloud adapter exists and none is selected, so nothing is ever
+    # sent to a cloud API. Selected here on the server only; no automatic fallback between
+    # providers.
     ai_provider: str = "ollama"
     ai_ollama_base_url: str = "http://127.0.0.1:11434"
     ai_ollama_model: str = "qwen3.5:9b-q4_K_M"
-    ai_timeout_seconds: float = 300.0
+    ai_timeout_seconds: float = 180.0
+    # Case Brief: "template" (default, no model call), "shadow" (the model runs, is checked
+    # and audited, readers still see the template) or "prototype" (readers see model wording
+    # that passed every check, marked as AI-generated and needing review).
+    ai_case_brief_mode: str = "template"
+    # At most this many AI generations queued or running at once (one local model).
+    ai_max_active_jobs: int = 2
+    # Generations kept per subject and operation (older rows are deleted; audit rows stay).
+    ai_keep_generations: int = 5
     ai_cloud_vendor: str = ""  # e.g. anthropic, azure_openai, bedrock, vertex
     ai_cloud_model: str = ""
     ai_cloud_base_url: str = ""  # only for vendors that need one

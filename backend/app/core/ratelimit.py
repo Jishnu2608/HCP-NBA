@@ -46,6 +46,8 @@ LIMITS: dict[str, tuple[int, int]] = {
     "invite_accept_ip": (5, 15 * MINUTE),
     "invite_lookup_ip": (30, 10 * MINUTE),
     "invite_create": (30, 60 * MINUTE),
+    # AI generations requested per account.
+    "ai_generate": (10, 10 * MINUTE),
 }
 LONGEST = max(window for _, window in LIMITS.values())
 

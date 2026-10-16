@@ -1,5 +1,6 @@
 from app.models.tables import (
     AdherenceSnapshot,
+    AiGeneration,
     AuditLog,
     CareManagerPatient,
     CareNote,
@@ -49,6 +50,7 @@ from app.models.tables import (
 )
 
 __all__ = [
+    "AiGeneration",
     "AdherenceSnapshot",
     "AuditLog",
     "CareManagerPatient",

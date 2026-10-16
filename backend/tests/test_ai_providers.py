@@ -67,31 +67,28 @@ def test_off_and_unknown_providers_raise_instead_of_falling_back():
             get_provider(_settings(ai_provider=choice))
 
 
-def test_cloud_needs_vendor_model_and_a_key_variable(monkeypatch):
-    monkeypatch.delenv("NBA_TEST_CLOUD_KEY", raising=False)
-    with pytest.raises(ProviderNotConfigured):
-        get_provider(_settings(ai_provider="cloud"))
-    configured = _settings(
-        ai_provider="cloud",
-        ai_cloud_vendor="example",
-        ai_cloud_model="example-model",
-        ai_cloud_api_key_env="NBA_TEST_CLOUD_KEY",
-    )
-    with pytest.raises(ProviderNotConfigured, match="NBA_TEST_CLOUD_KEY"):
-        get_provider(configured)
-
-
-def test_cloud_provider_never_calls_out(monkeypatch, no_network):
+def test_cloud_is_refused_in_this_phase_however_it_is_configured(monkeypatch, no_network):
+    """No cloud adapter is selectable: a complete cloud configuration, a key and permission
+    for identifiable data still give ProviderNotConfigured, so nothing is sent or charged."""
     monkeypatch.setenv("NBA_TEST_CLOUD_KEY", "placeholder-not-a-real-key")
-    provider = get_provider(
+    for settings in (
+        _settings(ai_provider="cloud"),
         _settings(
             ai_provider="cloud",
             ai_cloud_vendor="example",
             ai_cloud_model="example-model",
             ai_cloud_api_key_env="NBA_TEST_CLOUD_KEY",
-        )
-    )
-    assert isinstance(provider, CloudProvider) and not provider.is_local
+            allow_external_identifiable_data=True,
+        ),
+    ):
+        with pytest.raises(ProviderNotConfigured, match="disabled"):
+            get_provider(settings)
+
+
+def test_the_cloud_placeholder_never_calls_out(monkeypatch, no_network):
+    monkeypatch.setenv("NBA_TEST_CLOUD_KEY", "placeholder-not-a-real-key")
+    provider = CloudProvider("example", "example-model", "", "NBA_TEST_CLOUD_KEY")
+    assert not provider.is_local
     with pytest.raises(ProviderNotConfigured):
         provider.generate(_request())
 
