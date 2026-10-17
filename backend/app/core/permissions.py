@@ -91,6 +91,10 @@ class Permission(StrEnum):
     # AI Case Brief for an assigned patient: read the brief and request a generation
     # (app/ai). The record scope is the reader's patient scope; the AI layer adds no access.
     AI_CASE_BRIEF = "ai:case_brief"
+    # AI context-layer diagnostics: inspect the shared context infrastructure, its policies and
+    # AI telemetry, on synthetic fixtures or as a redacted preview read with the reader's own
+    # access. Grants no access to any record and no way to act as another role.
+    AI_DIAGNOSTICS = "ai:diagnostics"
 
 
 P = Permission
@@ -123,6 +127,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.PRIVACY_SELF,
             P.PRIVACY_MANAGE,
             P.HANDOFF_EXPORT,
+            P.AI_DIAGNOSTICS,
         }
     ),
     Role.COMPLIANCE: frozenset(

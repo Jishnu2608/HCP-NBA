@@ -219,8 +219,10 @@ def test_contracts_reject_unknown_fields_and_malformed_values():
         ContextItem(id="rx-1", kind="rx", text="x", source="s", source_id="1")
     with pytest.raises(ValidationError):
         ContextRequest(operation=OP, subject_type="patient", subject_id="P 1; drop")
+    # Subject types are a fixed set backed by registered sources (HCP is one since the
+    # application-wide context layer); anything else is refused.
     with pytest.raises(ValidationError):
-        ContextRequest(operation=OP, subject_type="hcp", subject_id="HCP_0001")
+        ContextRequest(operation=OP, subject_type="database", subject_id="HCP_0001")
     with pytest.raises(ValidationError):
         GateFinding(kind="Leak Of Text", where="summary")
     with pytest.raises(ValidationError):

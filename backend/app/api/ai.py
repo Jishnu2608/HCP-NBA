@@ -12,10 +12,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.ai import orchestrator
-from app.ai.registry import UnknownOperation
+from app.ai.registry import UnknownOperation, resolve
 from app.api.deps import get_current_user
 from app.core.db import get_db
+from app.core.permissions import can
 from app.models import User
+from app.services import patients
+from app.services.errors import Forbidden, NotFound
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -27,6 +30,23 @@ def _unknown() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
 
 
+def _current_figures(db: Session, user: User, operation: str, patient_id: str) -> None:
+    """Brings a real patient's adherence figures up to today before the AI layer reads them,
+    exactly as opening Patient 360 does. This is the screen's decision: the context layer
+    itself never writes, and reports figures that are not current as stale."""
+    try:
+        spec = resolve(operation)
+    except UnknownOperation:
+        raise _unknown() from None
+    if not can(user, spec.permission):
+        return  # the orchestrator answers 403, audited
+    try:
+        if patients.refresh_if_stale(db, user, patient_id):
+            db.commit()
+    except (Forbidden, NotFound):
+        db.rollback()  # the orchestrator answers with the same error, audited
+
+
 @router.get("/{operation}/patients/{patient_id}")
 def current_result(
     operation: str = OPERATION,
@@ -36,6 +56,7 @@ def current_result(
 ) -> dict:
     """The result to show now (template, or checked model wording), the reader's notes with
     the untrusted label, the cited sources and the latest generation's status."""
+    _current_figures(db, user, operation, patient_id)
     try:
         view = orchestrator.current(db, user, operation, patient_id)
     except UnknownOperation:
@@ -54,6 +75,7 @@ def request_generation(
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     """Queues a generation (202), or returns the one already queued or running (200)."""
+    _current_figures(db, user, operation, patient_id)
     try:
         gen, created = orchestrator.submit(db, user, operation, patient_id)
     except UnknownOperation:

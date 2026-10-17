@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app import worker
 from app.api import (
     ai,
+    ai_diagnostics,
     analytics,
     auth,
     care,
@@ -95,7 +96,7 @@ app = FastAPI(
 
 ROUTERS = (
     system, auth, invitations, users, nba, people, care, content, governance, me, analytics,
-    commercial, insights, plan, integration, ai,
+    commercial, insights, plan, integration, ai, ai_diagnostics,
 )  # fmt: skip
 for module in ROUTERS:
     app.include_router(module.router)

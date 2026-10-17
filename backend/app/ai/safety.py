@@ -157,7 +157,9 @@ def _fragments(text: str, size: int = 24) -> set[str]:
 
 
 def check_text_fields(
-    ctx: AuthorizedContext, fields: dict[str, tuple[str, list[str]]]
+    ctx: AuthorizedContext,
+    fields: dict[str, tuple[str, list[str]]],
+    instructions: list[str] | None = None,
 ) -> tuple[list[GateFinding], int]:
     """Shared checks over model-written text. `fields` maps an output field to (text, the
     citation ids it relies on). Returns (findings, miscited statements).
@@ -234,6 +236,10 @@ def check_text_fields(
             flag("leak:identifier", where)
         if any(f in squashed for f in withheld):
             flag("leak:free_text", where)
+        # Absence claims, statuses and codes must match the context's own record of them.
+        findings.extend(check_absence(ctx, text, where, cites))
+        findings.extend(check_claims(ctx, text, where))
+        findings.extend(check_instruction_leak(text, instructions or [], where))
         # Grounding: a fact from the items must sit in the items this field cites.
         cited = " ".join(item_text.get(c, "") for c in cites)
         d_c, n_c, i_c = facts(cited, today)
@@ -246,3 +252,215 @@ def check_text_fields(
         ):
             miscited += 1
     return findings, miscited
+
+
+# --- Absence, status, codes, injection and instruction leaks (shared, operation-independent) ---
+
+# A sentence that says something is not recorded, not available or missing.
+ABSENCE = re.compile(
+    r"\b(?:not|never|no|none|nothing)\b[^.;\n]{0,48}?\b(?:recorded|documented|on file|available"
+    r"|logged|listed|found|captured|provided|present|known|registered|entered)\b"
+    r"|\b(?:no|without)\s+(?:record|records|data|information|history|evidence|entries)\b"
+    r"|\b(?:has|have|had|there (?:is|are)) no (?:\w+ ){0,2}(?:record|records|data|information"
+    r"|history|entry|entries)\b|\bmissing\b|\bnone (?:is|are|was|were)\b",
+    re.I,
+)
+APPROVED_CONTENT = re.compile(r"\bapproved (?:content|material|module|wording)\b", re.I)
+# "No open recommendation", "no recent outreach": "no" plus at most two qualifiers, then a
+# category word (checked per category). "No response to outreach" is not an absence claim.
+QUALIFIERS = r"(?:(?:open|active|current|recent|prior|previous|known)\s+){0,2}"
+# Status words that name a decision or workflow state; the model may repeat them only as the
+# items state them. Words with everyday meanings ("sent", "pending") are deliberately absent.
+STATUS_TERMS = (
+    "approved", "blocked", "rejected", "expired", "withdrawn", "superseded", "deferred",
+    "held out", "ready for review", "awaiting hcp", "awaiting the hcp", "in progress",
+    "changes requested",
+)  # fmt: skip
+STATUS = re.compile(r"\b(?:" + "|".join(re.escape(t) for t in STATUS_TERMS) + r")\b", re.I)
+# A status is asserted ("was approved", "status is blocked", "remains in progress"), not used as
+# an adjective ("the approved cost-support content"): only assertions are checked.
+STATUS_ASSERTION = re.compile(
+    r"\b(?:is|was|were|are|been|be|being|now|remains?|marked(?: as)?|status(?: is| was)?:?)\s+"
+    r"(?:\w+\s+)?(?P<term>" + "|".join(re.escape(t) for t in STATUS_TERMS) + r")\b",
+    re.I,
+)
+CODE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+# Instructions hidden in data or a question: flagged, never obeyed.
+INJECTION = {
+    "instruction_override": re.compile(
+        r"\b(?:ignore|disregard|forget|override)\b[^.\n]{0,30}\b(?:instructions?|rules?|prompt"
+        r"|guidelines?|polic(?:y|ies))\b",
+        re.I,
+    ),
+    "role_switch": re.compile(
+        r"\b(?:you are now|act as (?:an?|the|my) \w+|pretend (?:to be|you are)|from now on you)\b",
+        re.I,
+    ),
+    "prompt_extraction": re.compile(
+        r"\b(?:system prompt|developer (?:message|prompt)|hidden (?:context|instructions)"
+        r"|(?:reveal|print|show|repeat) (?:your|the) (?:instructions|prompt|context))\b",
+        re.I,
+    ),
+    "tool_call": re.compile(
+        r"<\s*/?\s*(?:tool|function|system)\b|\"tool_calls?\"|function_call", re.I
+    ),
+    "privilege_escalation": re.compile(
+        r"\b(?:as an? (?:admin|administrator|compliance)|grant (?:me|yourself|access)|bypass"
+        r"|elevate|escalate (?:my |your )?(?:privileges?|access)|all patients?)\b",
+        re.I,
+    ),
+    "exfiltration": re.compile(
+        r"\b(?:send|post|upload|email) (?:this|it|the data|everything) to\b", re.I
+    ),
+}
+
+
+ECHO_CODES = frozenset({"instruction_override", "role_switch", "prompt_extraction", "tool_call"})
+
+
+def screen_injection(text: str) -> list[str]:
+    """Codes of instruction-like patterns in untrusted text (a question, retrieved data, model
+    output). Detection is a signal for refusal or labelling, never permission to act."""
+    return sorted(code for code, pattern in INJECTION.items() if pattern.search(text or ""))
+
+
+def _category_terms(ctx: AuthorizedContext) -> dict[str, tuple[str, ...]]:
+    from app.ai.sources import UnknownSource, get_source
+
+    try:
+        source = get_source(ctx.source)
+    except UnknownSource:
+        return {}
+    return {c.name: c.terms or (c.name.replace("_", " "),) for c in source.categories}
+
+
+# A negated fact an item itself states ("not yet filled", "no response"): its word supports an
+# absence claim about the same thing when the field cites that item.
+ITEM_NEGATION = re.compile(r"\b(?:not yet|not|no|never)\s+(\w+)", re.I)
+
+
+def _stem(word: str) -> str:
+    return word.lower()[:4]
+
+
+def _term_hits(terms: dict[str, tuple[str, ...]], text: str) -> list[tuple[int, str]]:
+    """(position, category) of every category word in text."""
+    low = text.lower()
+    return sorted(
+        (m.start(), cat)
+        for cat, words in terms.items()
+        for w in words
+        for m in re.finditer(rf"\b{re.escape(w)}\b", low)
+    )
+
+
+def _targets(terms, sentence: str, start: int, end: int) -> list[str]:
+    """The categories an absence phrase is about: the category words inside the phrase; if it
+    names none ("... indicating none are recorded"), the nearest category word before it in the
+    same sentence. Words elsewhere in the sentence are not its target."""
+    hits = _term_hits(terms, sentence)
+    inside = sorted({cat for pos, cat in hits if start <= pos < end})
+    if inside:
+        return inside
+    before = [cat for pos, cat in hits if pos < start]
+    return before[-1:]
+
+
+def _corroborated(
+    ctx: AuthorizedContext, category: str, phrase: str, sentence: str, cites: list[str]
+) -> bool:
+    """A cited item of this category states the same negated fact (the absence phrase shares a
+    word stem with a negation in that item, and any medicine the sentence names is the item's):
+    "Metformin ... no fill recorded" with "Therapy: metformin ... not yet filled"."""
+    words = {_stem(w) for w in re.findall(r"[a-z]{3,}", phrase.lower())}
+    # A medicine named in the sentence must be the one the item is about.
+    vocab = sorted({t.lower() for t in [*DRUG_TERMS, *ctx.vocabulary] if t})
+    named = terms(sentence, vocab)
+    for item in ctx.model_items:
+        if item.id not in cites or (item.category or item.kind) != category:
+            continue
+        if named and not named <= terms(item.text, vocab):
+            continue
+        negated = {_stem(m.group(1)) for m in ITEM_NEGATION.finditer(item.text)}
+        if words & negated:
+            return True
+    return False
+
+
+def check_absence(
+    ctx: AuthorizedContext, text: str, where: str, cites: list[str] | None = None
+) -> list[GateFinding]:
+    """Absence claims must be supported by the record, never by what a context left out.
+
+    Each absence phrase ("not recorded", "no open recommendation", "missing", ...) is mapped to
+    the categories it is about (`_targets`). It is supported when every target category was read
+    and holds nothing (`verified_empty`), or when a cited item of that category itself states
+    the negated fact (`_corroborated`). Otherwise it is unsupported (the category was excluded,
+    not requested, truncated, stale, unavailable or is present), and an absence phrase with no
+    identifiable target cannot be verified. Both are rejected; the template stands."""
+    from app.ai.contracts import ABSENCE_SUPPORTED
+
+    cites = list(cites or [])
+    findings: list[GateFinding] = []
+    terms = _category_terms(ctx)
+    states = {c.category: c.state for c in ctx.categories}
+    bare_words = "|".join(
+        sorted({re.escape(w) for words in terms.values() for w in words}, key=len, reverse=True)
+    )
+    bare = re.compile(rf"\bno\s+{QUALIFIERS}(?:{bare_words})\b", re.I) if bare_words else None
+    for sentence in re.split(r"[.;\n!?]", text):
+        spans = [(m.start(), m.end()) for m in ABSENCE.finditer(sentence)]
+        if bare is not None:
+            spans += [(m.start(), m.end()) for m in bare.finditer(sentence)]
+        for start, end in sorted(set(spans)):
+            targets = _targets(terms, sentence, start, end)
+            if not targets:
+                findings.append(GateFinding(kind="unverifiable_absence", where=where))
+                continue
+            phrase = sentence[start:end]
+            for cat in targets:
+                state = states.get(cat)
+                if state in ABSENCE_SUPPORTED or _corroborated(ctx, cat, phrase, sentence, cites):
+                    continue
+                kind = f"unsupported_absence:{state.value if state else 'unknown'}"
+                findings.append(GateFinding(kind=kind, where=where))
+    return findings
+
+
+def check_claims(ctx: AuthorizedContext, text: str, where: str) -> list[GateFinding]:
+    """Statuses and coded reasons may be repeated only as the items state them: a status word
+    absent from every item is fabricated, or contradicts the status the items record; a code
+    (snake_case, as reason and gate codes are written) absent from every item is fabricated."""
+    findings: list[GateFinding] = []
+    # "approved content" names material, not a decision status.
+    item_text = APPROVED_CONTENT.sub("content", " ".join(i.text for i in ctx.model_items).lower())
+    stated = {m.group().lower() for m in STATUS.finditer(item_text)}
+    for sentence in re.split(r"[.;\n!?]", APPROVED_CONTENT.sub("content", text)):
+        if NEGATED.search(sentence):
+            continue
+        for m in STATUS_ASSERTION.finditer(sentence):
+            term = m.group("term").lower()
+            if term not in stated:
+                kind = "contradiction:status" if stated else "fabricated_status"
+                findings.append(GateFinding(kind=kind, where=where))
+    codes = {c for c in CODE.findall(text) if not c.startswith("ctx")}
+    if codes - set(CODE.findall(item_text)):
+        findings.append(GateFinding(kind="fabricated_code", where=where))
+    return findings
+
+
+def check_instruction_leak(text: str, instructions: list[str], where: str) -> list[GateFinding]:
+    """Model output that repeats the operation's own instructions, or carries instruction-like
+    patterns, is rejected."""
+    findings: list[GateFinding] = []
+    low = re.sub(r"\s+", " ", text.lower())
+    for block in instructions:
+        words = re.sub(r"\s+", " ", block.lower())
+        size = 40
+        if any(words[i : i + size] in low for i in range(0, max(len(words) - size, 0) + 1, 20)):
+            findings.append(GateFinding(kind="leak:instructions", where=where))
+            break
+    echoed = set(screen_injection(text)) & ECHO_CODES
+    if echoed:
+        findings.append(GateFinding(kind="injection_echo", where=where))
+    return findings

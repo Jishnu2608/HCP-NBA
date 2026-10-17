@@ -48,6 +48,8 @@ LIMITS: dict[str, tuple[int, int]] = {
     "invite_create": (30, 60 * MINUTE),
     # AI generations requested per account.
     "ai_generate": (10, 10 * MINUTE),
+    # Admin context-layer diagnostics: synthetic world builds and checks are not free.
+    "ai_diagnostics": (30, 10 * MINUTE),
 }
 LONGEST = max(window for _, window in LIMITS.values())
 

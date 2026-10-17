@@ -255,6 +255,35 @@ def seeded_session(model_dir, cfg: GenConfig = MEDIUM) -> Session:
     return db
 
 
+def _file_digest(path) -> str | None:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _persistent_databases_untouched():
+    """No test may open or change the persistent databases (data/nba_demo.db, the traditional
+    one, and data/nba_demodb_ai.db, the AI one). The application's default engine and session
+    factory are rebound to an in-memory database for the whole run, so even code that falls
+    back to `SessionLocal` cannot reach a file; both files are hashed before and after.
+    (Keep the application itself stopped during a test run: a running server may legitimately
+    write the AI database.)"""
+    from app.core import db as core_db
+    from app.core.config import DATABASE_FILES
+
+    before = {name: _file_digest(path) for name, path in DATABASE_FILES.items()}
+    memory = make_engine("sqlite://", poolclass=StaticPool)
+    original_engine = core_db.engine
+    core_db.engine = memory
+    core_db.SessionLocal.configure(bind=memory)
+    yield
+    core_db.SessionLocal.configure(bind=original_engine)
+    core_db.engine = original_engine
+    after = {name: _file_digest(path) for name, path in DATABASE_FILES.items()}
+    assert after == before, f"a persistent database file changed during the tests: {after}"
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _models_in_tmp(tmp_path_factory):
     """Keep model files written during tests out of the real data directory."""

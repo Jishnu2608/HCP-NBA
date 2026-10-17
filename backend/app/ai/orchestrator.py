@@ -24,13 +24,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app import audit, jobs
-from app.ai import context as context_service
 from app.ai import safety
 from app.ai.context_policy import UntrustedContentError, assert_no_free_text
 from app.ai.contracts import (
     ACTIVE_STATUSES,
+    ID_SUBJECTS,
     AuditEvent,
     AuthorizedContext,
+    CategoryState,
     ContextRequest,
     FailureCategory,
     GateOutcome,
@@ -38,7 +39,9 @@ from app.ai.contracts import (
     GenerationStatus,
     Mode,
     OperationSpec,
+    SubjectType,
 )
+from app.ai.engine import build_context, consumer_for
 from app.ai.providers import (
     DataPolicyError,
     ModelProvider,
@@ -48,7 +51,8 @@ from app.ai.providers import (
     get_provider,
 )
 from app.ai.registry import resolve
-from app.core import ratelimit
+from app.ai.sources import SourceUnavailable
+from app.core import pseudonym, ratelimit
 from app.core.config import Settings, get_settings
 from app.core.db import has_table
 from app.models import AiGeneration, Job, User
@@ -96,27 +100,64 @@ def ai_tables_present(db: Session) -> bool:
 
 
 def mode_for(spec: OperationSpec, settings: Settings | None = None) -> Mode:
-    """The operation's configured mode. Anything unrecognised means template (fail closed)."""
-    raw = str(getattr(settings or get_settings(), spec.mode_setting, "")).strip().lower()
+    """The operation's configured mode, from one place:
+
+    1. an operation listed in `ai_operations_disabled` is template, whatever else is set;
+    2. its entry in `ai_operation_modes`;
+    3. its legacy per-operation setting (`spec.mode_setting`, e.g. `ai_case_brief_mode`);
+    4. otherwise template. Anything unrecognised means template (fail closed)."""
+    settings = settings or get_settings()
+    if spec.id in (settings.ai_operations_disabled or []):
+        return Mode.TEMPLATE
+    raw = (settings.ai_operation_modes or {}).get(spec.id)
+    if raw is None and spec.mode_setting:
+        raw = getattr(settings, spec.mode_setting, "")
     try:
-        return Mode(raw)
+        return Mode(str(raw or "").strip().lower())
     except ValueError:
         return Mode.TEMPLATE
 
 
 def lock_key(spec: OperationSpec, subject_id: str) -> str:
-    """One queued or running generation per operation and subject (job.lock_key is unique)."""
+    """One queued or running generation per operation and subject or scope (job.lock_key is
+    unique). For a self, collection or aggregate subject `subject_id` is the reader's scope
+    key (`subject_key`)."""
     digest = hashlib.sha256(f"{spec.id}|{subject_id}".encode()).hexdigest()[:24]
     return f"ai:{digest}"
 
 
-def _context(db: Session, user: User, spec: OperationSpec, subject_id: str) -> AuthorizedContext:
-    request = ContextRequest(
-        operation=spec.id, subject_type=spec.subject_type, subject_id=subject_id
+def _is_record(spec: OperationSpec) -> bool:
+    return SubjectType(spec.subject_type) in ID_SUBJECTS
+
+
+def subject_key(spec: OperationSpec, user: User, subject_id: str | None) -> str:
+    """What a generation row is filed under: the record id for a record subject; for a self,
+    collection or aggregate subject an opaque key of (subject type, reader), so one reader's
+    result is never handed to another reader."""
+    if _is_record(spec):
+        if not subject_id:
+            raise NotFound("Not found")
+        return subject_id
+    return "s" + (pseudonym.ref("scope", f"{spec.subject_type}|{user.id}") or "")
+
+
+def _request(spec: OperationSpec, subject_id: str | None) -> ContextRequest:
+    return ContextRequest(
+        operation=spec.id,
+        subject_type=spec.subject_type,
+        subject_id=subject_id if _is_record(spec) else None,
     )
-    return context_service.build(
-        db, user, request, permission=spec.permission, allowed_kinds=spec.context_kinds
-    )
+
+
+def _context(
+    db: Session, user: User, spec: OperationSpec, subject_id: str | None
+) -> AuthorizedContext:
+    return build_context(db, user, _request(spec, subject_id), consumer_for(spec))
+
+
+def subject_ref(spec: OperationSpec, subject_id: str) -> str:
+    """The opaque subject reference kept in audit detail instead of the raw id."""
+    return pseudonym.ref(f"subject:{spec.subject_type}", subject_id) or ""
 
 
 def _event(spec: OperationSpec, mode: Mode, subject_id: str, status: str, **kw) -> AuditEvent:
@@ -125,8 +166,8 @@ def _event(spec: OperationSpec, mode: Mode, subject_id: str, status: str, **kw) 
         operation_version=spec.version,
         prompt_version=spec.prompt_version,
         mode=mode,
-        subject_type=spec.subject_type,
-        subject_id=subject_id,
+        subject_type=str(spec.subject_type),
+        subject_ref=subject_ref(spec, subject_id),
         status=status,
         **kw,
     )
@@ -261,11 +302,18 @@ def submit(
     provider_factory = provider_factory or get_provider
     spec = resolve(operation)
     mode = mode_for(spec, settings)
+    raw_subject = subject_id
+    subject_id = subject_key(spec, user, subject_id)
     try:
-        _context(db, user, spec, subject_id)
+        _context(db, user, spec, raw_subject)
     except (Forbidden, NotFound) as exc:
         _reject(db, user, spec, subject_id, type(exc).__name__.lower(), mode)
         raise
+    except SourceUnavailable:
+        _reject(db, user, spec, subject_id, "context_unavailable", mode)
+        raise GenerationRefused(
+            503, "context_unavailable", "This information is not available right now."
+        ) from None
     # Access first (403 / 404 as everywhere), then whether this database has the AI tables.
     if not ai_tables_present(db):
         _reject(db, user, spec, subject_id, "ai_unavailable", mode)
@@ -324,7 +372,7 @@ def submit(
         if existing is not None and existing.status in ACTIVE_STATUSES:
             return existing, False
         raise GenerationRefused(
-            409, "ai_busy", "A generation for this patient is still finishing. Try again shortly."
+            409, "ai_busy", "A generation for this subject is still finishing. Try again shortly."
         ) from None
     gen = db.get(AiGeneration, gen.id)
     gen.job_id = job.id
@@ -336,7 +384,9 @@ def submit(
 # --- Run (worker job) ---------------------------------------------------------------------------
 
 
-def evaluate(spec: OperationSpec, ctx: AuthorizedContext, text: str):
+def evaluate(
+    spec: OperationSpec, ctx: AuthorizedContext, text: str, instructions: list[str] | None = None
+):
     """(gate outcome, parsed output or None). Schema first, then the shared checks, then the
     operation's own. Every check runs on the server; none can be skipped by the output."""
     if len(text) > spec.max_output_chars:
@@ -346,7 +396,7 @@ def evaluate(spec: OperationSpec, ctx: AuthorizedContext, text: str):
     except (ValidationError, ValueError):
         return GateOutcome(passed=False, reasons=["schema"]), None
     fields = {f: (getattr(out, f), list(getattr(out, c))) for f, c in spec.cited_fields}
-    shared, miscited = safety.check_text_fields(ctx, fields)
+    shared, miscited = safety.check_text_fields(ctx, fields, instructions)
     own, own_miscited = spec.check(ctx, out)
     findings = shared + own
     miscited += own_miscited
@@ -398,17 +448,35 @@ def _run(db, gen, spec, user, settings, provider_factory) -> str:
     # Access is decided again now, as the requester: an assignment may have changed.
     if user is None or not getattr(user, "is_active", True):
         return _finish(db, gen, spec, GenerationStatus.FAILED, FailureCategory.ACCESS_LOST, user)
+    raw_subject = gen.subject_id if _is_record(spec) else None
     try:
-        ctx = _context(db, user, spec, gen.subject_id)
+        if subject_key(spec, user, raw_subject) != gen.subject_id:
+            raise NotFound("Not found")  # a scope key belongs to the reader who asked
+        ctx = _context(db, user, spec, raw_subject)
     except (Forbidden, NotFound):
         db.rollback()
         return _finish(db, gen, spec, GenerationStatus.FAILED, FailureCategory.ACCESS_LOST, user)
     except UntrustedContentError:
         db.rollback()
         return _finish(db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY, user)
+    except SourceUnavailable:
+        db.rollback()
+        return _finish(
+            db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.CONTEXT_UNAVAILABLE, user
+        )
     gen.operation_version, gen.prompt_version = spec.version, spec.prompt_version
     gen.context_fingerprint = ctx.fingerprint
     gen.provenance = ctx.provenance()
+    if not ctx.complete and not spec.allow_partial:
+        # Truncated, stale or partly unavailable: a model never describes partial data as if it
+        # were complete. The template stands.
+        unreadable = any(c.state is CategoryState.UNAVAILABLE for c in ctx.categories)
+        failure = (
+            FailureCategory.CONTEXT_UNAVAILABLE
+            if unreadable
+            else FailureCategory.CONTEXT_INCOMPLETE
+        )
+        return _finish(db, gen, spec, GenerationStatus.FALLBACK, failure, user)
 
     if mode_for(spec, settings) is Mode.TEMPLATE:
         return _finish(
@@ -453,7 +521,8 @@ def _run(db, gen, spec, user, settings, provider_factory) -> str:
     log.info("AI generation %s: provider answered in %.1fs", gen.id, time.perf_counter() - started)
     gen.prompt_tokens, gen.output_tokens = result.prompt_tokens, result.output_tokens
 
-    outcome, out = evaluate(spec, ctx, result.text)
+    system = [m.content for m in request.messages if m.role == "system"]
+    outcome, out = evaluate(spec, ctx, result.text, system)
     gen.gate_reasons = outcome.reasons
     if not outcome.passed:
         failure = (
@@ -496,7 +565,9 @@ def current(
     settings = settings or get_settings()
     spec = resolve(operation)
     mode = mode_for(spec, settings)
-    ctx = _context(db, user, spec, subject_id)
+    raw_subject = subject_id
+    subject_id = subject_key(spec, user, subject_id)
+    ctx = _context(db, user, spec, raw_subject)
     if not ai_tables_present(db):
         raise AiUnavailable()
     gen = latest(db, spec, subject_id)
@@ -540,6 +611,12 @@ def current(
             for i in ctx.items
         ],
         "notes": [n.model_dump(mode="json") for n in ctx.reader_notes],
+        # Whether the context was complete, and why each category is or is not in it.
+        "context": {
+            "complete": ctx.complete,
+            "policy_version": ctx.policy_version,
+            "categories": [c.model_dump(mode="json") for c in ctx.categories],
+        },
         "can_generate": mode is not Mode.TEMPLATE,
         "generation": (
             None

@@ -22,6 +22,7 @@ import {
   Stethoscope,
   UserCog,
   UserRound,
+  ScanSearch,
   Users,
 } from "lucide-react";
 import { lazy } from "react";
@@ -61,6 +62,7 @@ const MyProfile = page(() => import("./pages/Portal").then((m) => ({ default: m.
 const RepresentativeInbox = page(() => import("./pages/Portal").then((m) => ({ default: m.RepresentativeInbox })));
 const Queue = page(() => import("./pages/Queue"));
 const UnderTheHood = page(() => import("./pages/UnderTheHood"));
+const AiDiagnostics = page(() => import("./pages/AiDiagnostics"));
 const UsersPage = page(() => import("./pages/Users"));
 const InvitationsPage = page(() => import("./pages/Invitations"));
 const PrivacyPage = page(() => import("./pages/Privacy"));
@@ -243,6 +245,14 @@ export const ROUTES: AppRoute[] = [
     element: <UnderTheHood />,
     label: () => "Under the hood",
     icon: icon(Cpu),
+    group: "admin",
+  },
+  {
+    path: "/ai-diagnostics",
+    anyOf: [P.AI_DIAGNOSTICS],
+    element: <AiDiagnostics />,
+    label: () => "AI context diagnostics",
+    icon: icon(ScanSearch),
     group: "admin",
   },
   {

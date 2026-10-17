@@ -327,7 +327,7 @@ def response_out(db: Session, nba: Nba) -> dict | None:
     return {"outcome": i.outcome, "at": i.outcome_ts, "sent_at": i.int_ts, "channel": i.channel}
 
 
-def _latest_snapshot(db: Session, therapy_id: int, today: date) -> AdherenceSnapshot | None:
+def latest_snapshot(db: Session, therapy_id: int, today: date) -> AdherenceSnapshot | None:
     return db.scalar(
         select(AdherenceSnapshot)
         .where(AdherenceSnapshot.therapy_id == therapy_id, AdherenceSnapshot.as_of_date <= today)
@@ -335,13 +335,18 @@ def _latest_snapshot(db: Session, therapy_id: int, today: date) -> AdherenceSnap
     )
 
 
-def therapy_out(db: Session, t: PatientTherapy, today: date, *, with_risk: bool) -> dict:
-    snap = _latest_snapshot(db, t.id, today)
-    if pipeline.needs_refresh(db, t, snap, today):
+def therapy_out(
+    db: Session, t: PatientTherapy, today: date, *, with_risk: bool, refresh: bool = True
+) -> dict:
+    """One therapy with its latest adherence figures. `refresh=False` never writes: stale
+    figures are returned as stored (the AI context layer reads this way and reports them as
+    stale, see `services.patients.stale_therapies`)."""
+    snap = latest_snapshot(db, t.id, today)
+    if refresh and pipeline.needs_refresh(db, t, snap, today):
         # A real patient's figures are always as of today: days pass without any event, and
         # the patient, their care manager and their HCP must all read the same current state.
         pipeline.refresh_patient(db, t.patient_id)
-        snap = _latest_snapshot(db, t.id, today)
+        snap = latest_snapshot(db, t.id, today)
     out = {
         "therapy_id": t.id,
         "measure": t.measure,

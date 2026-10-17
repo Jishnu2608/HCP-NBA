@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, cycle, jobs
@@ -20,13 +20,13 @@ from app.auth.sessions import sessions
 from app.core import clock
 from app.core.db import get_db
 from app.core.engine_config import DEFAULTS, get_config, set_config, validate_value
-from app.core.permissions import Permission, can
+from app.core.permissions import Permission
 from app.datagen.generate import GenConfig, generate
 from app.engagement import delivery
-from app.models import AuditLog, EngineCycle, Job, ModelVersion, Nba, User
+from app.models import EngineCycle, Job, ModelVersion, Nba, User
 from app.models.enums import NbaStatus
 from app.models.tables import utcnow
-from app.services import serializers as out
+from app.services import audit as audit_service
 
 router = APIRouter(prefix="/api", tags=["governance"])
 
@@ -63,40 +63,11 @@ def audit_log(
 ) -> dict:
     """Readers without audit:read:identified (Compliance) get account emails and patient /
     HCP ids masked: what happened, when and by which role, without who it was about."""
-    identified = can(user, Permission.AUDIT_READ_IDENTIFIED)
-    where = []
-    if action:
-        where.append(AuditLog.action == action)
-    if nba_id is not None:
-        where.append(AuditLog.nba_id == nba_id)
-    if actor:
-        where.append(AuditLog.actor == actor)
-    if entity_id:
-        where.append(AuditLog.entity_id == entity_id)
-    if mine:
-        where.append(AuditLog.actor_user_id == user.id)
-    total = db.scalar(select(func.count()).select_from(AuditLog).where(*where))
-    actions = dict(
-        db.execute(select(AuditLog.action, func.count()).group_by(AuditLog.action)).all()
-    )
-    rows = db.scalars(
-        select(AuditLog).where(*where).order_by(AuditLog.id.desc()).limit(limit).offset(offset)
-    ).all()
-    verified = set(
-        db.scalars(
-            select(User.username).where(
-                User.username.in_({a.actor for a in rows}), User.professionally_verified
-            )
-        )
-    )
-    return {
-        "total": total,
-        "actions": actions,
-        "items": [
-            out.audit_out(a, identified=identified, verified_actors=verified, viewer_id=user.id)
-            for a in rows
-        ],
-    }
+    page = audit_service.audit_entries(
+        db, user, action=action, nba_id=nba_id, actor=actor, entity_id=entity_id, mine=mine,
+        limit=limit, offset=offset,
+    )  # fmt: skip
+    return page.model_dump()
 
 
 @router.get("/admin/config")

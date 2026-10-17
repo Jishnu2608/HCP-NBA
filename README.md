@@ -80,7 +80,7 @@ Authenticated account → Role → Permissions → Data scope → UI
 
 | Role | Sees | Can do |
 |---|---|---|
-| Administrator | Every module and all data, including users, invitations and assignments | Run the engine, change settings, manage accounts, permanently delete patient accounts, review recommendations, invite any professional role. **Cannot approve content.** |
+| Administrator | Every module and all data, including users, invitations and assignments; AI context diagnostics (synthetic fixtures, redacted previews read with their own access) | Run the engine, change settings, manage accounts, permanently delete patient accounts, review recommendations, invite any professional role. **Cannot approve content.** |
 | Compliance / MLR Reviewer | Content library with every submitted version and its review history, delivery and response per item (recipients unidentified), HCP questions, blocked and held-back recommendations (identities hidden), audit log with identities masked and their own actions marked, metrics | Review content (medical, legal, regulatory), approve, request changes, reject, withdraw, ask for a new version; maintain library content as new versions; answer authors and HCPs. The only role that decides on content. |
 | Medical Representative | Assigned HCPs (location, contact window, history) and their recommendations, approved HCP content, own content proposals and the MLR feedback on them, HCP requests and questions, My HCP work (today, requests, follow-ups, meetings, overdue, done today) | Propose contact with a chosen HCP through the engine's safeguards; approve, reject, send; log visits and calls with what was learned; schedule meetings and follow-ups; answer HCP requests; propose, revise and submit HCP content; reply to MLR and to HCPs |
 | Care Manager | Assigned patients, their care requests and recommendations, approved patient content | Approve, edit, reject, send; log call outcome; confirm what patients report, record medications, refills and instructions, route patients to an HCP by specialty, create clinic patients and invite them |
@@ -213,6 +213,8 @@ Add the `NBA_SMTP_*` values from [.env.example](.env.example) to `.env` and rest
 ### Optional: AI-worded Case Brief (synthetic-data prototype)
 
 Care managers see a Case Brief on each assigned patient. By default it is a deterministic template and no model runs. To try local-model wording, install [Ollama](https://ollama.com), pull `qwen3.5:9b-q4_K_M`, start it with `OLLAMA_NO_CLOUD=1`, set `NBA_DATABASE_PROFILE=ai` and `NBA_AI_CASE_BRIEF_MODE=prototype` in `.env` (the AI tables live only in the AI database; see "Two databases" below). Only a local model on this machine is used; cloud inference is disabled. Model wording is shown only after the server's checks pass, and it is marked for review. Design: [docs/ai-architecture.md](docs/ai-architecture.md).
+
+The Case Brief is one consumer of a shared, application-wide AI context layer (registered context sources for patients, HCPs, recommendations, content, care requests, queues, cycle times and operational telemetry, one field policy, shared safety checks). Administrators can inspect and test that layer under **AI context diagnostics** (`/ai-diagnostics`): it runs the real context code on a synthetic fixture world, never calls a model and never changes a record. Operation modes can be set in one map: `NBA_AI_OPERATION_MODES={"case_brief": "shadow"}`.
 
 ### Working on the code
 

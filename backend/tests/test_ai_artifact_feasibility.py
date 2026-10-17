@@ -271,7 +271,10 @@ def record_counts(db, pid):
 # --- Shared layer ------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("subject", ["hcp", "content", "user", "platform", "workflow", "panel"])
+# At the audit (2026-10-16) only "patient" was accepted. Since the application-wide context
+# layer, "hcp" and "content" are registered subject types (gap CON-01, see
+# test_context_contracts.py); subject types with no authoritative source are still refused.
+@pytest.mark.parametrize("subject", ["user", "platform", "workflow", "panel"])
 def test_shared_context_requests_accept_only_one_patient_subject(subject):
     with pytest.raises(ValidationError):
         ContextRequest(operation=OP, subject_type=subject, subject_id="X_1")
@@ -563,8 +566,8 @@ def test_m1_hcp_profile_gives_window_and_history_within_scope(db):
     )
     with pytest.raises(NotFound):
         hcps.hcp_profile(db, rep, other)
-    with pytest.raises(ValidationError):
-        ContextRequest(operation=OP, subject_type="hcp", subject_id=assigned)
+    # The HCP subject was refused at the audit; it is now a registered subject type (CON-01).
+    assert ContextRequest(operation=OP, subject_type="hcp", subject_id=assigned).subject_id
 
 
 def test_m2_approved_content_is_scoped_versioned_and_usable(db):

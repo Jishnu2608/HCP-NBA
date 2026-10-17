@@ -17,12 +17,13 @@ from app.api.deps import get_current_user, not_found, require_permission
 from app.api.schemas import StrictBody
 from app.auth import invitations
 from app.auth.errors import AuthError
-from app.clinical import care, vocabulary, workload
+from app.clinical import care, vocabulary
 from app.core import rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can_any
 from app.models import CareRequest, Patient, PatientCondition, PatientTherapy, User
 from app.models.enums import FillSource
+from app.services import care_requests
 from app.services import serializers as out
 
 router = APIRouter(prefix="/api/care", tags=["care"])
@@ -168,18 +169,11 @@ def list_requests(
     user: User = Depends(manager),
     db: Session = Depends(get_db),
 ) -> dict:
-    rows = care.requests_for(db, lambda column: rbac.patient_filter(user, column), status, type)
-    every = care.requests_for(db, lambda column: rbac.patient_filter(user, column), None, None)
-    counts: dict[str, int] = {}
-    for r in every:
-        counts[r.status] = counts.get(r.status, 0) + 1
-    return {
-        "counts": counts,
-        # The same figures as the menu count (clinical.workload): what needs the care manager
-        # now, follow-ups scheduled for later, consultations with the HCP.
-        "work": workload.care_requests(db, user),
-        "items": [care.request_out(db, r) for r in rows],
-    }
+    # Counts per status, the same figures as the menu count (clinical.workload: what needs the
+    # care manager now, follow-ups scheduled for later, consultations with the HCP) and the
+    # requests themselves, most urgent first (services/care_requests.py).
+    queue = care_requests.care_queue(db, user, status=status, type_=type)
+    return {"counts": queue.counts, "work": queue.work, "items": queue.items}
 
 
 @router.patch("/requests/{request_id}")

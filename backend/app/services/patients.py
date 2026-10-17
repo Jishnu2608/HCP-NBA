@@ -3,6 +3,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import pipeline
 from app.clinical import care, records
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
@@ -48,10 +49,15 @@ def scoped_patient(db: Session, user: User, patient_id: str) -> Patient:
     return p
 
 
-def patient_profile(db: Session, user: User, patient_id: str) -> PatientProfile:
+def patient_profile(
+    db: Session, user: User, patient_id: str, *, refresh: bool = True
+) -> PatientProfile:
     """Patient 360 for a staff reader: profile, adherence per confirmed medicine (with
     persistence), fills, care team, consent, engagement, history, the open recommendation and
-    the health record. Reported medicines appear only under `health` until confirmed."""
+    the health record. Reported medicines appear only under `health` until confirmed.
+
+    `refresh=False` reads without writing: a real patient's adherence figures that are not as
+    of today are returned as stored instead of being recomputed (see `stale_therapies`)."""
     p = scoped_patient(db, user, patient_id)
     today = clock.get_today(db)
     therapies = db.scalars(
@@ -91,7 +97,10 @@ def patient_profile(db: Session, user: User, patient_id: str) -> PatientProfile:
         # The risk score on each snapshot date: the same readers already see it per therapy.
         risk_history=care_insights.risk_history(db, p.patient_id),
         as_of_date=today,
-        therapies=[TherapyOut(**out.therapy_out(db, t, today, with_risk=True)) for t in therapies],
+        therapies=[
+            TherapyOut(**out.therapy_out(db, t, today, with_risk=True, refresh=refresh))
+            for t in therapies
+        ],
         fills=[
             FillOut(therapy_id=f.therapy_id, fill_date=f.fill_date, days_supply=f.days_supply)
             for f in fills
@@ -116,5 +125,29 @@ def patient_profile(db: Session, user: User, patient_id: str) -> PatientProfile:
         features=out.features_out(db, TargetType.PATIENT, patient_id, today),
         interactions=common.history(db, TargetType.PATIENT, patient_id),
         open_nba=common.open_recommendation(db, TargetType.PATIENT, patient_id),
-        health=care.health_record(db, p, for_patient=False),
+        health=care.health_record(db, p, for_patient=False, refresh=refresh),
     )
+
+
+def stale_therapies(db: Session, user: User, patient_id: str) -> list[int]:
+    """Confirmed therapies of this patient whose stored adherence figures are older than today
+    (real patients only; synthetic figures come from the engine cycle). A therapy with no
+    figures at all is not stale: there is nothing to show (no fill yet). Read only."""
+    p = scoped_patient(db, user, patient_id)
+    today = clock.get_today(db)
+    stale = []
+    for t in db.scalars(select(PatientTherapy).where(PatientTherapy.patient_id == p.patient_id)):
+        snap = out.latest_snapshot(db, t.id, today)
+        if snap is not None and pipeline.needs_refresh(db, t, snap, today):
+            stale.append(t.id)
+    return stale
+
+
+def refresh_if_stale(db: Session, user: User, patient_id: str) -> bool:
+    """Brings a real patient's adherence figures up to today, exactly as opening Patient 360
+    does. A screen's decision (the Case Brief route calls it before reading); the AI context
+    layer itself never writes. Returns True when figures were recomputed."""
+    if not stale_therapies(db, user, patient_id):
+        return False
+    pipeline.refresh_patient(db, patient_id)
+    return True

@@ -115,10 +115,12 @@ def condition_out(c: PatientCondition) -> dict:
     }
 
 
-def medication_out(db: Session, t: PatientTherapy, today: date, *, with_risk: bool) -> dict:
+def medication_out(
+    db: Session, t: PatientTherapy, today: date, *, with_risk: bool, refresh: bool = True
+) -> dict:
     prescriber = db.get(Hcp, t.prescriber_hcp_id) if t.prescriber_hcp_id else None
     adherence = (
-        out.therapy_out(db, t, today, with_risk=with_risk)
+        out.therapy_out(db, t, today, with_risk=with_risk, refresh=refresh)
         if t.review_status == ReviewStatus.CONFIRMED
         else {}
     )
@@ -286,7 +288,9 @@ def _rows(db: Session, model, patient_id: str, *order):
     return db.scalars(select(model).where(model.patient_id == patient_id).order_by(*order)).all()
 
 
-def health_record(db: Session, patient: Patient, *, for_patient: bool) -> dict:
+def health_record(
+    db: Session, patient: Patient, *, for_patient: bool, refresh: bool = True
+) -> dict:
     """Conditions, medications, requests, instructions and care team for one patient."""
     today = clock.get_today(db)
     pid = patient.patient_id
@@ -301,7 +305,7 @@ def health_record(db: Session, patient: Patient, *, for_patient: bool) -> dict:
             condition_out(c) for c in _rows(db, PatientCondition, pid, PatientCondition.id)
         ],
         "medications": [
-            medication_out(db, t, today, with_risk=not for_patient)
+            medication_out(db, t, today, with_risk=not for_patient, refresh=refresh)
             for t in _rows(db, PatientTherapy, pid, PatientTherapy.id)
         ],
         "requests": [
@@ -928,7 +932,7 @@ def hcp_options(
                 "country_label": jurisdiction.label(country, None) if country else None,
                 "location": out.hcp_location_label(h),
                 "same_country": country is not None and country == patient.country,
-                "reason": f"{matched} · {label}" if condition else matched,
+                "reason": f"{matched} Â· {label}" if condition else matched,
                 # Already said they cannot take this consultation, and why.
                 "declined_this_request": h.hcp_id in declined,
                 "decline_reason": declined.get(h.hcp_id),

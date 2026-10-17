@@ -16,6 +16,7 @@ import urllib.request
 from typing import Protocol
 from urllib.parse import urlparse
 
+from app.ai import netguard
 from app.ai.contracts import GenerationRequest, GenerationResult
 from app.core.config import Settings, get_settings
 
@@ -68,9 +69,12 @@ class OllamaProvider:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        # No proxy and no redirects (netguard): a request goes to this URL or nowhere.
+        self._opener = netguard.opener()
 
     def _post(self, path: str, body: dict) -> dict:
+        # Resolved on every request: "localhost" must still mean this machine.
+        netguard.assert_loopback(self.base_url)
         req = urllib.request.Request(
             self.base_url + path, json.dumps(body).encode(), {"Content-Type": "application/json"}
         )
@@ -80,6 +84,7 @@ class OllamaProvider:
     def digest(self) -> str | None:
         """The local model's content digest (first 12 characters), for the audit record."""
         try:
+            netguard.assert_loopback(self.base_url)
             req = urllib.request.Request(self.base_url + "/api/tags")
             with self._opener.open(req, timeout=5) as response:
                 tags = json.load(response)

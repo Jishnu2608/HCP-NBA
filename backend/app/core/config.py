@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # and audited, readers still see the template) or "prototype" (readers see model wording
     # that passed every check, marked as AI-generated and needing review).
     ai_case_brief_mode: str = "template"
+    # Modes of every registered AI operation in one map, e.g. NBA_AI_OPERATION_MODES=
+    # '{"case_brief": "shadow"}'. An entry here wins over a legacy per-operation setting such
+    # as ai_case_brief_mode; an operation in neither runs as "template". Unknown values mean
+    # "template" (fail closed).
+    ai_operation_modes: dict[str, str] = {}
+    # Operations switched off centrally: always "template", whatever their mode says.
+    ai_operations_disabled: list[str] = []
     # At most this many AI generations queued or running at once (one local model).
     ai_max_active_jobs: int = 2
     # Generations kept per subject and operation (older rows are deleted; audit rows stay).
