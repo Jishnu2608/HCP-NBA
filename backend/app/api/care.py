@@ -21,6 +21,7 @@ from app.clinical import care, vocabulary
 from app.core import rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can_any
+from app.core.pii import PatientViewer
 from app.models import CareRequest, Patient, PatientCondition, PatientTherapy, User
 from app.models.enums import FillSource
 from app.services import care_requests
@@ -131,9 +132,13 @@ def _owned(db: Session, user: User, model, row_id: int):
     return row
 
 
-def _record(db: Session, patient: Patient) -> dict:
-    return care.health_record(db, patient, for_patient=False) | {
-        "portal": care.portal_access(db, patient),
+def _record(db: Session, patient: Patient, user: User | None = None) -> dict:
+    viewer = PatientViewer(db, user)
+    portal = care.portal_access(db, patient)
+    if portal.get("email"):
+        portal["email"] = viewer.email(patient.patient_id, portal["email"])
+    return care.health_record(db, patient, for_patient=False, viewer=viewer) | {
+        "portal": portal,
         "location": out.location_label(patient),
         "country": patient.country,
     }
@@ -188,8 +193,8 @@ def update_request(
     db.commit()
     # The care record comes back with it, like every other care action.
     return {
-        "request": care.request_out(db, request),
-        "record": _record(db, db.get(Patient, request.patient_id)),
+        "request": care.request_out(db, request, viewer=PatientViewer(db, user)),
+        "record": _record(db, db.get(Patient, request.patient_id), user),
     }
 
 
@@ -207,7 +212,7 @@ def record_hcp_response(
         note_to_care_team=body.note_to_care_team,
     )  # fmt: skip
     db.commit()
-    return _record(db, db.get(Patient, request.patient_id))
+    return _record(db, db.get(Patient, request.patient_id), user)
 
 
 @router.post("/patients", status_code=201)
@@ -220,14 +225,14 @@ def create_clinic_patient(
         region=body.region,
     )  # fmt: skip
     db.commit()
-    return _record(db, patient)
+    return _record(db, patient, user)
 
 
 @router.get("/patients/{patient_id}")
 def patient_record(
     patient_id: str, user: User = Depends(manager), db: Session = Depends(get_db)
 ) -> dict:
-    return _record(db, _patient(db, user, patient_id))
+    return _record(db, _patient(db, user, patient_id), user)
 
 
 @router.post("/patients/{patient_id}/conditions", status_code=201)
@@ -240,7 +245,7 @@ def add_condition(
     patient = _patient(db, user, patient_id)
     care.add_condition(db, user, patient, body.condition, body.other_text)
     db.commit()
-    return _record(db, patient)
+    return _record(db, patient, user)
 
 
 @router.post("/conditions/{condition_id}/status")
@@ -253,7 +258,7 @@ def set_condition_status(
     condition = _owned(db, user, PatientCondition, condition_id)
     care.set_condition_status(db, user, condition, body.status, body.reason)
     db.commit()
-    return _record(db, db.get(Patient, condition.patient_id))
+    return _record(db, db.get(Patient, condition.patient_id), user)
 
 
 @router.post("/patients/{patient_id}/medications", status_code=201)
@@ -266,7 +271,7 @@ def add_medication(
     patient = _patient(db, user, patient_id)
     care.add_medication(db, user, patient, **body.model_dump())
     db.commit()
-    return _record(db, patient)
+    return _record(db, patient, user)
 
 
 @router.post("/medications/{therapy_id}/confirm")
@@ -276,7 +281,7 @@ def confirm_medication(
     therapy = _owned(db, user, PatientTherapy, therapy_id)
     care.confirm_medication(db, user, therapy, **body.model_dump())
     db.commit()
-    return _record(db, db.get(Patient, therapy.patient_id))
+    return _record(db, db.get(Patient, therapy.patient_id), user)
 
 
 @router.post("/medications/{therapy_id}/stop")
@@ -286,7 +291,7 @@ def stop_medication(
     therapy = _owned(db, user, PatientTherapy, therapy_id)
     care.stop_medication(db, user, therapy)
     db.commit()
-    return _record(db, db.get(Patient, therapy.patient_id))
+    return _record(db, db.get(Patient, therapy.patient_id), user)
 
 
 @router.post("/medications/{therapy_id}/dismiss")
@@ -296,7 +301,7 @@ def dismiss_medication(
     therapy = _owned(db, user, PatientTherapy, therapy_id)
     care.dismiss_medication(db, user, therapy, body.reason)
     db.commit()
-    return _record(db, db.get(Patient, therapy.patient_id))
+    return _record(db, db.get(Patient, therapy.patient_id), user)
 
 
 @router.post("/medications/{therapy_id}/fills", status_code=201)
@@ -309,7 +314,7 @@ def log_fill(
         care.log_refill(db, user, therapy, body.fill_date, FillSource.CARE_MANAGER)
     )
     db.commit()
-    return _record(db, db.get(Patient, therapy.patient_id))
+    return _record(db, db.get(Patient, therapy.patient_id), user)
 
 
 @router.post("/patients/{patient_id}/notes", status_code=201)
@@ -319,7 +324,7 @@ def add_note(
     patient = _patient(db, user, patient_id)
     care.add_note(db, user, patient, **body.model_dump())
     db.commit()
-    return _record(db, patient)
+    return _record(db, patient, user)
 
 
 @router.get("/patients/{patient_id}/hcp-options")
@@ -346,7 +351,7 @@ def assign_hcp(
         request_id=body.request_id, allow_declined=body.allow_declined,
     )  # fmt: skip
     db.commit()
-    return _record(db, patient)
+    return _record(db, patient, user)
 
 
 @router.post("/patients/{patient_id}/invite", status_code=201)
@@ -357,7 +362,7 @@ def invite_patient(
     patient = _patient(db, user, patient_id)
     inv, dev_link = care.invite(db, user, patient, body.email)
     db.commit()
-    result = {"invitation": invitations.out(db, inv, user), "record": _record(db, patient)}
+    result = {"invitation": invitations.out(db, inv, user), "record": _record(db, patient, user)}
     if dev_link:
         result["dev_link"] = dev_link  # local run without a mail server only
     return result

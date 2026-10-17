@@ -8,6 +8,7 @@ from app.clinical import care, records
 from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.permissions import Permission, can_any
+from app.core.pii import PatientViewer
 from app.insights import care as care_insights
 from app.models import (
     EngineCycle,
@@ -59,6 +60,7 @@ def patient_profile(
     `refresh=False` reads without writing: a real patient's adherence figures that are not as
     of today are returned as stored instead of being recomputed (see `stale_therapies`)."""
     p = scoped_patient(db, user, patient_id)
+    viewer = PatientViewer(db, user)
     today = clock.get_today(db)
     therapies = db.scalars(
         select(PatientTherapy).where(
@@ -85,9 +87,9 @@ def patient_profile(
             for c in consents
         )
     )
-    return PatientProfile(
+    profile = PatientProfile(
         patient_id=p.patient_id,
-        name=out.patient_name(p),
+        name=out.patient_name(p, viewer),
         age=int((today - p.birth_date).days / 365.25),
         sex=p.sex,
         plan_type=p.plan_type,
@@ -124,9 +126,11 @@ def patient_profile(
         last_cycle_at=db.scalar(select(func.max(EngineCycle.finished_ts))),
         features=out.features_out(db, TargetType.PATIENT, patient_id, today),
         interactions=common.history(db, TargetType.PATIENT, patient_id),
-        open_nba=common.open_recommendation(db, TargetType.PATIENT, patient_id),
-        health=care.health_record(db, p, for_patient=False, refresh=refresh),
+        open_nba=common.open_recommendation(db, TargetType.PATIENT, patient_id, viewer),
+        health=care.health_record(db, p, for_patient=False, refresh=refresh, viewer=viewer),
     )
+    # Notes, reasons and answers can name the patient: masked for a reader who may not see it.
+    return viewer.scrub(p, profile)
 
 
 def stale_therapies(db: Session, user: User, patient_id: str) -> list[int]:

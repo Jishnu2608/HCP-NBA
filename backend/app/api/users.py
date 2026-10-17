@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -21,7 +21,7 @@ from app.auth.provisioning import HCPS, OWN_HCP, OWN_PATIENT, PATIENTS, assignme
 from app.auth.sessions import sessions
 from app.clinical import activity, care, records
 from app.clinical import hcps as hcp_records
-from app.core import age, jurisdiction
+from app.core import age, jurisdiction, pii
 from app.core.db import get_db
 from app.core.permissions import Permission, can, permissions_for
 from app.models import CareRequest, Hcp, Patient, SpecialtyChangeRequest, User
@@ -62,11 +62,14 @@ class AssignmentBody(StrictBody):
 
 
 def _summary(db: Session, user: User) -> dict:
+    """Account administration never shows patient PII: a patient's account is listed with a
+    masked name and email (`core.pii`); administrators act on it by id."""
     inviter = db.get(User, user.invited_by_user_id) if user.invited_by_user_id else None
+    patient = pii.is_patient_account(user)
     return {
         "id": user.id,
-        "name": user.display_name,
-        "email": user.email,
+        "name": pii.mask_name(user.display_name) if patient else user.display_name,
+        "email": pii.mask_email(user.email) if patient else user.email,
         "role": user.role,
         "status": user.status,
         "verified": user.verified,
@@ -174,7 +177,15 @@ def list_users(
         where.append(User.source == source)
     if q:
         like = f"%{q}%"
-        where.append(or_(User.display_name.ilike(like), User.email.ilike(like)))
+        # Patient accounts never match a name or email search here: one masked hit for a typed
+        # name would reveal whose account it is.
+        where.append(
+            and_(
+                or_(User.display_name.ilike(like), User.email.ilike(like)),
+                User.patient_id.is_(None),
+                User.role.not_in(pii.PATIENT_ROLES),
+            )
+        )
     total = db.scalar(select(func.count()).select_from(User).where(*where))
     by_role = dict(db.execute(select(User.role, func.count()).group_by(User.role)).all())
     # Registered accounts first, newest first: those are the ones an admin acts on.

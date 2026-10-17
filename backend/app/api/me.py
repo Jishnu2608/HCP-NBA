@@ -19,6 +19,7 @@ from app.clinical import hcps as hcp_records
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission
+from app.core.pii import PatientViewer
 from app.engagement import delivery
 from app.models import (
     CareRequest,
@@ -129,7 +130,7 @@ def my_profile(user: User = Depends(profile_readers), db: Session = Depends(get_
     return {
         "kind": "patient",
         "patient_id": p.patient_id,
-        "name": out.patient_name(p),
+        "name": out.patient_name(p, PatientViewer(db, user)),
         "plan_type": p.plan_type,
         "preferred_channel": p.preferred_channel,
         **out.patient_brief(p),
@@ -254,7 +255,7 @@ def my_patients(user: User = Depends(panel_readers), db: Session = Depends(get_d
         result.append(
             {
                 "patient_id": pid,
-                "name": out.patient_name(p),
+                "name": out.patient_name(p, PatientViewer(db, user)),
                 "therapies": [
                     out.therapy_out(db, t, today, with_risk=False)
                     | {"prescribed_by_you": t.prescriber_hcp_id == user.hcp_id}

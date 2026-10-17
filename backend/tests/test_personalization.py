@@ -67,7 +67,9 @@ def test_recipient_view_is_filled_from_that_patients_record(env):
     data = client.get(f"/api/nba/{nba.id}", headers=auth(client, "admin")).json()
     filled = data["content"]["body_for_recipient"]
     assert "{{" not in filled
-    assert patient.first_name in filled and drug in filled
+    # Filled for this patient; the administrator sees the name masked (PII masking).
+    masked = patient.first_name[0] + "*" * (len(patient.first_name) - 1)
+    assert masked in filled and patient.first_name not in filled and drug in filled
     # The template itself is unchanged in the same payload.
     assert "{{" in data["content"]["body"]
     # Every draft is already filled for this patient.

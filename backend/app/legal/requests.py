@@ -74,10 +74,16 @@ def out(row: PrivacyRequest, *, with_requester: User | None = None) -> dict:
         "subject_label": row.subject_label,
     }
     if with_requester is not None:
+        from app.core import pii
+
+        # A patient's privacy request is worked by id: their name and email stay masked for
+        # the privacy managers (`core.pii`).
+        patient = pii.is_patient_account(with_requester)
+        name, email = with_requester.display_name, with_requester.email
         data["requester"] = {
             "id": with_requester.id,
-            "name": with_requester.display_name,
-            "email": with_requester.email,
+            "name": pii.mask_name(name) if patient else name,
+            "email": pii.mask_email(email) if patient else email,
             "role": with_requester.role,
             # Display hint: a patient account can be deleted from this request.
             "deletable": can(with_requester, Permission.SELF_HEALTH_MANAGE),

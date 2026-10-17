@@ -12,6 +12,7 @@ from app.clinical import workload
 from app.core import clock, rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can
+from app.core.pii import PatientViewer
 from app.engagement import delivery
 from app.llm import service as drafting
 from app.models import Content, Interaction, MessageDraft, Nba, Patient, User
@@ -159,8 +160,9 @@ def list_recommendations(
         inherited = sum(by_status.get(st, 0) for st in done) - sum(own.values())
         by_status = {**by_status, **{st: own.get(st, 0) for st in done}, "inherited": inherited}
     items = []
+    viewer = PatientViewer(db, user)
     for n in rows:
-        item = out.nba_summary(db, n, with_identity=identity)
+        item = out.nba_summary(db, n, with_identity=identity, viewer=viewer)
         hcp_sent = n.target_type == TargetType.HCP and n.status in (
             NbaStatus.SENT,
             NbaStatus.RESPONDED,
@@ -248,7 +250,7 @@ def approve(
         reason="Approved after gate re-check",
     )
     db.commit()
-    return out.nba_detail(db, nba, clock.get_today(db))
+    return out.nba_detail(db, nba, clock.get_today(db), viewer=PatientViewer(db, user))
 
 
 @router.post("/{nba_id}/reject")
@@ -273,7 +275,7 @@ def reject(
         reason=body.reason,
     )
     db.commit()
-    return out.nba_detail(db, nba, clock.get_today(db))
+    return out.nba_detail(db, nba, clock.get_today(db), viewer=PatientViewer(db, user))
 
 
 @router.patch("/{nba_id}/drafts/{draft_id}")
@@ -317,7 +319,9 @@ def redraft(
     rows = db.scalars(
         select(MessageDraft).where(MessageDraft.nba_id == nba.id).order_by(MessageDraft.variant_no)
     )
-    return [out.draft_out(d) for d in rows]
+    viewer = PatientViewer(db, user)
+    person = db.get(Patient, nba.target_id) if nba.target_type == TargetType.PATIENT else None
+    return [viewer.scrub(person, out.draft_out(d)) for d in rows]
 
 
 @router.post("/{nba_id}/send")
@@ -339,7 +343,7 @@ def send(nba_id: int, user: User = Depends(readers), db: Session = Depends(get_d
         db.commit()
         raise _conflict("blocked", f"Not sent: {exc.reason}") from exc
     db.commit()
-    return out.nba_detail(db, nba, clock.get_today(db))
+    return out.nba_detail(db, nba, clock.get_today(db), viewer=PatientViewer(db, user))
 
 
 @router.post("/{nba_id}/outcome")
@@ -374,7 +378,7 @@ def log_outcome(
     # The care team recorded this outcome themselves: nothing left for them to look at.
     nba.response_reviewed_ts = utcnow()
     db.commit()
-    return out.nba_detail(db, nba, clock.get_today(db))
+    return out.nba_detail(db, nba, clock.get_today(db), viewer=PatientViewer(db, user))
 
 
 @router.post("/{nba_id}/response-reviewed")
@@ -391,4 +395,4 @@ def response_reviewed(
             actor_role=user.role,
         )  # fmt: skip
         db.commit()
-    return out.nba_detail(db, nba, clock.get_today(db))
+    return out.nba_detail(db, nba, clock.get_today(db), viewer=PatientViewer(db, user))

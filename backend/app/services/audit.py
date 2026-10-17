@@ -12,9 +12,9 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core import clock
+from app.core import clock, pii
 from app.core.permissions import Permission, can
-from app.models import AuditLog, User
+from app.models import AuditLog, Patient, User
 from app.services import serializers as out
 from app.services.errors import Forbidden
 from app.services.schemas import Contract
@@ -60,7 +60,10 @@ def audit_entries(
     if nba_id is not None:
         where.append(AuditLog.nba_id == nba_id)
     if actor:
+        # Filtering by a patient's account would confirm whose actions they are: that filter
+        # never matches patient accounts.
         where.append(AuditLog.actor == actor)
+        where.append(AuditLog.actor_role.not_in(pii.PATIENT_ROLES))
     if entity_id:
         where.append(AuditLog.entity_id == entity_id)
     if mine:
@@ -83,14 +86,45 @@ def audit_entries(
             )
         )
     )
+    viewer = pii.PatientViewer(db, user)
     return AuditPage(
         total=total,
         actions=actions,
         items=[
-            out.audit_out(a, identified=identified, verified_actors=verified, viewer_id=user.id)
+            _masked(
+                db,
+                viewer,
+                a,
+                out.audit_out(
+                    a, identified=identified, verified_actors=verified, viewer_id=user.id
+                ),
+            )
             for a in rows
         ],
     )
+
+
+def _masked(db: Session, viewer: pii.PatientViewer, a: AuditLog, row: dict) -> dict:
+    """Patient PII in an audit row, masked for a reader who may not see that patient
+    (`core.pii`): a patient account's handle (its email) as the actor, and the patient's name
+    inside the reason and detail."""
+    account = None
+    if a.actor_role in pii.PATIENT_ROLES:
+        account = db.scalar(select(User).where(User.username == a.actor))
+        if not (account and viewer.sees(account.patient_id)) and row.get("actor"):
+            row["actor"] = pii.mask_email(row["actor"])
+    patient_id = account.patient_id if account is not None else None
+    if a.entity_type == "patient" and a.entity_id:
+        patient_id = a.entity_id
+    if patient_id and not viewer.sees(patient_id):
+        p = db.get(Patient, patient_id)
+        if p is not None:
+            names = [p.first_name, p.last_name]
+            if account is not None:
+                names.append(account.display_name)
+            for key in ("reason", "detail"):
+                row[key] = pii.mask_tree(row.get(key), lambda s: pii.mask_in_text(s, names))
+    return row
 
 
 def audit_activity(

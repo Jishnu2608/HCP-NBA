@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core import clock, rbac
 from app.core.permissions import Permission, can_any
+from app.core.pii import PatientViewer
 from app.models import Nba, User
 from app.services import serializers as out
 from app.services.errors import Forbidden, NotFound
@@ -33,7 +34,11 @@ def recommendation_detail(db: Session, user: User, nba_id: int) -> Recommendatio
     the personalised wording and the drafts left out, and the audit trail redacted."""
     nba = scoped_recommendation(db, user, nba_id)
     detail = out.nba_detail(
-        db, nba, clock.get_today(db), with_identity=rbac.can_see_target_profile(user)
+        db,
+        nba,
+        clock.get_today(db),
+        with_identity=rbac.can_see_target_profile(user),
+        viewer=PatientViewer(db, user),
     )
     detail["can_review"] = rbac.can_review(user, nba)
     return RecommendationDetail(**detail)

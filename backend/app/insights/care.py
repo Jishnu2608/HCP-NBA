@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import pipeline
 from app.core import rbac
+from app.core.pii import PatientViewer
 from app.insights import streaks
 from app.models import (
     AdherenceSnapshot,
@@ -93,7 +94,7 @@ def attention_points(db: Session, user: User, today: date) -> dict:
         points.append(
             {
                 "patient_id": p.patient_id,
-                "name": out.patient_name(p),
+                "name": out.patient_name(p, PatientViewer(db, user)),
                 "risk_score": round(score, 1),
                 "risk_segment": p.risk_segment,
                 "last_contact": last,
@@ -181,6 +182,7 @@ def waiting_with_hcp(db: Session, user: User, today: date) -> list[dict]:
         )
     ).all()
     items = []
+    viewer = PatientViewer(db, user)
     for r in rows:
         since = (r.routed_at or r.updated_at).date()
         hcp = db.get(Hcp, r.assigned_hcp_id) if r.assigned_hcp_id else None
@@ -188,7 +190,7 @@ def waiting_with_hcp(db: Session, user: User, today: date) -> list[dict]:
             {
                 "request_id": r.id,
                 "patient_id": r.patient_id,
-                "patient": out.patient_name(db.get(Patient, r.patient_id)),
+                "patient": out.patient_name(db.get(Patient, r.patient_id), viewer),
                 "hcp": out.hcp_name(hcp) if hcp else None,
                 "routed_on": since,
                 "days_waiting": max(0, (today - since).days),

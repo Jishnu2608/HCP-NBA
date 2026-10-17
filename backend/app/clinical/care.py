@@ -16,6 +16,7 @@ from app.auth.errors import AuthError
 from app.clinical import activity, records, vocabulary
 from app.clinical import hcps as hcp_records
 from app.core import age, clock, jurisdiction
+from app.core.pii import PatientViewer
 from app.engagement import simulator
 from app.insights.patient import request_progress
 from app.models import (
@@ -194,7 +195,7 @@ def _status_label(r: CareRequest, hcp: Hcp | None) -> str:
     return "Closed"
 
 
-def request_out(db: Session, r: CareRequest, *, for_patient: bool = False) -> dict:
+def request_out(db: Session, r: CareRequest, *, for_patient: bool = False, viewer=None) -> dict:
     hcp = db.get(Hcp, r.assigned_hcp_id) if r.assigned_hcp_id else None
     condition = db.get(PatientCondition, r.condition_id) if r.condition_id else None
     therapy = db.get(PatientTherapy, r.therapy_id) if r.therapy_id else None
@@ -230,12 +231,15 @@ def request_out(db: Session, r: CareRequest, *, for_patient: bool = False) -> di
         handler = db.get(User, r.handled_by_user_id) if r.handled_by_user_id else None
         row |= {
             "patient_id": r.patient_id,
-            "patient_name": out.patient_name(patient),
+            "patient_name": out.patient_name(patient, viewer),
             "patient_origin": patient.origin,
             "handled_by": handler.display_name if handler else None,
             "owner": owner.display_name if owner else None,
             "visible_to_patient": r.visible_to_patient,
         }
+        # Reason, resolution and notes can name the patient: masked for a reader who may not
+        # see the patient's name (`core.pii`; no viewer means masked).
+        row = (viewer or PatientViewer(db, None)).scrub(patient, row)
     return row
 
 
@@ -289,7 +293,7 @@ def _rows(db: Session, model, patient_id: str, *order):
 
 
 def health_record(
-    db: Session, patient: Patient, *, for_patient: bool, refresh: bool = True
+    db: Session, patient: Patient, *, for_patient: bool, refresh: bool = True, viewer=None
 ) -> dict:
     """Conditions, medications, requests, instructions and care team for one patient."""
     today = clock.get_today(db)
@@ -297,7 +301,7 @@ def health_record(
     notes = _rows(db, CareNote, pid, CareNote.created_at.desc())
     if for_patient:
         notes = [n for n in notes if n.visible_to_patient]
-    return {
+    record = {
         "patient_id": pid,
         "origin": patient.origin,
         "editable": records.is_real(patient),
@@ -309,13 +313,16 @@ def health_record(
             for t in _rows(db, PatientTherapy, pid, PatientTherapy.id)
         ],
         "requests": [
-            request_out(db, r, for_patient=for_patient)
+            request_out(db, r, for_patient=for_patient, viewer=viewer)
             for r in _rows(db, CareRequest, pid, CareRequest.id.desc())
             if not for_patient or r.visible_to_patient
         ],
         "notes": [note_out(db, n) for n in notes],
         "care_team": care_team(db, pid),
     }
+    if for_patient:
+        return record  # the patient's own record
+    return (viewer or PatientViewer(db, None)).scrub(patient, record)
 
 
 # --- What the patient reports -----------------------------------------------------------------

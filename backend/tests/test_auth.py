@@ -401,7 +401,8 @@ def test_new_patient_gets_their_own_empty_record(env):
         assert client.get(path, headers=as_user(session)).status_code == 403
     assert client.get("/api/me/consents", headers=as_user(session)).status_code == 200
     seen = client.get(f"/api/patients/{pid}", headers=auth(client, "admin")).json()
-    assert seen["name"] == "Riya Sharma"
+    # The administrator opens the record but never sees the patient's name (PII masking).
+    assert seen["name"] == "R*** S*****"
 
 
 def test_second_patient_gets_a_different_record(env):

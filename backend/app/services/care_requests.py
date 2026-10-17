@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.clinical import care, workload
 from app.core import clock, rbac
 from app.core.permissions import Permission, can, can_any
+from app.core.pii import PatientViewer
 from app.models import CareRequest, User
 from app.services.errors import Forbidden, NotFound
 from app.services.schemas import Contract
@@ -53,6 +54,7 @@ def care_queue(
     workload figures the menu shows."""
     if not can(user, Permission.PATIENT_CARE_MANAGE):
         raise Forbidden("Your account cannot work care requests.")
+    viewer = PatientViewer(db, user)
     rows = care.requests_for(db, _scope(user), status, type_)
     every = care.requests_for(db, _scope(user), None, None)
     counts: dict[str, int] = {}
@@ -61,7 +63,7 @@ def care_queue(
     return CareQueue(
         counts=counts,
         work=workload.care_requests(db, user),
-        items=[care.request_out(db, r) for r in rows],
+        items=[care.request_out(db, r, viewer=viewer) for r in rows],
         total=len(rows),
     )
 
@@ -81,7 +83,9 @@ def scoped_request(db: Session, user: User, request_id: int) -> CareRequest:
 
 def care_request(db: Session, user: User, request_id: int) -> dict:
     """One care request as staff see it in the health record (`care.request_out`)."""
-    return care.request_out(db, scoped_request(db, user, request_id))
+    return care.request_out(
+        db, scoped_request(db, user, request_id), viewer=PatientViewer(db, user)
+    )
 
 
 def request_times(db: Session, user: User, *, limit: int = 500) -> list[RequestTimes]:

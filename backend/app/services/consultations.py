@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.clinical import care, records
 from app.core import clock
 from app.core.permissions import Permission, can
+from app.core.pii import PatientViewer
 from app.models import CareNote, CareRequest, Patient, PatientCondition, PatientTherapy, User
 from app.models.enums import (
     CareNoteKind,
@@ -35,7 +36,9 @@ def own_hcp(user: User) -> str:
     return user.hcp_id
 
 
-def consultation_out(db: Session, r: CareRequest, hcp_id: str, *, refresh: bool = True) -> dict:
+def consultation_out(
+    db: Session, r: CareRequest, hcp_id: str, *, refresh: bool = True, viewer=None
+) -> dict:
     """What the routed HCP needs to answer. The patient asked for this consultation, so its
     clinical details (confirmed conditions, current medications and adherence) are shared
     with the HCP while it is open, whatever the provider-sharing setting. Once it is closed,
@@ -45,7 +48,7 @@ def consultation_out(db: Session, r: CareRequest, hcp_id: str, *, refresh: bool 
     today = clock.get_today(db)
     p = db.get(Patient, r.patient_id)
     current = r.status in WITH_HCP and r.assigned_hcp_id == hcp_id
-    row = care.request_out(db, r, for_patient=False)
+    row = care.request_out(db, r, for_patient=False, viewer=viewer)
     # Only this HCP's own notes (another HCP's decline reason is not theirs to read).
     row["notes"] = [n for n in row["notes"] if n.get("hcp_id") == hcp_id]
     managers = [u.display_name for u in records.responsible_care_managers(db, r.patient_id)]
@@ -108,7 +111,8 @@ def hcp_consultations(db: Session, user: User, *, refresh: bool = True) -> dict:
         )
         .order_by(CareRequest.updated_at.desc(), CareRequest.id.desc())
     ).all()
-    items = [consultation_out(db, r, hcp_id, refresh=refresh) for r in rows]
+    viewer = PatientViewer(db, user)
+    items = [consultation_out(db, r, hcp_id, refresh=refresh, viewer=viewer) for r in rows]
     items.sort(key=lambda i: GROUP_ORDER[i["group"]])
     return {
         "waiting": sum(1 for i in items if i["group"] == "waiting"),

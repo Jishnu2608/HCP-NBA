@@ -228,7 +228,8 @@ def test_privacy_requests_are_private_and_worked_by_privacy_managers(env):
     admin = auth(client, "admin")
     queue = client.get("/api/admin/privacy-requests", headers=admin).json()
     item = next(i for i in queue["items"] if i["id"] == request_id)
-    assert item["requester"]["email"] == "alice.req@example.org"
+    # Worked by id: the patient's email stays masked for the privacy manager (PII masking).
+    assert item["requester"]["email"] == "a********@e******.org"
     url = f"/api/admin/privacy-requests/{request_id}"
     assert code_of(client.patch(url, json={"status": "completed"}, headers=admin)) == (
         "resolution_required"

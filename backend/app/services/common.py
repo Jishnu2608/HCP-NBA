@@ -81,11 +81,11 @@ def history(
 
 
 def open_recommendation(
-    db: Session, target_type: str, target_id: str
+    db: Session, target_type: str, target_id: str, viewer=None
 ) -> RecommendationSummary | None:
     nba = db.scalar(
         select(Nba)
         .where(Nba.target_type == target_type, Nba.target_id == target_id, Nba.status.in_(LIVE))
         .order_by(Nba.id.desc())
     )
-    return RecommendationSummary(**out.nba_summary(db, nba)) if nba else None
+    return RecommendationSummary(**out.nba_summary(db, nba, viewer=viewer)) if nba else None

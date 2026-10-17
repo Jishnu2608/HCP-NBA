@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import pipeline
 from app.core import jurisdiction
+from app.core.pii import PatientViewer, mask_in_text, mask_name, mask_tree
 from app.models import (
     AdherenceSnapshot,
     AuditLog,
@@ -28,8 +29,12 @@ from app.nba import gates
 from app.nba.rationale import ACTION_LABEL, CHANNEL_LABEL
 
 
-def patient_name(p: Patient) -> str:
-    return f"{p.first_name} {p.last_name}".strip()
+def patient_name(p: Patient, viewer: PatientViewer | None = None) -> str:
+    """The patient's name as this reader may see it (`core.pii`). Without a viewer the name is
+    masked: a call site that forgets the reader fails closed."""
+    if viewer is None:
+        return mask_name(f"{p.first_name} {p.last_name}".strip())
+    return viewer.name(p)
 
 
 def location_label(p: Patient) -> str | None:
@@ -66,11 +71,14 @@ def hcp_name(h: Hcp) -> str:
     return f"Dr. {h.first_name} {h.last_name}".strip()
 
 
-def target_label(db: Session, target_type: str, target_id: str) -> tuple[str, str | None]:
-    """(display name, segment label) for a recommendation's target."""
+def target_label(
+    db: Session, target_type: str, target_id: str, viewer: PatientViewer | None = None
+) -> tuple[str, str | None]:
+    """(display name, segment label) for a recommendation's target; a patient's name as the
+    reader may see it."""
     if target_type == TargetType.PATIENT:
         p = db.get(Patient, target_id)
-        return patient_name(p), p.risk_segment
+        return patient_name(p, viewer), p.risk_segment
     h = db.get(Hcp, target_id)
     return hcp_name(h), h.segment
 
@@ -105,10 +113,13 @@ def target_origin(db: Session, nba: Nba) -> str | None:
     return h.origin if h else None
 
 
-def nba_summary(db: Session, nba: Nba, *, with_identity: bool = True) -> dict:
+def nba_summary(
+    db: Session, nba: Nba, *, with_identity: bool = True, viewer: PatientViewer | None = None
+) -> dict:
     """`with_identity=False` is the gate-outcome view (Compliance): the recommendation and
-    its gate results, without anything that identifies the person concerned."""
-    name, segment = target_label(db, nba.target_type, nba.target_id)
+    its gate results, without anything that identifies the person concerned. A patient
+    target's name is masked unless `viewer` may see it."""
+    name, segment = target_label(db, nba.target_type, nba.target_id, viewer)
     content = db.get(Content, nba.content_id) if nba.content_id else None
     return {
         "id": nba.id,
@@ -248,8 +259,27 @@ def _for_recipient(db: Session, nba: Nba, content: Content) -> str:
     return personalize(content.body, person.first_name or "", None)
 
 
-def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True) -> dict:
-    out = nba_summary(db, nba, with_identity=with_identity)
+def nba_detail(
+    db: Session,
+    nba: Nba,
+    today: date,
+    *,
+    with_identity: bool = True,
+    viewer: PatientViewer | None = None,
+) -> dict:
+    out = nba_summary(db, nba, with_identity=with_identity, viewer=viewer)
+    # Personalised wording, drafts and audit detail name the patient: masked for a reader who
+    # may not see the patient's name.
+    person = db.get(Patient, nba.target_id) if nba.target_type == TargetType.PATIENT else None
+
+    def text(value):
+        if person is None:
+            return value
+        if viewer is None:
+            return mask_tree(value, lambda s: mask_in_text(s, [person.first_name,
+                                                               person.last_name]))  # fmt: skip
+        return mask_tree(value, lambda s: viewer.text(person, s))
+
     content = db.get(Content, nba.content_id)
     candidates = db.scalars(
         select(NbaCandidate).where(NbaCandidate.nba_id == nba.id).order_by(NbaCandidate.rank)
@@ -274,7 +304,7 @@ def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True
             # The approved wording as this recipient will read it (their first name and
             # medicine), from the same function that fills it at send. The identity-free
             # view keeps the placeholders.
-            "body_for_recipient": _for_recipient(db, nba, content) if with_identity else None,
+            "body_for_recipient": text(_for_recipient(db, nba, content)) if with_identity else None,
         },
         candidates=[
             {
@@ -296,7 +326,7 @@ def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True
         ],
         # Drafts address the person by name, so the gate-outcome view leaves them out.
         drafts=[
-            draft_out(d)
+            text(draft_out(d))
             for d in db.scalars(
                 select(MessageDraft)
                 .where(MessageDraft.nba_id == nba.id)
@@ -306,13 +336,13 @@ def nba_detail(db: Session, nba: Nba, today: date, *, with_identity: bool = True
         if with_identity
         else [],
         audit=[
-            audit_out(a, identified=with_identity)
+            text(audit_out(a, identified=with_identity))
             for a in db.scalars(
                 select(AuditLog).where(AuditLog.nba_id == nba.id).order_by(AuditLog.id)
             )
         ],
         reviewed_ts=nba.reviewed_ts,
-        response=response_out(db, nba),
+        response=text(response_out(db, nba)),
     )
     return out
 

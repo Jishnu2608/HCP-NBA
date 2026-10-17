@@ -1,7 +1,7 @@
 """HCP 360 and Patient 360 for staff roles. Portal users have their own endpoints in me.py."""
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit, unify
@@ -11,6 +11,7 @@ from app.clinical import hcps as hcp_records
 from app.core import rbac
 from app.core.db import get_db
 from app.core.permissions import Permission, can
+from app.core.pii import PatientViewer
 from app.models import (
     Hcp,
     HcpSpecialty,
@@ -40,16 +41,23 @@ def list_patients(
     user: User = Depends(patient_staff),
     db: Session = Depends(get_db),
 ) -> dict:
+    viewer = PatientViewer(db, user)
     where = [rbac.patient_filter(user, Patient.patient_id)]
     if risk:
         where.append(Patient.risk_segment == risk)
     if q:
         like = f"%{q}%"
+        # A name matches only patients this reader sees unmasked: otherwise a search for a
+        # full name returning one masked row would reveal who the record is. Everyone can
+        # search by patient id.
+        named = viewer.visible_ids()
         where.append(
             or_(
                 Patient.patient_id.ilike(like),
-                Patient.first_name.ilike(like),
-                Patient.last_name.ilike(like),
+                and_(
+                    Patient.patient_id.in_(named),
+                    or_(Patient.first_name.ilike(like), Patient.last_name.ilike(like)),
+                ),
             )
         )
     total = db.scalar(select(func.count()).select_from(Patient).where(*where))
@@ -74,7 +82,7 @@ def list_patients(
         "items": [
             {
                 "patient_id": p.patient_id,
-                "name": out.patient_name(p),
+                "name": out.patient_name(p, viewer),
                 "risk_segment": p.risk_segment,
                 "plan_type": p.plan_type,
                 "preferred_channel": p.preferred_channel,

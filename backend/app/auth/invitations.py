@@ -522,12 +522,19 @@ def complete_for(db: Session, user: User) -> Invitation | None:
 # --- Reading --------------------------------------------------------------------------------
 
 
-def person(user: User | None) -> dict | None:
+def person(user: User | None, viewer=None) -> dict | None:
+    """An account as shown to staff. A patient's account shows a masked name unless `viewer`
+    (a `core.pii.PatientViewer`) may see that patient (fail closed without one)."""
     if user is None:
         return None
+    from app.core import pii
+
+    name = user.display_name
+    if pii.is_patient_account(user) and not (viewer and viewer.sees(user.patient_id)):
+        name = pii.mask_name(name)
     return {
         "id": user.id,
-        "name": user.display_name,
+        "name": name,
         "role": user.role,
         "role_label": ROLE_LABELS.get(user.role, user.role),
         "professionally_verified": user.professionally_verified,
@@ -536,11 +543,18 @@ def person(user: User | None) -> dict | None:
 
 
 def out(db: Session, inv: Invitation, viewer: User) -> dict:
+    from app.core import pii
+
     status = refresh(db, inv)
     accepted = db.get(User, inv.claimed_user_id) if status == InvitationStatus.ACCEPTED else None
+    # A patient invitation's email is the patient's PII: masked unless the reader may see the
+    # patient (the inviting care manager of an assigned patient does).
+    patients = pii.PatientViewer(db, viewer)
+    patient_invite = inv.role == Role.PATIENT or inv.patient_id is not None
+    email = patients.email(inv.patient_id, inv.email) if patient_invite else inv.email
     return {
         "id": inv.id,
-        "email": inv.email,
+        "email": email,
         "role": inv.role,
         "role_label": ROLE_LABELS[inv.role],
         "status": status,
@@ -552,7 +566,7 @@ def out(db: Session, inv: Invitation, viewer: User) -> dict:
         "replaced_by_id": inv.replaced_by_id,
         "invited_by": person(db.get(User, inv.invited_by_user_id)),
         "inviter_role_label": ROLE_LABELS.get(inv.inviter_role, inv.inviter_role),
-        "accepted_user": person(accepted),
+        "accepted_user": person(accepted, patients),
         "patient_id": inv.patient_id,
         "specialties": [
             {"code": c, "label": vocabulary.specialty_label(c)} for c in inv.specialties or []
