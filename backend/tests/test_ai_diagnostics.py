@@ -227,3 +227,86 @@ def test_state_changing_runs_need_the_csrf_token(env):
     raw = TestClient(app)
     got = raw.post(POSTS[1][0], json={}, headers=auth(client, "admin"))
     assert got.status_code == 403
+
+
+# --- F-09: diagnostics reads are audited and rate limited --------------------------------------
+
+
+def test_diagnostics_reads_are_audited_and_limited(env, monkeypatch):
+    client, db = env
+    headers = auth(client, "admin")
+    before = db.query(AuditLog).filter_by(action="ai_diagnostics_view").count()
+    for path in GETS:
+        assert client.get(path, headers=headers).status_code == 200
+    db.expire_all()
+    rows = db.query(AuditLog).filter_by(action="ai_diagnostics_view").all()
+    assert len(rows) == before + len(GETS)
+    assert {r.entity_id for r in rows[-len(GETS) :]} == {"sources", "policy", "health"}
+    assert all(r.detail is None for r in rows)  # who and which section; no values
+    monkeypatch.setattr(get_settings(), "rate_limit_enabled", True)
+    monkeypatch.setitem(ratelimit.LIMITS, "ai_diagnostics_read", (2, 600))
+    admin = db.scalar(select(User).where(User.role == "admin"))
+    ratelimit.clear(db, "ai_diagnostics_read", str(admin.id))
+    db.commit()
+    codes = [client.get(GETS[2], headers=headers).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+
+
+# --- AI context evaluation endpoints ------------------------------------------------------------
+
+EVAL_GET = "/api/ai/diagnostics/evaluation"
+EVAL_RUN = "/api/ai/diagnostics/evaluation/run"
+
+
+@pytest.mark.parametrize("who", ["cm01", "rep01", "hcp0001", "compliance1"])
+def test_evaluation_endpoints_refuse_every_other_role(env, who):
+    client, _ = env
+    headers = auth(client, who)
+    assert client.get(EVAL_GET, headers=headers).status_code == 403
+    assert client.post(EVAL_RUN, headers=headers).status_code == 403
+
+
+def test_evaluation_needs_a_session_and_the_csrf_token(env):
+    client, _ = env
+    assert client.get(EVAL_GET).status_code == 401
+    raw = TestClient(app)
+    assert raw.post(EVAL_RUN, headers=auth(client, "admin")).status_code == 403
+
+
+def test_evaluation_run_records_codes_only_and_changes_no_business_record(env):
+    client, db = env
+    headers = auth(client, "admin")
+    before = table_hashes(db)
+    got = client.post(EVAL_RUN, headers=headers)
+    assert got.status_code == 200, got.text
+    body = got.json()
+    result = body["result"]
+    assert result["counts"]["failed"] == 0
+    assert result["score"]["readiness"] in ("below_threshold", "eligible_for_owner_review")
+    assert result["registered_operations"] == ["case_brief"]
+    assert "payload_sent" not in json.dumps(body["export"])
+    assert not any(c in got.text for c in fixtures.CANARIES[:3])
+    last = client.get(EVAL_GET, headers=headers).json()
+    assert last["readiness"] == result["score"]["readiness"]
+    assert last["last"]["confidence"] == result["score"]["confidence"]
+    row = db.scalars(select(AuditLog).where(AuditLog.action == "ai_evaluation_run")
+                     .order_by(AuditLog.id.desc())).first()  # fmt: skip
+    assert set(row.detail) == {"rubric", "confidence", "readiness", "revision", "counts",
+                               "pass_rate", "digest", "results"}  # fmt: skip
+    assert set(row.detail["results"].values()) <= {"pass", "fail", "not_applicable"}
+    db.expire_all()
+    after = table_hashes(db)
+    changed = {t for t in before if before[t] != after.get(t)}
+    assert changed <= {"user_session", "user", "rate_limit_hit"}, changed
+
+
+def test_evaluation_runs_are_rate_limited(env, monkeypatch):
+    client, db = env
+    monkeypatch.setattr(get_settings(), "rate_limit_enabled", True)
+    monkeypatch.setitem(ratelimit.LIMITS, "ai_evaluation", (1, 600))
+    admin = db.scalar(select(User).where(User.role == "admin"))
+    ratelimit.clear(db, "ai_evaluation", str(admin.id))
+    db.commit()
+    headers = auth(client, "admin")
+    codes = [client.post(EVAL_RUN, headers=headers).status_code for _ in range(2)]
+    assert codes == [200, 429]

@@ -36,6 +36,7 @@ from app.ai.contracts import (
     ContextItem,
     ContextRequest,
     OperationSpec,
+    Sensitivity,
 )
 from app.ai.policy import POLICY_VERSION
 from app.ai.sources import (
@@ -46,7 +47,7 @@ from app.ai.sources import (
     UnknownSource,
     source_for,
 )
-from app.core import clock
+from app.core import clock, pseudonym
 from app.core.permissions import Permission, can, permissions_for
 from app.models import User
 from app.services.errors import Forbidden
@@ -133,9 +134,59 @@ def _category_of(item: ContextItem) -> str:
     return item.category or item.kind
 
 
+def _assert_model_view(items: list[ContextItem], consumer: Consumer, source: ContextSource):
+    allowed = set(consumer.categories)
+    model = {c.name for c in source.categories if c.model}
+    for item in items:
+        category = _category_of(item)
+        if category not in allowed or category not in model:
+            raise legacy_policy.UntrustedContentError(
+                f"{item.id}: category {category!r} is not in the consumer allowlist"
+            )
+        if item.sensitivity is not Sensitivity.OPERATIONAL:
+            raise legacy_policy.UntrustedContentError(f"{item.id} is {item.sensitivity}")
+
+
+def _item_date(item: ContextItem):
+    when = item.as_of or item.recorded_at
+    if when is None:
+        return None
+    return when.date() if hasattr(when, "date") and callable(when.date) else when
+
+
+def _freshness(
+    request: ContextRequest, source: ContextSource, items: list[ContextItem], as_of
+) -> dict[str, str]:
+    """{category: reason} for every category whose facts break the request's freshness limit
+    (F-08): the newest fact is older than `max_age_days` before the context date, or no fact of
+    the category carries a date, so its freshness cannot be shown. Categories that describe the
+    current state as read (counts, aggregates, profile attributes) are as fresh as the context."""
+    if request.max_age_days is None:
+        return {}
+    from datetime import timedelta
+
+    limit = as_of - timedelta(days=request.max_age_days)
+    out: dict[str, str] = {}
+    for c in source.categories:
+        if c.freshness == "current":
+            continue
+        dates = [_item_date(i) for i in items if _category_of(i) == c.name]
+        if not dates:
+            continue
+        known = [d for d in dates if d is not None]
+        if not known:
+            out[c.name] = "freshness_unknown"
+        elif max(known) < limit:
+            out[c.name] = "older_than_max_age"
+    return out
+
+
 def build_context(
     db: Session, user: User, request: ContextRequest, consumer: Consumer
 ) -> AuthorizedContext:
+    if not pseudonym.available():
+        # Opaque references need the deployment's stable key (F-07): no context without it.
+        raise SourceUnavailable("pseudonym_key_missing")
     if consumer.permission is None:
         if consumer.model_calls:
             raise Forbidden("A model consumer must name its permission.")
@@ -162,12 +213,14 @@ def build_context(
                 max_records=request.limit)  # fmt: skip
     failed = False
     with readonly.guard(db):
+        # The read runs in a SAVEPOINT: a failed query is undone back to it and never takes the
+        # caller's own uncommitted work with it (F-02). Authorisation errors still propagate.
         try:
-            source.read(db, user, request, b)
+            with db.begin_nested():
+                source.read(db, user, request, b)
         except SourceUnavailable:
             failed = True
         except SQLAlchemyError:
-            db.rollback()
             failed = True
     as_of = b.as_of or clock.get_today(db)
 
@@ -176,7 +229,10 @@ def build_context(
         c.name for c in source.categories if c.model and c.name in wanted and not failed
     }
     eligible = [i for i in b.items if _category_of(i) in model_categories]
-    legacy_policy.model_items(eligible, tuple({i.kind for i in eligible}))
+    # Defence in depth against a source bug, with the consumer's own allowlist (F-06): an item
+    # outside it, of a server-text-only category, or carrying free text or personal data
+    # refuses the whole build rather than being silently dropped.
+    _assert_model_view(eligible, consumer, source)
     model_items: list[ContextItem] = []
     budget_cut: set[str] = set()
     chars = 0
@@ -189,6 +245,7 @@ def build_context(
         model_items.append(item)
         chars += len(item.text)
 
+    aged = _freshness(request, source, b.items, as_of)
     statuses: list[CategoryStatus] = []
     for c in source.categories:
         count = sum(1 for i in model_items if _category_of(i) == c.name)
@@ -212,6 +269,8 @@ def build_context(
             state, reason = CategoryState.UNAVAILABLE, "not_read"
         elif c.name in b.stale:
             state, reason = CategoryState.STALE, "figures_not_current"
+        elif c.name in aged:
+            state, reason = CategoryState.STALE, aged[c.name]
         elif c.name in b.truncated:
             state, reason = CategoryState.TRUNCATED, "more_records_exist"
         elif c.name in budget_cut:

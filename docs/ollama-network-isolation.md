@@ -44,7 +44,7 @@ auditpol /set /subcategory:"Filtering Platform Connection" /failure:enable
 ## Verification procedure
 
 1. Create the rules (above) and restart Ollama.
-2. Run `.\scripts\verify_ollama_egress.ps1` (read-only). It checks:
+2. Run `.\scripts\verify_ollama_egress.ps1` (read-only; `-Json` prints a record to keep, `-SelfTest` checks the script's own rule evaluation on synthetic values and reads nothing). It reports separately: A. application-level restrictions (not checked here: `backend/tests/test_ai_network.py`); B. Windows Firewall configuration; C. observed blocked attempts (evidence only); D. local inference availability; E. the OS-level isolation verdict. B fails when the firewall is off on any profile, or when a rule for either exact path is missing, disabled, limited to some profiles, some remote addresses, one protocol or some ports; a rule for an executable of the same name at another path does not count. It checks:
    - enabled outbound Block rules for both exact paths;
    - loopback-only listeners;
    - no non-loopback connections by Ollama;

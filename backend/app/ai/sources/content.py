@@ -91,7 +91,12 @@ LINEAGE = ContextSource(
     subject_types=(SubjectType.CONTENT_LINEAGE,),
     categories=(
         Category("version", "content_version_ref", "Visible versions and their lifecycle"),
-        Category("reference", "content_reference_count", "Scoped reference counts by status"),
+        Category(
+            "reference",
+            "content_reference_count",
+            "Scoped reference counts by status",
+            freshness="current",
+        ),
     ),
     read=read_lineage,
     read_services=("services.content_lineage.content_lineage",),

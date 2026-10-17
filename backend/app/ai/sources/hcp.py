@@ -95,10 +95,15 @@ SOURCE_DEF = ContextSource(
     domain="HCP 360 (staff)",
     subject_types=(SubjectType.HCP,),
     categories=(
-        Category("hcp", "hcp_360", "Specialty codes and preferred channel"),
+        Category("hcp", "hcp_360", "Specialty codes and preferred channel", freshness="current"),
         Category("contact_window", "contact_window", "When the contact limits allow a touch"),
         Category("hcp_touch", "interaction", "Latest engagement records"),
-        Category("hcp_nba", "recommendation_summary", "Open recommendation"),
+        Category(
+            "hcp_nba",
+            "recommendation_summary",
+            "Open recommendation",
+            terms=("recommendation", "recommendations"),
+        ),
         Category("hcp_work", "hcp_task", "Open commercial work: kind, status, due date"),
     ),
     read=read,

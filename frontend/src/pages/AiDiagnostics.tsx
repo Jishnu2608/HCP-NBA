@@ -2,15 +2,17 @@
 // sources, the field policy, context builds with every decision explained, the shared safety
 // checks, multi-subject and aggregate contexts, health and a sanitized report. Everything runs
 // on the server through the real context code; this page only shows the answers. It never calls
-// a model and never changes a record. Access is decided by the API (`ai:diagnostics`).
+// a model and never changes a record. Access is decided by the API (`ai:diagnostics`). The
+// "Context evaluation" tab (AiEvaluation.tsx) scores infrastructure readiness for future consumers.
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, post } from "../api";
 import type { Json } from "../api";
 import { Alert, Badge, Button, Card, ErrorNote, ErrorState, LoadingRows, PageHeader, Select, Table, TextArea, cx } from "../ui";
 import type { Tone } from "../ui";
+import AiEvaluation from "./AiEvaluation";
 
-type Tab = "sources" | "context" | "safety" | "aggregate" | "health" | "report";
+type Tab = "sources" | "context" | "safety" | "aggregate" | "health" | "report" | "evaluation";
 
 const TABS: Array<{ value: Tab; label: string }> = [
   { value: "sources", label: "Sources and policy" },
@@ -19,6 +21,7 @@ const TABS: Array<{ value: Tab; label: string }> = [
   { value: "aggregate", label: "Multi-subject" },
   { value: "health", label: "Health" },
   { value: "report", label: "Report" },
+  { value: "evaluation", label: "Context evaluation" },
 ];
 
 const SUBJECTS = [
@@ -470,6 +473,7 @@ export default function AiDiagnostics() {
         {tab === "aggregate" && <Aggregate />}
         {tab === "health" && <Health />}
         {tab === "report" && <Report />}
+        {tab === "evaluation" && <AiEvaluation />}
       </div>
     </>
   );

@@ -50,6 +50,10 @@ LIMITS: dict[str, tuple[int, int]] = {
     "ai_generate": (10, 10 * MINUTE),
     # Admin context-layer diagnostics: synthetic world builds and checks are not free.
     "ai_diagnostics": (30, 10 * MINUTE),
+    # Admin diagnostics reads (sources, policy, health); health builds fixture contexts.
+    "ai_diagnostics_read": (120, 10 * MINUTE),
+    # Admin context evaluation runs: each runs the full synthetic scenario suite.
+    "ai_evaluation": (10, 10 * MINUTE),
 }
 LONGEST = max(window for _, window in LIMITS.values())
 

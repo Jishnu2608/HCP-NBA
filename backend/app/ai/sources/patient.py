@@ -295,7 +295,7 @@ SOURCE_DEF = ContextSource(
     domain="Patient 360 (staff)",
     subject_types=(SubjectType.PATIENT,),
     categories=(
-        Category("patient", "patient_360", "Age", terms=("age",)),
+        Category("patient", "patient_360", "Age", terms=("age",), freshness="current"),
         Category(
             "rx",
             "therapy",
@@ -327,7 +327,9 @@ SOURCE_DEF = ContextSource(
             model=False,
             terms=("consent", "consents"),
         ),
-        Category("absent", "patient_360", "Core facts verified as not recorded"),
+        Category(
+            "absent", "patient_360", "Core facts verified as not recorded", freshness="current"
+        ),
         Category(
             "care_request",
             "care_request",

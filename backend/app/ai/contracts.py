@@ -380,8 +380,14 @@ class OperationSpec:
     check: Callable[[AuthorizedContext, BaseModel], tuple[list[GateFinding], int]]
     compose: Callable[[AuthorizedContext, BaseModel], dict]
     fallback: Callable[[AuthorizedContext], dict]
-    # Text fields of the output and the citation field each one relies on.
+    # Text fields of the output and the citation field each one relies on (factual text).
+    # Paths use dots for nested models and `[]` for list elements ("points[].text").
     cited_fields: tuple[tuple[str, str], ...] = ()
+    # Text fields that make no factual claim (checked by every shared check, with no citations,
+    # so a record fact in them fails). Every string of `output_model` must be covered by
+    # `cited_fields`, `text_fields` or a Literal / Enum type, or registration is refused
+    # (`app.ai.output_contract`).
+    text_fields: tuple[str, ...] = ()
     temperature: float = 0.0
     seed: int | None = 7
     max_output_tokens: int = 1200
@@ -393,4 +399,7 @@ class OperationSpec:
     # Context budget for this operation; never above the global caps (checked at registration).
     max_context_items: int = 40
     max_context_chars: int = 6000
+    # Freshness limit: categories whose newest fact is older than this many days (or whose
+    # facts carry no date) are `stale`, so the context is incomplete. None: no limit.
+    max_age_days: int | None = None
     tags: dict[str, str] = field(default_factory=dict)

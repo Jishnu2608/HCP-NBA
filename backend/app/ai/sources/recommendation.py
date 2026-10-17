@@ -58,7 +58,7 @@ def read(db: Session, user: User, request: ContextRequest, b: Builder) -> None:
     for r in model["reason_codes"]:
         b.add(
             "reason", f"Reason ({r['kind']}): {r['code']}.", f"{SOURCE}.reason_codes", nba_id,
-            field_path="reason.kind,code",
+            field_path="reason.kind,code", as_of=detail.as_of_date,
         )  # fmt: skip
     b.mark("reason", len(model["reason_codes"]))
 
@@ -71,6 +71,7 @@ def read(db: Session, user: User, request: ContextRequest, b: Builder) -> None:
             f"Option {rank}{c['action_label']} by {c['channel_label']}: {state}; gate failures: "
             f"{gates}.",
             f"{SOURCE}.candidates", nba_id, field_path="candidate.eligible,gate_failures",
+            as_of=detail.as_of_date,
         )  # fmt: skip
     b.mark("candidate", len(model["candidates"]))
 
@@ -90,7 +91,12 @@ SOURCE_DEF = ContextSource(
     domain="NBA recommendations and decision traces",
     subject_types=(SubjectType.RECOMMENDATION,),
     categories=(
-        Category("decision", "recommendation", "Action, channel, content id, schedule, status"),
+        Category(
+            "decision",
+            "recommendation",
+            "Action, channel, content id, schedule, status",
+            terms=("recommendation", "recommendations", "decision"),
+        ),
         Category("reason", "reason", "Coded reasons (kind and code)"),
         Category("candidate", "candidate", "Options considered: eligibility and gate codes"),
         Category("response", "response", "Recorded response outcome"),

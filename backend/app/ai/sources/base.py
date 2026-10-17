@@ -44,6 +44,10 @@ class Category:
     # Words a sentence uses when it talks about this category; the shared absence check maps
     # a "not recorded" claim to categories through them.
     terms: tuple[str, ...] = ()
+    # How freshness is judged when a request sets `max_age_days`: "item" by the dates on the
+    # category's items (no date means freshness unknown, so stale); "current" for facts that
+    # describe the current state as read (counts, aggregates, profile attributes).
+    freshness: str = "item"
 
 
 class SourceUnavailable(RuntimeError):

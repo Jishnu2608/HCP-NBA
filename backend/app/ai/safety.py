@@ -179,6 +179,11 @@ def check_text_fields(
         set().union(*(_fragments(t) for t in ctx.withheld_texts)) if ctx.withheld_texts else set()
     )
     names = {n.lower() for n in ctx.identifiers if n}
+    rec_categories = {"nba"} | {
+        cat
+        for cat, words in _category_terms(ctx).items()
+        if any(RECOMMENDATION.search(w) for w in words)
+    }
 
     findings: list[GateFinding] = []
     miscited = 0
@@ -215,8 +220,9 @@ def check_text_fields(
                 flag(kind, where)
         if UNSAFE_MEDICATION.search(text):
             flag("unsafe_medication", where)
-        # A recommendation may be named only if an item records one.
-        if not any(i.kind == "nba" for i in items):
+        # A recommendation may be named only if an item records one: an item of a category
+        # whose own words name a recommendation (any source, not one consumer's item kind).
+        if not any((i.category or i.kind) in rec_categories for i in items):
             for sentence in re.split(r"[.;\n]", text):
                 if RECOMMENDATION.search(sentence) and not NEGATED.search(sentence):
                     flag("fabricated_recommendation", where)
@@ -238,7 +244,7 @@ def check_text_fields(
             flag("leak:free_text", where)
         # Absence claims, statuses and codes must match the context's own record of them.
         findings.extend(check_absence(ctx, text, where, cites))
-        findings.extend(check_claims(ctx, text, where))
+        findings.extend(check_claims(ctx, text, where, cites))
         findings.extend(check_instruction_leak(text, instructions or [], where))
         # Grounding: a fact from the items must sit in the items this field cites.
         cited = " ".join(item_text.get(c, "") for c in cites)
@@ -258,17 +264,31 @@ def check_text_fields(
 
 # A sentence that says something is not recorded, not available or missing.
 ABSENCE = re.compile(
-    r"\b(?:not|never|no|none|nothing)\b[^.;\n]{0,48}?\b(?:recorded|documented|on file|available"
-    r"|logged|listed|found|captured|provided|present|known|registered|entered)\b"
-    r"|\b(?:no|without)\s+(?:record|records|data|information|history|evidence|entries)\b"
-    r"|\b(?:has|have|had|there (?:is|are)) no (?:\w+ ){0,2}(?:record|records|data|information"
-    r"|history|entry|entries)\b|\bmissing\b|\bnone (?:is|are|was|were)\b",
+    r"\b(?:not|never|no|none|nothing|\w+n't)\b[^.;\n]{0,48}?\b(?:recorded|documented|on file"
+    r"|available|logged|listed|found|captured|provided|present|known|registered|entered|find"
+    r"|locate|located|identify|identified|show|shows|showing|indicate|indicates|exist|exists)\b"
+    r"|\bunable to (?:find|locate|identify|confirm|see)\b"
+    r"|\b(?:found|finds|see|sees|shows?) no\b"
+    r"|\b(?:no|without|zero)\s+(?:record|records|data|information|history|evidence|entries)\b"
+    r"|\b(?:has|have|had|there (?:is|are|was|were)) no (?:\w+ ){0,2}(?:record|records|data"
+    r"|information|history|entry|entries)\b|\bmissing\b|\bnone (?:is|are|was|were)\b",
     re.I,
 )
-APPROVED_CONTENT = re.compile(r"\bapproved (?:content|material|module|wording)\b", re.I)
+# Inflections a category word may take in a sentence ("refill" -> "refills", "refilled").
+INFLECT = r"(?:s|es|ed|d|ing)?"
+# "Approved content", "the approved cost-support offer content": MLR-approved material named as
+# material (up to three describing words before the noun), not a claim about a decision status.
+APPROVED_CONTENT = re.compile(
+    r"\bapproved (?:[\w-]+ ){0,3}?(?:content|material|materials|module|modules|wording|offer"
+    r"|offers|leaflet|leaflets)\b",
+    re.I,
+)
 # "No open recommendation", "no recent outreach": "no" plus at most two qualifiers, then a
 # category word (checked per category). "No response to outreach" is not an absence claim.
-QUALIFIERS = r"(?:(?:open|active|current|recent|prior|previous|known)\s+){0,2}"
+QUALIFIERS = (
+    r"(?:(?:open|active|current|recent|prior|previous|known|recorded|documented|logged"
+    r"|registered|available)\s+){0,2}"
+)
 # Status words that name a decision or workflow state; the model may repeat them only as the
 # items state them. Words with everyday meanings ("sent", "pending") are deliberately absent.
 STATUS_TERMS = (
@@ -282,6 +302,16 @@ STATUS = re.compile(r"\b(?:" + "|".join(re.escape(t) for t in STATUS_TERMS) + r"
 STATUS_ASSERTION = re.compile(
     r"\b(?:is|was|were|are|been|be|being|now|remains?|marked(?: as)?|status(?: is| was)?:?)\s+"
     r"(?:\w+\s+)?(?P<term>" + "|".join(re.escape(t) for t in STATUS_TERMS) + r")\b",
+    re.I,
+)
+# A status used as an adjective of an item ("the blocked reminder", "an expired module"). Only
+# single-word decision statuses; "approved content" (material) is removed before this runs.
+ADJECTIVE_TERMS = ("approved", "blocked", "rejected", "expired", "withdrawn", "superseded",
+                   "deferred")  # fmt: skip
+STATUS_ADJECTIVE = re.compile(
+    r"\b(?:the|a|an|this|that|its|their|any|each|every)\s+(?P<term>"
+    + "|".join(ADJECTIVE_TERMS)
+    + r")\s+(?!by\b|for\b|on\b|in\b|at\b|to\b|and\b|or\b)[a-z]",
     re.I,
 )
 CODE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
@@ -344,24 +374,31 @@ def _stem(word: str) -> str:
 
 
 def _term_hits(terms: dict[str, tuple[str, ...]], text: str) -> list[tuple[int, str]]:
-    """(position, category) of every category word in text."""
+    """(position, category) of every category word in text, in any common inflection."""
     low = text.lower()
     return sorted(
         (m.start(), cat)
         for cat, words in terms.items()
         for w in words
-        for m in re.finditer(rf"\b{re.escape(w)}\b", low)
+        for m in re.finditer(rf"\b{re.escape(w)}{INFLECT}\b", low)
     )
+
+
+AFTER_WINDOW = 40  # characters after an absence phrase in which its object may follow
 
 
 def _targets(terms, sentence: str, start: int, end: int) -> list[str]:
     """The categories an absence phrase is about: the category words inside the phrase; if it
-    names none ("... indicating none are recorded"), the nearest category word before it in the
-    same sentence. Words elsewhere in the sentence are not its target."""
+    names none, the first category word that closely follows it ("could not find any refills");
+    otherwise the nearest category word before it in the same sentence ("... indicating none
+    are recorded"). Words elsewhere in the sentence are not its target."""
     hits = _term_hits(terms, sentence)
     inside = sorted({cat for pos, cat in hits if start <= pos < end})
     if inside:
         return inside
+    after = [cat for pos, cat in hits if end <= pos < end + AFTER_WINDOW]
+    if after:
+        return after[:1]
     before = [cat for pos, cat in hits if pos < start]
     return before[-1:]
 
@@ -407,11 +444,21 @@ def check_absence(
     bare_words = "|".join(
         sorted({re.escape(w) for words in terms.values() for w in words}, key=len, reverse=True)
     )
-    bare = re.compile(rf"\bno\s+{QUALIFIERS}(?:{bare_words})\b", re.I) if bare_words else None
+    bare = negated = None
+    if bare_words:
+        # "No open recommendation", "no recorded fills", "zero refills".
+        bare = re.compile(rf"\b(?:no|zero)\s+{QUALIFIERS}(?:{bare_words}){INFLECT}\b", re.I)
+        # "Never refilled", "has not been refilled", "has not had any outreach".
+        negated = re.compile(
+            rf"\b(?:not|never|\w+n't)\s+(?:(?:yet|been|had|any|ever|once|a|an)\s+){{0,3}}"
+            rf"(?:{bare_words}){INFLECT}\b",
+            re.I,
+        )
     for sentence in re.split(r"[.;\n!?]", text):
         spans = [(m.start(), m.end()) for m in ABSENCE.finditer(sentence)]
-        if bare is not None:
-            spans += [(m.start(), m.end()) for m in bare.finditer(sentence)]
+        for pattern in (bare, negated):
+            if pattern is not None:
+                spans += [(m.start(), m.end()) for m in pattern.finditer(sentence)]
         for start, end in sorted(set(spans)):
             targets = _targets(terms, sentence, start, end)
             if not targets:
@@ -427,22 +474,41 @@ def check_absence(
     return findings
 
 
-def check_claims(ctx: AuthorizedContext, text: str, where: str) -> list[GateFinding]:
-    """Statuses and coded reasons may be repeated only as the items state them: a status word
-    absent from every item is fabricated, or contradicts the status the items record; a code
-    (snake_case, as reason and gate codes are written) absent from every item is fabricated."""
+def _statuses(text: str) -> set[str]:
+    return {m.group().lower() for m in STATUS.finditer(APPROVED_CONTENT.sub("content", text))}
+
+
+def check_claims(
+    ctx: AuthorizedContext, text: str, where: str, cites: list[str] | None = None
+) -> list[GateFinding]:
+    """Statuses and coded reasons may be repeated only as the items state them.
+
+    A status, asserted ("was approved", "status is blocked") or used as an adjective of an item
+    ("the blocked reminder"), must be stated by an item: absent from every item it is fabricated
+    (or contradicts the statuses the items record). When the field cites items that state a
+    status, the claimed status must be one of theirs: the cited record, at the version this
+    context holds, is the one the claim is about. A code (snake_case, as reason and gate codes
+    are written) absent from every item is fabricated."""
     findings: list[GateFinding] = []
     # "approved content" names material, not a decision status.
     item_text = APPROVED_CONTENT.sub("content", " ".join(i.text for i in ctx.model_items).lower())
-    stated = {m.group().lower() for m in STATUS.finditer(item_text)}
+    stated = _statuses(item_text)
+    cited_ids = set(cites or [])
+    cited_stated: set[str] = set()
+    for i in ctx.model_items:
+        if i.id in cited_ids:
+            cited_stated |= _statuses(i.text.lower())
     for sentence in re.split(r"[.;\n!?]", APPROVED_CONTENT.sub("content", text)):
         if NEGATED.search(sentence):
             continue
-        for m in STATUS_ASSERTION.finditer(sentence):
-            term = m.group("term").lower()
+        claimed = [m.group("term").lower() for m in STATUS_ASSERTION.finditer(sentence)]
+        claimed += [m.group("term").lower() for m in STATUS_ADJECTIVE.finditer(sentence)]
+        for term in claimed:
             if term not in stated:
                 kind = "contradiction:status" if stated else "fabricated_status"
                 findings.append(GateFinding(kind=kind, where=where))
+            elif cited_stated and term not in cited_stated:
+                findings.append(GateFinding(kind="contradiction:status", where=where))
     codes = {c for c in CODE.findall(text) if not c.startswith("ctx")}
     if codes - set(CODE.findall(item_text)):
         findings.append(GateFinding(kind="fabricated_code", where=where))

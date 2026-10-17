@@ -18,13 +18,15 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from functools import lru_cache
 
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app import audit, jobs
-from app.ai import safety
+from app.ai import output_contract, safety
 from app.ai.context_policy import UntrustedContentError, assert_no_free_text
 from app.ai.contracts import (
     ACTIVE_STATUSES,
@@ -34,6 +36,7 @@ from app.ai.contracts import (
     CategoryState,
     ContextRequest,
     FailureCategory,
+    GateFinding,
     GateOutcome,
     GenerationRequest,
     GenerationStatus,
@@ -146,6 +149,7 @@ def _request(spec: OperationSpec, subject_id: str | None) -> ContextRequest:
         operation=spec.id,
         subject_type=spec.subject_type,
         subject_id=subject_id if _is_record(spec) else None,
+        max_age_days=spec.max_age_days,
     )
 
 
@@ -156,8 +160,19 @@ def _context(
 
 
 def subject_ref(spec: OperationSpec, subject_id: str) -> str:
-    """The opaque subject reference kept in audit detail instead of the raw id."""
+    """The opaque subject reference kept in audit detail instead of the raw id. Without the
+    deployment key the reference is "unavailable", never the raw id."""
+    if not pseudonym.available():
+        return "unavailable"
     return pseudonym.ref(f"subject:{spec.subject_type}", subject_id) or ""
+
+
+def _require_key() -> None:
+    if not pseudonym.available():
+        log.error("AI refused: NBA_JWT_SECRET is not set, so subject references are unstable")
+        raise GenerationRefused(
+            503, "ai_misconfigured", "AI features are not configured on this server."
+        )
 
 
 def _event(spec: OperationSpec, mode: Mode, subject_id: str, status: str, **kw) -> AuditEvent:
@@ -302,6 +317,7 @@ def submit(
     provider_factory = provider_factory or get_provider
     spec = resolve(operation)
     mode = mode_for(spec, settings)
+    _require_key()
     raw_subject = subject_id
     subject_id = subject_key(spec, user, subject_id)
     try:
@@ -384,18 +400,44 @@ def submit(
 # --- Run (worker job) ---------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=64)
+def _output_kinds(model, cited: tuple, text: tuple) -> dict[str, str] | None:
+    try:
+        return output_contract.classify(model, cited, text)
+    except output_contract.OutputContractError:
+        return None
+
+
+def _refused(kind: str, where: str = "output") -> GateOutcome:
+    return GateOutcome(
+        passed=False, reasons=[kind], findings=[GateFinding(kind=kind, where=where[:40])]
+    )
+
+
 def evaluate(
     spec: OperationSpec, ctx: AuthorizedContext, text: str, instructions: list[str] | None = None
 ):
-    """(gate outcome, parsed output or None). Schema first, then the shared checks, then the
-    operation's own. Every check runs on the server; none can be skipped by the output."""
+    """(gate outcome, parsed output or None). Schema first, then the shared checks on every text
+    value of the output, then the operation's own. Every check runs on the server; none can be
+    skipped by the output or by the operation's declarations.
+
+    The text values checked are derived from the output schema (`output_contract`), not only from
+    the fields an operation lists: a schema with uncovered text fails closed here even if it
+    somehow escaped registration, and an output holding a string at an uncovered path is
+    refused (`unchecked_field`)."""
+    cited, uncited = tuple(spec.cited_fields), tuple(spec.text_fields)
+    if _output_kinds(spec.output_model, cited, uncited) is None:
+        return _refused("unchecked_field", "schema"), None
     if len(text) > spec.max_output_chars:
         return GateOutcome(passed=False, reasons=["schema"]), None
     try:
         out = spec.output_model.model_validate_json(text)
     except (ValidationError, ValueError):
         return GateOutcome(passed=False, reasons=["schema"]), None
-    fields = {f: (getattr(out, f), list(getattr(out, c))) for f, c in spec.cited_fields}
+    leaves, stray = output_contract.text_leaves(out, cited, uncited)
+    if stray:
+        return _refused("unchecked_field", stray[0]), None
+    fields = {leaf.where[:40]: (leaf.text, list(leaf.citations)) for leaf in leaves}
     shared, miscited = safety.check_text_fields(ctx, fields, instructions)
     own, own_miscited = spec.check(ctx, out)
     findings = shared + own
@@ -405,6 +447,19 @@ def evaluate(
         GateOutcome(passed=not reasons, reasons=reasons, findings=findings, miscited=miscited),
         out,
     )
+
+
+def _assert_model_items_only(request: GenerationRequest, ctx: AuthorizedContext) -> None:
+    """The prompt carries only what the model may read: the text of an item outside the model
+    view (a server-text-only category such as consent, or a category outside the operation's
+    allowlist) must not appear in any message, whatever the operation's prompt builder does."""
+    blob = " ".join(m.content for m in request.messages)
+    allowed = {i.text for i in ctx.model_items}
+    for item in ctx.items:
+        if item.text in allowed or len(item.text) < 12:
+            continue
+        if item.text in blob:
+            raise UntrustedContentError(f"{item.id} is outside the model view")
 
 
 def _assert_no_identifiers(request: GenerationRequest, identifiers: list[str]) -> None:
@@ -444,29 +499,73 @@ def run(
         return _finish(db, gen, spec, GenerationStatus.FAILED, FailureCategory.INTERNAL, user)
 
 
-def _run(db, gen, spec, user, settings, provider_factory) -> str:
+@dataclass
+class PipelineResult:
+    """What one pass through the generation pipeline decided. `trace` lists every step with a
+    fixed outcome code and minimised detail (no record text, no model text)."""
+
+    status: GenerationStatus
+    failure: FailureCategory | None = None
+    ctx: AuthorizedContext | None = None
+    request: GenerationRequest | None = None
+    outcome: GateOutcome | None = None
+    output: dict | None = None
+    provider: str | None = None
+    model: str | None = None
+    model_digest: str | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    trace: list[dict] = field(default_factory=list)
+
+    def step(self, name: str, outcome: str, **detail) -> None:
+        self.trace.append({"step": name, "outcome": outcome, **detail})
+
+    def end(self, status: GenerationStatus, failure: FailureCategory | None = None):
+        self.status, self.failure = status, failure
+        self.step("disposition", status.value, failure=failure.value if failure else None)
+        return self
+
+
+def execute(
+    db: Session,
+    user: User | None,
+    spec: OperationSpec,
+    raw_subject: str | None,
+    *,
+    settings: Settings,
+    provider_factory: ProviderFactory,
+    filed_under: str | None = None,
+) -> PipelineResult:
+    """The pipeline every generation goes through, whatever calls it: re-authorise and rebuild
+    the context, completeness gate, mode, provider selection (local only), request-side data
+    checks, provider call, schema and safety checks, composition. Writes nothing itself: `run`
+    records the result, and the Admin evaluation reads the trace."""
+    r = PipelineResult(status=GenerationStatus.RUNNING)
+    r.step("contract", "declared", operation=spec.id, version=spec.version,
+           subject_type=str(spec.subject_type), categories=list(spec.context_kinds))  # fmt: skip
     # Access is decided again now, as the requester: an assignment may have changed.
     if user is None or not getattr(user, "is_active", True):
-        return _finish(db, gen, spec, GenerationStatus.FAILED, FailureCategory.ACCESS_LOST, user)
-    raw_subject = gen.subject_id if _is_record(spec) else None
+        r.step("authorisation", "access_lost")
+        return r.end(GenerationStatus.FAILED, FailureCategory.ACCESS_LOST)
     try:
-        if subject_key(spec, user, raw_subject) != gen.subject_id:
+        if filed_under is not None and subject_key(spec, user, raw_subject) != filed_under:
             raise NotFound("Not found")  # a scope key belongs to the reader who asked
         ctx = _context(db, user, spec, raw_subject)
-    except (Forbidden, NotFound):
-        db.rollback()
-        return _finish(db, gen, spec, GenerationStatus.FAILED, FailureCategory.ACCESS_LOST, user)
+    except (Forbidden, NotFound) as exc:
+        r.step("authorisation", "denied", code=type(exc).__name__.lower())
+        return r.end(GenerationStatus.FAILED, FailureCategory.ACCESS_LOST)
     except UntrustedContentError:
-        db.rollback()
-        return _finish(db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY, user)
+        r.step("context", "data_policy")
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY)
     except SourceUnavailable:
-        db.rollback()
-        return _finish(
-            db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.CONTEXT_UNAVAILABLE, user
-        )
-    gen.operation_version, gen.prompt_version = spec.version, spec.prompt_version
-    gen.context_fingerprint = ctx.fingerprint
-    gen.provenance = ctx.provenance()
+        r.step("context", "source_unavailable")
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.CONTEXT_UNAVAILABLE)
+    r.ctx = ctx
+    r.step("authorisation", "allowed", role=str(user.role), permission=spec.permission)
+    r.step("context", "built", source=ctx.source, complete=ctx.complete,
+           policy_version=ctx.policy_version, model_items=len(ctx.model_items),
+           withheld=len(ctx.withheld_texts), identifiers=len(ctx.identifiers),
+           categories=[c.model_dump(mode="json") for c in ctx.categories])  # fmt: skip
     if not ctx.complete and not spec.allow_partial:
         # Truncated, stale or partly unavailable: a model never describes partial data as if it
         # were complete. The template stands.
@@ -476,21 +575,25 @@ def _run(db, gen, spec, user, settings, provider_factory) -> str:
             if unreadable
             else FailureCategory.CONTEXT_INCOMPLETE
         )
-        return _finish(db, gen, spec, GenerationStatus.FALLBACK, failure, user)
+        r.step("completeness", "refused", allow_partial=False)
+        return r.end(GenerationStatus.FALLBACK, failure)
+    r.step("completeness", "passed" if ctx.complete else "partial_allowed")
 
-    if mode_for(spec, settings) is Mode.TEMPLATE:
-        return _finish(
-            db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.PROVIDER_DISABLED, user
-        )
+    mode = mode_for(spec, settings)
+    if mode is Mode.TEMPLATE:
+        r.step("mode", "template")
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.PROVIDER_DISABLED)
+    r.step("mode", mode.value)
     try:
         provider = provider_factory(settings)
     except ProviderNotConfigured:
-        return _finish(
-            db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.PROVIDER_DISABLED, user
-        )
-    gen.provider, gen.model = provider.name, provider.model
+        r.step("provider", "not_configured")
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.PROVIDER_DISABLED)
+    r.provider, r.model = provider.name, provider.model
     if not provider.is_local and not spec.allow_cloud:
-        return _finish(db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY, user)
+        r.step("provider", "refused_not_local", provider=provider.name)
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY)
+    r.step("provider", "local", provider=provider.name, model=provider.model)
 
     request = GenerationRequest(
         artifact=spec.id,
@@ -502,37 +605,72 @@ def _run(db, gen, spec, user, settings, provider_factory) -> str:
         seed=spec.seed,
         max_output_tokens=spec.max_output_tokens,
     )
+    r.request = request
     try:
         check_data_policy(provider, request, settings)
         assert_no_free_text(request, ctx.withheld_texts)
         _assert_no_identifiers(request, ctx.identifiers)
+        _assert_model_items_only(request, ctx)
     except (DataPolicyError, UntrustedContentError):
-        return _finish(db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY, user)
+        r.step("payload", "refused")
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY)
+    r.step(
+        "payload",
+        "checked",
+        prompt_version=spec.prompt_version,
+        checks=["data_policy", "no_free_text", "no_identifiers", "model_items_only"],
+    )
 
     digest = getattr(provider, "digest", None)
-    gen.model_digest = digest() if callable(digest) else None
+    r.model_digest = digest() if callable(digest) else None
     started = time.perf_counter()
     try:
         result = provider.generate(request)
     except ProviderError:
-        return _finish(
-            db, gen, spec, GenerationStatus.FALLBACK, FailureCategory.PROVIDER_UNAVAILABLE, user
-        )
-    log.info("AI generation %s: provider answered in %.1fs", gen.id, time.perf_counter() - started)
-    gen.prompt_tokens, gen.output_tokens = result.prompt_tokens, result.output_tokens
+        r.step("generation", "provider_error")
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.PROVIDER_UNAVAILABLE)
+    log.info("AI %s: provider answered in %.1fs", spec.id, time.perf_counter() - started)
+    r.prompt_tokens, r.output_tokens = result.prompt_tokens, result.output_tokens
+    r.step("generation", "answered", output_chars=len(result.text))
 
     system = [m.content for m in request.messages if m.role == "system"]
     outcome, out = evaluate(spec, ctx, result.text, system)
-    gen.gate_reasons = outcome.reasons
+    r.outcome = outcome
+    r.step("validation", "passed" if outcome.passed else "rejected", reasons=outcome.reasons,
+           findings=[f.model_dump() for f in outcome.findings],
+           miscited=outcome.miscited)  # fmt: skip
     if not outcome.passed:
         failure = (
             FailureCategory.SCHEMA_INVALID
             if outcome.reasons == ["schema"]
             else FailureCategory.GATE_REJECTED
         )
-        return _finish(db, gen, spec, GenerationStatus.FALLBACK, failure, user)
-    gen.output = spec.compose(ctx, out)
-    return _finish(db, gen, spec, GenerationStatus.COMPLETED, None, user)
+        return r.end(GenerationStatus.FALLBACK, failure)
+    r.output = spec.compose(ctx, out)
+    return r.end(GenerationStatus.COMPLETED)
+
+
+def _run(db, gen, spec, user, settings, provider_factory) -> str:
+    raw_subject = gen.subject_id if _is_record(spec) else None
+    r = execute(db, user, spec, raw_subject, settings=settings,
+                provider_factory=provider_factory, filed_under=gen.subject_id)  # fmt: skip
+    if r.ctx is None:
+        db.rollback()
+    else:
+        gen.operation_version, gen.prompt_version = spec.version, spec.prompt_version
+        gen.context_fingerprint = r.ctx.fingerprint
+        gen.provenance = r.ctx.provenance()
+    if r.provider is not None:
+        gen.provider, gen.model = r.provider, r.model
+    if r.model_digest is not None:
+        gen.model_digest = r.model_digest
+    if r.prompt_tokens is not None or r.output_tokens is not None:
+        gen.prompt_tokens, gen.output_tokens = r.prompt_tokens, r.output_tokens
+    if r.outcome is not None:
+        gen.gate_reasons = r.outcome.reasons
+    if r.status is GenerationStatus.COMPLETED:
+        gen.output = r.output
+    return _finish(db, gen, spec, r.status, r.failure, user)
 
 
 def reconcile(db: Session, gen: AiGeneration, spec: OperationSpec) -> None:
@@ -565,6 +703,7 @@ def current(
     settings = settings or get_settings()
     spec = resolve(operation)
     mode = mode_for(spec, settings)
+    _require_key()
     raw_subject = subject_id
     subject_id = subject_key(spec, user, subject_id)
     ctx = _context(db, user, spec, raw_subject)

@@ -132,7 +132,11 @@ TELEMETRY = ContextSource(
     id="ai_telemetry",
     domain="AI generation telemetry (aggregate)",
     subject_types=(SubjectType.AI_TELEMETRY,),
-    categories=(Category("generation_outcome", "ai_telemetry_row", "Outcomes per operation"),),
+    categories=(
+        Category(
+            "generation_outcome", "ai_telemetry_row", "Outcomes per operation", freshness="current"
+        ),
+    ),
     read=read_telemetry,
     read_services=("services.ai_telemetry.ai_telemetry",),
 )
@@ -140,7 +144,11 @@ AUDIT = ContextSource(
     id="audit_activity",
     domain="Audit activity (aggregate)",
     subject_types=(SubjectType.AUDIT_ACTIVITY,),
-    categories=(Category("audit_event", "audit_activity_row", "Events per action and day"),),
+    categories=(
+        Category(
+            "audit_event", "audit_activity_row", "Events per action and day", freshness="current"
+        ),
+    ),
     read=read_audit,
     read_services=("services.audit.audit_activity",),
 )
@@ -148,7 +156,9 @@ JOBS = ContextSource(
     id="job_queue",
     domain="Background jobs (aggregate)",
     subject_types=(SubjectType.JOB_QUEUE,),
-    categories=(Category("job_state", "job_queue_row", "Jobs per kind and status"),),
+    categories=(
+        Category("job_state", "job_queue_row", "Jobs per kind and status", freshness="current"),
+    ),
     read=read_jobs,
     read_services=("services.jobs.job_queue",),
 )
@@ -162,6 +172,7 @@ MEASURES = ContextSource(
             "quality_measure",
             "Adherence and persistence shares (pending review: server text only)",
             model=False,
+            freshness="current",
         ),
     ),
     read=read_measures,
@@ -173,7 +184,13 @@ ACCESS = ContextSource(
     domain="Account access boundary",
     subject_types=(SubjectType.ACCESS_SCOPE,),
     categories=(
-        Category("access", "access_scope", "Role, permissions, assignment counts", model=False),
+        Category(
+            "access",
+            "access_scope",
+            "Role, permissions, assignment counts",
+            model=False,
+            freshness="current",
+        ),
     ),
     read=read_access,
     read_services=("services.access.access_scope",),

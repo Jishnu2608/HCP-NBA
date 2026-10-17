@@ -244,7 +244,7 @@ QUEUE = ContextSource(
     subject_types=(SubjectType.CARE_QUEUE,),
     categories=(
         Category("queue_item", "care_request", "Requests of the reader's panel, most urgent first"),
-        Category("queue_counts", "care_request", "Requests per status"),
+        Category("queue_counts", "care_request", "Requests per status", freshness="current"),
     ),
     read=read_queue,
     read_services=("services.care_requests.care_queue",),
@@ -256,7 +256,9 @@ CONSULTATIONS = ContextSource(
     subject_types=(SubjectType.CONSULTATION_QUEUE,),
     categories=(
         Category("consultation", "consultation", "Consultations: type, status, group, age"),
-        Category("consultation_counts", "consultation", "Consultations per group"),
+        Category(
+            "consultation_counts", "consultation", "Consultations per group", freshness="current"
+        ),
     ),
     read=read_consultations,
     read_services=("services.consultations.hcp_consultations",),
@@ -279,7 +281,14 @@ WORKFLOW = ContextSource(
     id="care_workflow",
     domain="Care-request cycle times (aggregate)",
     subject_types=(SubjectType.CARE_WORKFLOW,),
-    categories=(Category("cycle_time", "care_workflow_metric", "Median and p90 days per step"),),
+    categories=(
+        Category(
+            "cycle_time",
+            "care_workflow_metric",
+            "Median and p90 days per step",
+            freshness="current",
+        ),
+    ),
     read=read_workflow,
     read_services=("services.care_requests.request_times",),
     principal_dependent=True,

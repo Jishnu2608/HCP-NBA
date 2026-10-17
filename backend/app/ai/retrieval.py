@@ -128,6 +128,7 @@ class RetrievalResult:
     refused: str | None = None  # instruction_like_input, ...
     out_of_scope: int = 0
     unavailable: int = 0
+    flagged: int = 0  # passages dropped because their text looked like an instruction
     complete: bool = True
 
 
@@ -184,6 +185,10 @@ def retrieve(
         result.complete = result.complete and ctx.complete
         subject = pseudonym.ref(f"subject:{ref.subject_type}", ref.subject_id or user.id) or ""
         for item in ctx.model_items:
+            if screen_injection(item.text):
+                # Retrieved text is data; one that reads like an instruction is not passed on.
+                result.flagged += 1
+                continue
             score = 0.0
             q = _terms(task.text)
             if q:

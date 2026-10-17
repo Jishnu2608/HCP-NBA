@@ -90,7 +90,7 @@ Inventoried but not context sources (reason in the registry):
 2. Resolves the source for the subject type. It refuses:
    - unsupported and disabled sources;
    - policy-blocked sources, for a consumer that calls a model.
-3. Reads through the source's typed read service under `readonly.guard`. The read services decide access.
+3. Reads through the source's typed read service under `readonly.guard`, inside a SAVEPOINT. The read services decide access. A failed query is undone back to the savepoint only, so the caller's own uncommitted work is kept, and its categories become `unavailable`. Without the deployment secret (`NBA_JWT_SECRET`) no context is built: opaque references need a key that is the same in every process.
 4. Projects every record through the central field policy. An unclassified field raises.
 5. Writes model-eligible facts as items, with provenance: source, record id, field, version, date and an opaque subject reference.
 6. Gives every category a state:
@@ -104,16 +104,18 @@ Inventoried but not context sources (reason in the registry):
    | `excluded_allowlist` | Read but outside the consumer's allowlist |
    | `unavailable` | The read failed |
    | `truncated` | The page or the budget cut it |
-   | `stale` | Derived figures older than today |
+   | `stale` | Derived figures older than today, or (with `max_age_days`) the category's newest fact is older than the limit or carries no date (`older_than_max_age`, `freshness_unknown`) |
 
-7. Reduces the model view to the allowlist, intersected with the policy, within the budget.
+7. Reduces the model view to the allowlist, intersected with the policy, within the budget (whole items only; a cut category is `truncated`, reason `context_budget`). Every model item is then checked against the consumer's own allowlist, the model categories and its sensitivity; a violation refuses the build.
+
+Freshness: a category is judged by its items' dates (`Category.freshness = "item"`) or, for facts describing the current state as read (counts, aggregates, profile attributes), as fresh as the context (`"current"`). An operation sets `OperationSpec.max_age_days`.
 8. Fingerprints the items. For principal-dependent views (queues, scoped counts) the reader's scope key is added, so a stored result is never reused across readers.
 
 `complete` is False when any requested category is truncated, unavailable or stale. The orchestrator then falls back:
 - `context_unavailable` when a source could not be read;
 - `context_incomplete` otherwise.
 
-An operation must set `allow_partial` to describe partial data. None does.
+An operation must set `allow_partial` to describe partial data. None does. With it, absence claims about stale, truncated or unavailable categories are still rejected.
 
 Reads never write. A real patient's adherence figures that are not as of today are reported as `stale` rather than recomputed. The Case Brief routes keep the screen behaviour: like opening Patient 360, they bring the figures up to today before the AI layer reads them (`patients.refresh_if_stale`).
 
@@ -163,7 +165,7 @@ Nothing is persisted, so no retention or deletion policy is needed until a store
 
 ## Safety checks
 
-Shared checks run on every text field the model writes, judged against what the model was given (`safety.check_text_fields`). From the start:
+Shared checks run on every text value the model writes, judged against what the model was given (`safety.check_text_fields`). Which values those are is derived from the output schema (`app/ai/output_contract.py`), not from what an operation lists: every string path of `output_model` must be cited text (`cited_fields`, with a sibling citation list), uncited text (`text_fields`, checked with no citations, so a record fact there fails) or a `Literal` / `Enum` value. Registration refuses anything else (an undeclared text field, `dict` or `Any`, unions, models that accept extra fields), and `evaluate` refuses an output holding a string at an uncovered path (`unchecked_field`), so an unregistered or mutated spec fails closed too. Nested models and lists use paths such as `points[].text`. From the start:
 - invalid citations;
 - fabricated dates, numbers, ids, drugs and conditions;
 - dosing, medication advice and clinical claims;
@@ -182,7 +184,7 @@ Added for the application-wide layer:
 - `leak:instructions`: the operation's own instructions repeated;
 - `injection_echo`: instruction-like patterns in the output.
 
-An absence phrase is mapped to the category words inside it (or, if it names none, the nearest one before it). It is supported only when every target category is `verified_empty`, or when a cited item of that category states the same negated fact about the same medicine ("no fill recorded" with "not yet filled"). These are layered, conservative keyword checks, not semantic proof. When in doubt they reject, and the template stands. Operation checks add their own (Case Brief: length). Schema validation comes first; anything over the size limit is rejected.
+Absence phrases include paraphrases ("could not find any refills", "no recorded fills", "has never refilled", "has not been logged", "unable to locate") and inflected category words. An absence phrase is mapped to the category words inside it, or, if it names none, the first one that closely follows it, or the nearest one before it. A status is checked when asserted ("was approved") and when used as an adjective of an item ("the blocked reminder"); named material ("the approved cost-support offer content") is not a status claim; and when the field cites items that state a status, the claimed status must be one of theirs. A recommendation may be named when an item of any category whose words name a recommendation is in the context (not one consumer's item kind). It is supported only when every target category is `verified_empty`, or when a cited item of that category states the same negated fact about the same medicine ("no fill recorded" with "not yet filled"). These are layered, conservative keyword checks, not semantic proof. When in doubt they reject, and the template stands. Operation checks add their own (Case Brief: length). Schema validation comes first; anything over the size limit is rejected. Before the provider call the request is checked for withheld free text, identifiers and the text of any item outside the model view (a prompt builder that copies server-text-only or non-allowlisted items is refused, `data_policy`). Retrieval drops passages whose text reads like an instruction (`RetrievalResult.flagged`).
 
 ## Modes, configuration and fallback
 
@@ -255,8 +257,18 @@ The `ai_generation` row keeps the composed result only when every check passed; 
 | F | Multi-subject and aggregate runs |
 | G | Health: read-service probes, provider state (configuration only unless probed), jobs, telemetry |
 | H | A sanitized report |
+| Context evaluation | Readiness of the shared layer for an unseen, policy-approved consumer (below) |
 
-The panel never calls a model and never writes a business record.
+The panel never calls a model and never writes a business record. Every route is rate limited and audited: reads `ai_diagnostics_view` (bucket `ai_diagnostics_read`, 120 / 10 min), runs `ai_diagnostics_run` (`ai_diagnostics`, 30 / 10 min).
+
+### AI context evaluation
+
+`GET /api/ai/diagnostics/evaluation` (last result, from the audit log) and `POST /api/ai/diagnostics/evaluation/run` (bucket `ai_evaluation`, 10 / 10 min; no input). Code: `app/ai/evaluation/` (`rubric.py`, `scenarios.py`, `probes.py`, `trace.py`, `runner.py`); frontend `pages/AiEvaluation.tsx` (tab "Context evaluation").
+
+- About 114 predefined scenarios run the real registry validation, engine, sources, read services, policy, pipeline (`orchestrator.execute`, the same function the worker runs) and checks on two fixture worlds built for the run. The only double is the model (`ScriptedProvider`). Test-only consumer specs (`probes.py`, tag `test_only`) are validated, never registered: `registry.register` refuses them.
+- Score: a weighted evidence index over fixed controls in ten dimensions (`rubric.py`, `rubric-1`), not the pass rate. A control earns credit only from scenarios that ran; external controls (OS egress, PostgreSQL, load, meaning-level verification) earn nothing until evidence exists. Hard blockers (unauthorised access, leakage, unchecked output, policy bypass, data corruption, provider fallback, isolation) or an open Critical / High finding make readiness Blocked. States: Not evaluated, Blocked, Insufficient evidence, Below threshold (under 95), Eligible for owner review. Nothing is enabled by any state.
+- Per pipeline scenario, an inference trace: contract, principal, source and provenance, category states, policy decisions, prompt template, the payload as sent and as a redacted preview, evidence, output contract, checks and findings, provider and mode, disposition. No model reasoning exists to show.
+- Each run is recorded as `ai_evaluation_run` (codes, counts, per-scenario statuses); the next run compares against it and names only the scenario's own finding and tests for a change.
 
 ## Databases: traditional and AI
 
@@ -294,14 +306,14 @@ The application never creates firewall rules. The exact rules, scope, verificati
 1. Choose a subject type (or register a new source with its categories and record policies in `app/ai/sources/` and `app/ai/policy/fields.py`).
 2. Write an `OperationSpec` with:
    - id, version and permission;
-   - subject type and allowlist;
-   - prompt builder;
-   - strict output model and schema;
+   - subject type and allowlist (and `max_age_days` if freshness matters);
+   - prompt builder (from `ctx.model_items` only);
+   - strict output model and schema, with every text field declared in `cited_fields` or `text_fields`;
    - operation checks;
    - compose and fallback.
 3. Add a permission to the role map.
 4. Register the spec.
-5. Evaluate it on synthetic data with fixed thresholds before any reader sees its wording.
+5. Evaluate it on synthetic data with fixed thresholds before any reader sees its wording. The Admin context evaluation shows whether the shared layer is ready; it does not evaluate or approve a consumer.
 
 The engine, sources, policy, shared checks, orchestrator, jobs, audit and API need no change. New operations are a product decision; none is approved beyond the Case Brief.
 
