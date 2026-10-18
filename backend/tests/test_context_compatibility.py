@@ -18,17 +18,26 @@ SNAPSHOT = Path(__file__).parent / "data" / "case_brief_context_snapshot.json"
 
 
 @pytest.fixture(scope="module")
-def current():
-    db = build_world()
-    try:
-        yield capture(db)
-    finally:
-        db.close()
+def frozen():
+    return json.loads(SNAPSHOT.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
-def frozen():
-    return json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+def current(frozen):
+    # The snapshot was taken on one day; the world is rebuilt as of that same day, so the
+    # comparison does not depend on the date the suite runs (every context carries `as_of`).
+    from datetime import date
+
+    from app.core import clock
+
+    (taken,) = {entry["as_of"] for entry in frozen.values()}
+    with clock.override(date.fromisoformat(taken)):
+        db = build_world()
+        try:
+            captured = capture(db)
+        finally:
+            db.close()
+    return captured
 
 
 def test_the_snapshot_covers_both_care_managers(frozen):
