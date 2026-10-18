@@ -810,10 +810,15 @@ export default function ContentDetail() {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const detail = useQuery({ queryKey: ["content", id], queryFn: () => api(`/content/${id}`) });
+  const shownId = detail.data?.content_id as string | undefined;
   useEffect(() => {
-    // Opening the page marks decisions and messages seen: refresh the menu counts.
-    if (detail.data) void client.invalidateQueries({ queryKey: ["attention"] });
-  }, [detail.data, client]);
+    // Opening the content changes nothing on the server; mark its conversation read
+    // explicitly, then refresh the menu counts.
+    if (!shownId) return;
+    void post(`/content/${shownId}/messages/read`)
+      .catch(() => undefined)
+      .then(() => void client.invalidateQueries({ queryKey: ["attention"] }));
+  }, [shownId, client]);
   const refresh = (data: Json, message?: string) => {
     client.setQueryData(["content", data.content_id], data);
     void client.invalidateQueries({ queryKey: ["content"] });

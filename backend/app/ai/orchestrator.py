@@ -75,6 +75,19 @@ SOURCE_LABELS = {
     "nba": "Open recommendation",
     "consent": "Consent record",
     "absent": "Not recorded",
+    "decision": "Recommendation",
+    "reason": "Recorded reason",
+    "candidate": "Option considered",
+    "response": "Response",
+    "hcp": "HCP profile",
+    "contact_window": "Contact window",
+    "hcp_touch": "Engagement record",
+    "hcp_nba": "Open recommendation",
+    "hcp_work": "Open task",
+    "queue_item": "Queue item",
+    "queue_counts": "Queue counts",
+    "audit_event": "Audit activity",
+    "cycle_time": "Cycle time",
 }
 
 
@@ -305,7 +318,7 @@ def submit(
     db: Session,
     user: User,
     operation: str,
-    subject_id: str,
+    subject_id: str | None,
     *,
     settings: Settings | None = None,
     provider_factory: ProviderFactory | None = None,
@@ -449,6 +462,24 @@ def evaluate(
     )
 
 
+def _consent_in_effect(db: Session, user: User, spec: OperationSpec, ctx: AuthorizedContext):
+    """True unless the context's audience needs the subject's consent and it is not in effect."""
+    from app.ai.policy import approvals
+    from app.core import clock
+    from app.services.common import consents
+
+    audience = approvals.audience_of(ctx.source)
+    if audience not in approvals.CONSENT_AUDIENCES:
+        return True
+    patient_id = getattr(user, "patient_id", None)
+    if not patient_id or not spec.consent_purpose:
+        return False
+    return any(
+        c.purpose == spec.consent_purpose and c.granted and c.in_effect
+        for c in consents(db, patient_id, clock.get_today(db))
+    )
+
+
 def _assert_model_items_only(request: GenerationRequest, ctx: AuthorizedContext) -> None:
     """The prompt carries only what the model may read: the text of an item outside the model
     view (a server-text-only category such as consent, or a category outside the operation's
@@ -578,6 +609,11 @@ def execute(
         r.step("completeness", "refused", allow_partial=False)
         return r.end(GenerationStatus.FALLBACK, failure)
     r.step("completeness", "passed" if ctx.complete else "partial_allowed")
+    if not _consent_in_effect(db, user, spec, ctx):
+        # An approved patient-facing audience still needs this patient's consent now; consent
+        # alone never enables one (registration requires the owner's approval first).
+        r.step("consent", "missing", purpose=spec.consent_purpose)
+        return r.end(GenerationStatus.FALLBACK, FailureCategory.DATA_POLICY)
 
     mode = mode_for(spec, settings)
     if mode is Mode.TEMPLATE:
@@ -608,7 +644,7 @@ def execute(
     r.request = request
     try:
         check_data_policy(provider, request, settings)
-        assert_no_free_text(request, ctx.withheld_texts)
+        assert_no_free_text(request, ctx.withheld_texts, " ".join(i.text for i in ctx.model_items))
         _assert_no_identifiers(request, ctx.identifiers)
         _assert_model_items_only(request, ctx)
     except (DataPolicyError, UntrustedContentError):
@@ -696,7 +732,12 @@ def reconcile(db: Session, gen: AiGeneration, spec: OperationSpec) -> None:
 
 
 def current(
-    db: Session, user: User, operation: str, subject_id: str, *, settings: Settings | None = None
+    db: Session,
+    user: User,
+    operation: str,
+    subject_id: str | None,
+    *,
+    settings: Settings | None = None,
 ) -> dict:
     """What the reader sees now: the template, or a checked model result when the mode allows
     it and the result is still current. Raises `Forbidden` / `NotFound` like the read services."""

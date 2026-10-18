@@ -28,6 +28,16 @@ from app.ai.sources import Category, ContextSource, SourceStatus, UnknownSource
 from app.models.enums import Role
 from app.services.errors import Forbidden
 
+# Operations the owner approved (Case Brief 2026-10-16; five more 2026-10-19).
+APPROVED = (
+    "case_brief",
+    "compliance_summary",
+    "cycle_time",
+    "decision_trace",
+    "engagement_brief",
+    "queue_brief",
+)
+
 AI = Path(__file__).resolve().parents[1] / "app" / "ai"
 SHARED = [
     AI / "engine.py",
@@ -160,8 +170,8 @@ def test_registration_refuses_operations_that_would_bypass_policy(kw, message):
 
 def test_unregistered_operations_cannot_run():
     with pytest.raises(registry.UnknownOperation):
-        registry.resolve("queue_brief")
-    assert registry.registered() == ("case_brief",)
+        registry.resolve("governance_report")  # R1: not approved, never built
+    assert registry.registered() == APPROVED
 
 
 def test_a_new_source_plugs_in_without_touching_existing_consumers(db, world):

@@ -73,6 +73,14 @@ def _link(token: str) -> str:
     return f"{get_settings().public_base_url.rstrip('/')}/invite/{token}"
 
 
+def status_of(inv: Invitation) -> str:
+    """The invitation's current status, without changing anything: a pending invitation past
+    its deadline reads as expired. Used by every read (F-13); `refresh` persists it."""
+    if inv.status == InvitationStatus.PENDING and _now() >= inv.expires_at:
+        return InvitationStatus.EXPIRED
+    return inv.status
+
+
 def refresh(db: Session, inv: Invitation) -> str:
     """The invitation's current status, marking it expired (and auditing that) on first
     sight after its deadline."""
@@ -348,8 +356,9 @@ TOKEN_STATES = {
 }
 
 
-def _by_token(db: Session, token: str) -> Invitation:
-    """The usable invitation behind a link, or a clear, token-free error."""
+def _by_token(db: Session, token: str, *, persist: bool = False) -> Invitation:
+    """The usable invitation behind a link, or a clear, token-free error. A lookup only reads;
+    an acceptance (`persist`) records an expiry it meets (F-13)."""
     inv = (
         db.scalar(select(Invitation).where(Invitation.token_hash == token_hash(token.strip())))
         if token and len(token) <= 128
@@ -361,7 +370,7 @@ def _by_token(db: Session, token: str) -> Invitation:
             "invitation_invalid",
             "This invitation link isn't valid. Check that you copied the whole link.",
         )
-    state = refresh(db, inv)
+    state = refresh(db, inv) if persist else status_of(inv)
     inviter = db.get(User, inv.invited_by_user_id)
     context = {"inviter_name": inviter.display_name if inviter else None}
     if state in TOKEN_STATES:
@@ -411,7 +420,7 @@ def accept(
         validate_password,
     )
 
-    inv = _by_token(db, token)
+    inv = _by_token(db, token, persist=True)
     name = validate_name(name)
     country, region = jurisdiction.validate(country, region)
     dob = age.parse_dob(date_of_birth)
@@ -545,7 +554,7 @@ def person(user: User | None, viewer=None) -> dict | None:
 def out(db: Session, inv: Invitation, viewer: User) -> dict:
     from app.core import pii
 
-    status = refresh(db, inv)
+    status = status_of(inv)
     accepted = db.get(User, inv.claimed_user_id) if status == InvitationStatus.ACCEPTED else None
     # A patient invitation's email is the patient's PII: masked unless the reader may see the
     # patient (the inviting care manager of an assigned patient does).

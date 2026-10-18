@@ -22,6 +22,9 @@ import {
   titleCase,
 } from "../ui";
 import type { Column } from "../ui";
+import { useAuth } from "../auth";
+import { P } from "../permissions";
+import { AiArtifactPanel } from "./AiArtifact";
 
 /** Safeguard result: icon and word, never colour alone. */
 function Flag({ value, label }: { value: boolean | null; label: string }) {
@@ -46,6 +49,7 @@ function Flag({ value, label }: { value: boolean | null; label: string }) {
 const PAGE = 50;
 
 export default function Audit() {
+  const { can } = useAuth();
   const [action, setAction] = useState("");
   const [page, setPage] = useState(0);
   const log = useQuery({
@@ -130,6 +134,16 @@ export default function Audit() {
         title="Audit log"
         subtitle="Append-only record of every recommendation, safeguard result, review decision, send, response and configuration change, with who did it."
       />
+      {can(P.AI_COMPLIANCE_SUMMARY) && (
+        <div className="mb-6">
+          <AiArtifactPanel
+            id="compliance-summary"
+            operation="compliance_summary"
+            title="Audit activity summary"
+            description="Counts of recorded actions per day over the last 14 days. No person, patient or record is identified, and counts are not findings."
+          />
+        </div>
+      )}
       <Toolbar>
         <p className="text-sm text-ink-subtle">{log.data ? `${num(log.data.total)} events` : " "}</p>
         <Select

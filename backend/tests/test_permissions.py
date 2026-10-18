@@ -93,6 +93,15 @@ def test_admin_has_every_staff_permission_except_content_approval():
     # The AI Case Brief is a care manager's tool for their own panel (owner decision,
     # 2026-10-16): the administrator reads patients but does not generate briefs.
     care |= {P.AI_CASE_BRIEF}
+    # Nor any other AI operation (owner decisions 2026-10-18 and 2026-10-19: no AI operation
+    # for the administrator; each belongs to the role whose work it describes).
+    care |= {
+        P.AI_DECISION_TRACE,
+        P.AI_ENGAGEMENT_BRIEF,
+        P.AI_QUEUE_BRIEF,
+        P.AI_COMPLIANCE_SUMMARY,
+        P.AI_CYCLE_TIME,
+    }
     # Content decisions belong to Compliance and proposals to representatives (separation of
     # duties: the administrator neither writes nor approves governed material).
     content = {P.CONTENT_APPROVE, P.CONTENT_PROPOSE}

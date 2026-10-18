@@ -19,6 +19,16 @@ from app.datagen.generate import GenConfig, generate
 from app.main import app
 from app.models import AuditLog, CareManagerPatient, User
 
+# Operations the owner approved (Case Brief 2026-10-16; five more 2026-10-19).
+APPROVED = (
+    "case_brief",
+    "compliance_summary",
+    "cycle_time",
+    "decision_trace",
+    "engagement_brief",
+    "queue_brief",
+)
+
 GETS = ["/api/ai/diagnostics/sources", "/api/ai/diagnostics/policy", "/api/ai/diagnostics/health"]
 POSTS = [
     ("/api/ai/diagnostics/context", {"subject_type": "patient"}),
@@ -72,7 +82,7 @@ def test_the_administrator_sees_sources_policy_and_health(env):
     assert ids["patient_360"]["status"] == "implemented"
     assert ids["patient_self"]["status"] == "policy_blocked"
     assert ids["inbox"]["status"] == "unsupported" and ids["inbox"]["status_reason"]
-    assert [o["id"] for o in sources["operations"]] == ["case_brief"]
+    assert tuple(o["id"] for o in sources["operations"]) == APPROVED
     policy = client.get(GETS[1], headers=headers).json()
     assert policy["records"]["care_request"]["reason"] == "reader_only"
     assert "care_request.reason" not in policy["model_visible"]
@@ -283,7 +293,7 @@ def test_evaluation_run_records_codes_only_and_changes_no_business_record(env):
     result = body["result"]
     assert result["counts"]["failed"] == 0
     assert result["score"]["readiness"] in ("below_threshold", "eligible_for_owner_review")
-    assert result["registered_operations"] == ["case_brief"]
+    assert tuple(result["registered_operations"]) == APPROVED
     assert "payload_sent" not in json.dumps(body["export"])
     assert not any(c in got.text for c in fixtures.CANARIES[:3])
     last = client.get(EVAL_GET, headers=headers).json()

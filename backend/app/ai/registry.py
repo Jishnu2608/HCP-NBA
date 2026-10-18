@@ -103,6 +103,21 @@ def validate(spec: OperationSpec) -> dict[str, str]:
         raise ValueError(f"no context source for subject type {spec.subject_type!r}") from None
     if source.status is not SourceStatus.IMPLEMENTED:
         raise ValueError(f"{source.id} is {source.status}: no model operation may use it")
+    from app.ai.policy import approvals
+
+    audience = approvals.audience_of(source.id)
+    if audience:
+        if approvals.audience_approval(audience) is None:
+            raise ValueError(f"{audience} AI is not approved")
+        if not spec.evaluation_ref:
+            raise ValueError(f"an operation for the {audience} audience needs its evaluation")
+        if audience in approvals.CONSENT_AUDIENCES:
+            from app.models.enums import ConsentPurpose
+
+            if spec.consent_purpose not in {p.value for p in ConsentPurpose}:
+                raise ValueError(
+                    f"an operation for the {audience} audience needs a consent purpose"
+                )
     for kind in spec.context_kinds:
         category = source.category(kind)
         if category is None:

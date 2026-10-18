@@ -296,18 +296,22 @@ def my_inbox(
     """Messages sent to me through the engine, newest first. At most `limit` (500); `before`
     (the id of the oldest item already shown) pages further back."""
     _me(user)
-    items = inbox_service.inbox(db, user, limit=limit, before=before)
-    if user.hcp_id:
-        # Replies about delivered material count as read once the inbox shows them.
-        from app.content import governance
+    return inbox_service.inbox(db, user, limit=limit, before=before)
 
-        governance.mark_read(
-            db,
-            user,
-            list(db.scalars(select(ContentMessage).where(ContentMessage.hcp_id == user.hcp_id))),
-        )
-        db.commit()
-    return items
+
+@router.post("/inbox/read")
+def mark_inbox_read(user: User = Depends(portal_users), db: Session = Depends(get_db)) -> dict:
+    """Marks the replies about delivered material as read once the inbox has shown them (the
+    page calls it). Reading the inbox itself changes nothing (F-13)."""
+    _me(user)
+    if not user.hcp_id:
+        return {"marked": 0}
+    from app.content import governance
+
+    rows = list(db.scalars(select(ContentMessage).where(ContentMessage.hcp_id == user.hcp_id)))
+    governance.mark_read(db, user, rows)
+    db.commit()
+    return {"marked": len(rows)}
 
 
 class IntentBody(StrictBody):
@@ -534,14 +538,9 @@ def my_specialty_requests(
         .where(SpecialtyChangeRequest.requested_by_user_id == user.id)
         .order_by(SpecialtyChangeRequest.id.desc())
     ).all()
-    # Decisions shown here for the first time are marked new, and seen from now on (they
-    # leave the menu count).
+    # Decisions not yet seen are marked new; the page marks them seen with an explicit POST
+    # (they then leave the menu count). Reading changes nothing (F-13).
     fresh = {r.id for r in rows if r.decided_at is not None and r.seen_at is None}
-    for r in rows:
-        if r.id in fresh:
-            r.seen_at = utcnow()
-    if fresh:
-        db.commit()
     return {
         "specialties": hcp_records.specialty_out(db, own_hcp_id(user)),
         "options": vocabulary.specialty_options(),
@@ -549,6 +548,24 @@ def my_specialty_requests(
             hcp_records.request_out(db, r) | {"new_decision": r.id in fresh} for r in rows
         ],
     }
+
+
+@router.post("/specialty-requests/seen")
+def mark_specialty_decisions_seen(
+    user: User = Depends(specialty_requesters), db: Session = Depends(get_db)
+) -> dict:
+    """Marks this HCP's decided specialty requests as seen (after the page has shown them)."""
+    rows = db.scalars(
+        select(SpecialtyChangeRequest).where(
+            SpecialtyChangeRequest.requested_by_user_id == user.id,
+            SpecialtyChangeRequest.decided_at.is_not(None),
+            SpecialtyChangeRequest.seen_at.is_(None),
+        )
+    ).all()
+    for r in rows:
+        r.seen_at = utcnow()
+    db.commit()
+    return {"marked": len(rows)}
 
 
 @router.post("/specialty-requests", status_code=201)

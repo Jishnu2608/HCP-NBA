@@ -31,6 +31,16 @@ from app.core.permissions import Permission as P
 from app.models.enums import Role
 from app.services.errors import Forbidden, NotFound
 
+# Operations the owner approved (Case Brief 2026-10-16; five more 2026-10-19).
+APPROVED = (
+    "case_brief",
+    "compliance_summary",
+    "cycle_time",
+    "decision_trace",
+    "engagement_brief",
+    "queue_brief",
+)
+
 CM, MR, HCP, PAT, COMP, ADMIN = (Role.CARE_MANAGER, Role.MEDICAL_REP, Role.HCP, Role.PATIENT,
                                  Role.COMPLIANCE, Role.ADMIN)  # fmt: skip
 
@@ -137,7 +147,7 @@ def test_compatible_candidate_runs_end_to_end(db, world, name):
     assert len(p.requests) == 1
     payload = json.dumps([m.model_dump() for m in p.requests[0].messages])
     assert not any(c in payload for c in CANARIES), name
-    assert r.ctx.request.operation == spec.id and registry.registered() == ("case_brief",)
+    assert r.ctx.request.operation == spec.id and registry.registered() == APPROVED
 
 
 @pytest.mark.parametrize("name", sorted(COMPATIBLE))

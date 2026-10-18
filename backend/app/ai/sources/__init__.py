@@ -76,6 +76,18 @@ def all_sources() -> list[ContextSource]:
     return sorted(_SOURCES.values(), key=lambda s: (s.status != SourceStatus.IMPLEMENTED, s.id))
 
 
+def _audience_gate(source: ContextSource) -> ContextSource:
+    """POLICY_BLOCKED unless the source's audience is approved in the approvals register."""
+    from app.ai.policy import approvals
+
+    audience = approvals.audience_of(source.id)
+    if audience and approvals.audience_approval(audience) is None:
+        return replace(
+            source, status=SourceStatus.POLICY_BLOCKED, status_reason=f"{audience}_ai_not_approved"
+        )
+    return source
+
+
 def _unsupported(id_: str, domain: str, reason: str, services: tuple[str, ...]) -> ContextSource:
     return ContextSource(
         id=id_,
@@ -97,20 +109,11 @@ for _source in (
     content.LINEAGE,
     care.REQUEST,
     care.QUEUE,
-    # Consultations are the HCP's own view: buildable for deterministic use and diagnostics,
-    # but no model consumer may target them until HCP-facing AI is decided (owner, 2026-10-17).
-    replace(
-        care.CONSULTATIONS,
-        status=SourceStatus.POLICY_BLOCKED,
-        status_reason="hcp_facing_ai_not_decided",
-    ),
-    # The patient's own record can be built (deterministic use, diagnostics preview), but no
-    # model consumer may target it until patient-facing AI wording is decided.
-    replace(
-        care.PATIENT_SELF,
-        status=SourceStatus.POLICY_BLOCKED,
-        status_reason="patient_facing_ai_not_decided",
-    ),
+    # Audience-specific sources (an HCP's own consultations, a patient's own record): buildable
+    # for deterministic use and diagnostics; open to a model consumer only when the owner has
+    # approved that audience in `app.ai.policy.approvals` (none is, 2026-10-19).
+    _audience_gate(care.CONSULTATIONS),
+    _audience_gate(care.PATIENT_SELF),
     care.WORKFLOW,
     operational.TELEMETRY,
     operational.AUDIT,

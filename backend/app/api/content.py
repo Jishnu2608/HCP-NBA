@@ -320,8 +320,22 @@ def _messages(db: Session, user: User, c: Content) -> dict:
                 who = {**who, "label": author.display_name if author else who.get("label")}
             threads[key] = {"interaction_id": key, "hcp": who, "messages": []}
         threads[key]["messages"].append(item)
-    gov.mark_read(db, user, rows)
     return {"general": general, "hcp_threads": list(threads.values())}
+
+
+@router.post("/{content_id}/messages/read")
+def mark_messages_read(
+    content_id: str, user: User = Depends(readers), db: Session = Depends(get_db)
+) -> dict:
+    """Marks this content's conversation as read for the reader (the page calls it after
+    showing the conversation). Opening the content itself changes nothing (F-13)."""
+    c = _get(db, user, content_id)  # same scope as opening the content (404 otherwise)
+    rows = list(
+        db.scalars(gov.visible_messages(db, user).where(ContentMessage.lineage_id == c.lineage_id))
+    )
+    gov.mark_read(db, user, rows)
+    db.commit()
+    return {"marked": len(rows)}
 
 
 @router.get("/{content_id}")

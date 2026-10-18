@@ -25,6 +25,7 @@ import { api, post } from "../api";
 import type { Json } from "../api";
 import { useAuth } from "../auth";
 import { DUR, gsap, reducedMotion, useChangeHighlight, useGSAP } from "../motion";
+import { AiArtifactPanel } from "./AiArtifact";
 import { TaskForm } from "./HcpWork";
 
 const LEARNED: Record<string, string> = {
@@ -689,6 +690,16 @@ export default function NbaDetail() {
             </Table>
             <p className="mt-3 text-[13px] text-ink-subtle">A blocked option is never chosen, whatever its score.</p>
           </Card>
+
+          {isPatient && can(P.AI_DECISION_TRACE) && (
+            <AiArtifactPanel
+              id="decision-trace"
+              operation="decision_trace"
+              subjectId={String(n.id)}
+              title="Decision trace"
+              description="Why the engine chose this option, from its recorded reasons and gate results. It never changes the recommendation."
+            />
+          )}
 
           <Card title="Audit trail">
             {n.audit.length ? (

@@ -36,6 +36,16 @@ from app.core.permissions import Permission
 from app.models import AuditLog
 from app.models.enums import Role
 
+# Operations the owner approved (Case Brief 2026-10-16; five more 2026-10-19).
+APPROVED = (
+    "case_brief",
+    "compliance_summary",
+    "cycle_time",
+    "decision_trace",
+    "engagement_brief",
+    "queue_brief",
+)
+
 CM = Role.CARE_MANAGER
 BACKEND = Path(__file__).resolve().parents[1]
 
@@ -225,7 +235,7 @@ def test_test_only_specs_cannot_register():
     for spec in probes.VALID:
         with pytest.raises(ValueError, match="test-only"):
             registry.register(spec)
-    assert registry.registered() == before == ("case_brief",)
+    assert registry.registered() == before == APPROVED
 
 
 def test_registration_permission_checks():

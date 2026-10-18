@@ -25,3 +25,7 @@ __all__ = [
     "project",
     "validate_policy",
 ]
+
+from app.ai.policy import approvals  # noqa: E402
+
+approvals.validate()

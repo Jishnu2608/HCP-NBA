@@ -2124,6 +2124,163 @@ def _independent(env: Env):
     return complete and not derived, f"complete {complete}; derived from permission map {derived}"
 
 
+# --- Registered operations (owner-approved artifacts, 2026-10-19) ---------------------------------
+# Each approved operation other than the Case Brief, through the real pipeline on the fixture
+# world: it validates and only its reader holds its permission; template-grade wording completes;
+# an unsafe answer and its own artifact rule both fall back; other readers are refused.
+
+ARTIFACT_READER = {
+    "decision_trace": CM,
+    "engagement_brief": MR,
+    "queue_brief": CM,
+    "compliance_summary": COMP,
+    "cycle_time": CM,
+}
+ARTIFACT_VIOLATION = {
+    "decision_trace": ("explanation", "It should be rejected and switched to a call.",
+                       "recommendation_change"),
+    "engagement_brief": ("brief", "A high-value HCP in the top decile.", "commercial_claim"),
+    "queue_brief": ("start_with", "Start with the newest request.", "reordered_queue"),
+    "compliance_summary": ("summary", "This activity shows a violation by the team.",
+                           "inferred_misconduct"),
+    "cycle_time": ("summary", "Routing is slow because staff are overloaded.", "invented_cause"),
+}  # fmt: skip
+
+
+def _artifact_ctx(env: Env, op: str, role: str | None = None):
+    spec = registry.resolve(op)
+    return spec, orchestrator._context(env.db, env.user(role or ARTIFACT_READER[op]), spec,
+                                       env.subject(S(spec.subject_type)))  # fmt: skip
+
+
+def _artifact_answer(spec, ctx) -> dict:
+    view = spec.fallback(ctx)
+    answer = {}
+    for (name, cites), part in zip(spec.cited_fields, view["statements"], strict=True):
+        answer[name], answer[cites] = part["statement"]["text"], part["statement"]["citations"]
+    if spec.id == "decision_trace":
+        # The recorded reasons include consent codes, which only the server states.
+        decision = next(i for i in ctx.model_items if i.kind == "decision")
+        answer["explanation"], answer["explanation_citations"] = decision.text, [decision.id]
+    return answer
+
+
+def _artifact_run(env: Env, op: str, answer: dict, role: str | None = None):
+    spec = registry.resolve(op)
+    return env.pipeline(spec, env.subject(S(spec.subject_type)), json.dumps(answer),
+                        role=role or ARTIFACT_READER[op])  # fmt: skip
+
+
+for _op in sorted(ARTIFACT_READER):
+    _label = _op.replace("_", " ")
+
+    def _valid(env: Env, op=_op):
+        from app.core.permissions import ROLE_PERMISSIONS
+
+        spec = registry.resolve(op)
+        kinds = registry.validate(spec)
+        holders = {r for r, perms in ROLE_PERMISSIONS.items() if spec.permission in perms}
+        ok = holders == {ARTIFACT_READER[op]} and set(kinds.values()) == {"text", "citation"}
+        return ok, f"permission held by {sorted(holders)}; output paths {sorted(kinds)}"
+
+    scenario(
+        f"ART-{_op.upper()}-VALID",
+        f"Approved artifact {_label}: validated, own permission",
+        "extend.probe_consumers",
+        domain=_op,
+        role=ARTIFACT_READER[_op],
+        expected="validates; permission held by its reader only (never the administrator)",
+        gate="registry.validate",
+        refs=("tests/test_ai_five_artifacts.py",),
+    )(_valid)
+
+    def _safe(env: Env, op=_op):
+        spec, ctx = _artifact_ctx(env, op)
+        r, p = _artifact_run(env, op, _artifact_answer(spec, ctx))
+        payload = json.dumps([m.model_dump() for m in p.requests[0].messages]) if p.requests else ""
+        ok = (r.status is GenerationStatus.COMPLETED
+              and not any(c in payload for c in fixtures.CANARIES))  # fmt: skip
+        return ok, _disposition(r) + f", provider calls {len(p.requests)}"
+
+    scenario(
+        f"ART-{_op.upper()}-SAFE",
+        f"Approved artifact {_label}: grounded wording completes",
+        "extend.probe_consumers",
+        domain=_op,
+        role=ARTIFACT_READER[_op],
+        expected="completed; no canary in the payload",
+        gate="orchestrator.execute",
+        refs=("tests/test_ai_five_artifacts.py",),
+        blocker="data_leakage",
+    )(_safe)
+
+    def _unsafe(env: Env, op=_op):
+        spec, ctx = _artifact_ctx(env, op)
+        answer = _artifact_answer(spec, ctx)
+        answer[spec.cited_fields[0][0]] = "Call them on 555-123-4567."
+        r, _ = _artifact_run(env, op, answer)
+        reasons = r.outcome.reasons if r.outcome else []
+        ok = (
+            r.status is GenerationStatus.FALLBACK and r.output is None and "leak:contact" in reasons
+        )
+        return ok, f"{r.status.value}: {reasons}"
+
+    scenario(
+        f"ART-{_op.upper()}-UNSAFE",
+        f"Approved artifact {_label}: unsafe wording",
+        "safety.adversarial_text",
+        domain=_op,
+        role=ARTIFACT_READER[_op],
+        expected="fallback: leak:contact; nothing stored",
+        gate="safety.check_text_fields",
+        refs=("tests/test_ai_five_artifacts.py",),
+        blocker="unchecked_output",
+    )(_unsafe)
+
+    def _own(env: Env, op=_op):
+        spec, ctx = _artifact_ctx(env, op)
+        name, text, kind = ARTIFACT_VIOLATION[op]
+        answer = _artifact_answer(spec, ctx)
+        answer[name] = text
+        if op == "queue_brief":
+            answer["start_with_citations"] = [i.id for i in ctx.model_items
+                                              if i.kind == "queue_counts"]  # fmt: skip
+        r, _ = _artifact_run(env, op, answer)
+        reasons = r.outcome.reasons if r.outcome else []
+        return kind in reasons and r.output is None, f"{r.status.value}: {reasons}"
+
+    scenario(
+        f"ART-{_op.upper()}-RULE",
+        f"Approved artifact {_label}: its own rule",
+        "safety.fabrication",
+        domain=_op,
+        role=ARTIFACT_READER[_op],
+        expected=f"fallback: {ARTIFACT_VIOLATION[_op][2]}",
+        gate=f"{_op}.check",
+        refs=("tests/test_ai_five_artifacts.py",),
+        blocker="unchecked_output",
+    )(_own)
+
+    def _denied(env: Env, op=_op):
+        outcomes = []
+        for role in (ADMIN, MR if ARTIFACT_READER[op] != MR else CM):
+            r, p = _artifact_run(env, op, {}, role=role)
+            outcomes.append(r.failure is FailureCategory.ACCESS_LOST and not p.requests)
+        return all(outcomes), f"administrator and another role refused: {outcomes}"
+
+    scenario(
+        f"ART-{_op.upper()}-DENIED",
+        f"Approved artifact {_label}: other readers refused",
+        "auth.consumer_permission",
+        domain=_op,
+        role="administrator and another role",
+        expected="failed: access_lost, no provider call",
+        gate="engine permission check",
+        refs=("tests/test_ai_five_artifacts.py",),
+        blocker="unauthorised_access",
+    )(_denied)
+
+
 # Runs last: how much of the space this run exercised.
 @scenario(
     "EVL-REP-01",

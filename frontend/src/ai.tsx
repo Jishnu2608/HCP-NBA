@@ -69,6 +69,17 @@ export const CHECK_TEXT: Record<string, string> = {
   "leak:identifier": "name or identifier",
   "leak:free_text": "text copied from a note",
   too_long: "length",
+  derived_number: "figure the record does not state",
+  reordered_queue: "queue order changed",
+  uncited_counts: "counts not cited",
+  uncited_decision: "recommendation not cited",
+  miscited_code: "code without its record",
+  recommendation_change: "suggestion to change the recommendation",
+  commercial_claim: "commercial data",
+  contact_window_violation: "contact before the window allows",
+  inferred_misconduct: "inference of misconduct",
+  invented_cause: "cause not in the record",
+  unchecked_field: "unchecked output",
 };
 
 /** The generation's state, as one badge and one sentence. */

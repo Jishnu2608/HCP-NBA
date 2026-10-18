@@ -266,7 +266,15 @@ def test_nested_patient_360_records_are_fully_classified():
 
 
 def test_only_registered_operations_exist_and_none_may_opt_into_cloud():
-    assert registry.registered() == (OP,)
+    # The owner-approved operations only (Case Brief 2026-10-16; five more 2026-10-19).
+    assert registry.registered() == (
+        OP,
+        "compliance_summary",
+        "cycle_time",
+        "decision_trace",
+        "engagement_brief",
+        "queue_brief",
+    )
     with pytest.raises(registry.UnknownOperation):
         registry.resolve("anything_else")
     spec = registry.resolve(OP)

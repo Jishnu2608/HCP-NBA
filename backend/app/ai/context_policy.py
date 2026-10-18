@@ -220,12 +220,16 @@ def _fragments(text: str, size: int = 24) -> set[str]:
     return {words[i : i + size] for i in range(0, len(words) - size + 1, size // 2)}
 
 
-def assert_no_free_text(request: GenerationRequest, withheld: list[str]) -> None:
+def assert_no_free_text(request: GenerationRequest, withheld: list[str], visible: str = "") -> None:
     """Last check before a provider call: no withheld text appears anywhere in the request,
     including inside serialised JSON. Catches copying, not paraphrase (the model never had the
-    text to paraphrase)."""
+    text to paraphrase). `visible` is the model-visible item text: a withheld fragment that
+    also occurs there (a narrative quoting a structured label such as "study summary by portal
+    message") is not evidence of copying and is ignored; anything found only in withheld text
+    still refuses the request."""
     blob = re.sub(r"\s+", " ", json.dumps(request.model_dump(), ensure_ascii=False).lower())
     blob += " " + re.sub(r"\s+", " ", " ".join(m.content.lower() for m in request.messages))
+    allowed = re.sub(r"\s+", " ", visible.lower())
     for text in withheld:
-        if any(f in blob for f in _fragments(text)):
+        if any(f in blob and f not in allowed for f in _fragments(text)):
             raise UntrustedContentError("withheld free text found in a model request")

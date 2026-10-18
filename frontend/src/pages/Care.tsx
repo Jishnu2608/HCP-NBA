@@ -26,6 +26,8 @@ import type { Json } from "../api";
 import { BarList, ChartPanel, ChartTable, SeriesLegend, StackedBar, StreakCard, TrendLines, shortDate, useInsights } from "../charts";
 import { BentoGrid, BentoSplit, SectionHeader } from "../layout";
 import { ResidenceFields } from "../legal";
+import { P } from "../permissions";
+import { AiArtifactPanel } from "./AiArtifact";
 import { CarePlanEditor } from "./HealthPlan";
 import { useToast } from "../toast";
 import {
@@ -235,6 +237,34 @@ function CareWorkInsights({ onFilter }: { onFilter: (status: StatusFilter) => vo
   );
 }
 
+/** The queue brief and cycle-time read-outs, for a care manager who holds those permissions. */
+export function CareAiPanels() {
+  const { can } = useAuth();
+  const queue = can(P.AI_QUEUE_BRIEF);
+  const cycle = can(P.AI_CYCLE_TIME);
+  if (!queue && !cycle) return null;
+  return (
+    <div className="mb-6 grid gap-6 xl:grid-cols-2">
+      {queue && (
+        <AiArtifactPanel
+          id="queue-brief"
+          operation="queue_brief"
+          title="Queue brief"
+          description="Your queue in a sentence: counts and the request to start with, both decided by the server."
+        />
+      )}
+      {cycle && (
+        <AiArtifactPanel
+          id="cycle-time"
+          operation="cycle_time"
+          title="Cycle times"
+          description="How long each step of your care requests takes, computed from their timestamps, with the sample and definitions."
+        />
+      )}
+    </div>
+  );
+}
+
 export default function CareRequestsPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<StatusFilter>("active");
@@ -327,6 +357,7 @@ export default function CareRequestsPage() {
         <Stat label="Waiting for an HCP" value={shown(work.with_hcp ?? 0)} icon={<RefreshCcw className="h-4 w-4" aria-hidden />} />
         <Stat label="Closed" value={shown(counts.closed ?? 0)} tone="ok" icon={<Check className="h-4 w-4" aria-hidden />} />
       </KpiGrid>
+      <CareAiPanels />
       <div className="mb-4">
         <Segmented
           label="Filter by status"

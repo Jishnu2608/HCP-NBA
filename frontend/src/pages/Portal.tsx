@@ -652,6 +652,15 @@ function MessageInbox() {
   const toast = useToast();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: () => api<Json[]>("/me/inbox") });
   const isPatient = can(P.SELF_CONSENT_MANAGE);
+  // An HCP's replies about delivered material count as read once shown: reading the inbox
+  // changes nothing on the server, so the page marks them read explicitly.
+  const hasInbox = Boolean(inbox.data);
+  useEffect(() => {
+    if (!hasInbox || isPatient) return;
+    void post("/me/inbox/read")
+      .catch(() => undefined)
+      .then(() => void client.invalidateQueries({ queryKey: ["attention"] }));
+  }, [hasInbox, isPatient, client]);
   // An HCP lands here: consultations waiting for them are announced first, so the page never
   // says "nothing to do" while a patient waits.
   const attention = useAttention();
@@ -1420,8 +1429,13 @@ export function MyProfile() {
     const ids: number[] = (requests.data?.requests ?? []).filter((r: Json) => r.new_decision).map((r: Json) => r.id);
     if (ids.length) {
       setFresh((prev) => [...new Set([...prev, ...ids])]);
-      void client.invalidateQueries({ queryKey: ["attention"] });
-      void client.invalidateQueries({ queryKey: ["me"] });
+      // Reading the requests changes nothing on the server; mark the shown decisions seen.
+      void post("/me/specialty-requests/seen")
+        .catch(() => undefined)
+        .then(() => {
+          void client.invalidateQueries({ queryKey: ["attention"] });
+          void client.invalidateQueries({ queryKey: ["me"] });
+        });
     }
   }, [requests.data, client]);
   if (profile.isLoading) return <Loading label="Loading your profile" rows={3} />;

@@ -17,6 +17,7 @@ until someone classifies it here.
 from dataclasses import dataclass, field
 
 from app.ai.context_policy import UntrustedContentError, _strings
+from app.ai.policy import approvals
 from app.ai.policy.fields import FIELD_POLICY, IDENTIFYING, MODEL_VISIBLE, Disposition
 from app.clinical import vocabulary
 
@@ -91,6 +92,10 @@ def _walk(record: str, row: dict, out: Projection, path: str) -> tuple[dict, dic
             model[name] = det[name] = value
         elif disposition is Disposition.DETERMINISTIC_ONLY:
             det[name] = value
+        elif disposition is Disposition.PENDING_REVIEW and approvals.field_approved(record, name):
+            # Its data group was approved for model use (`approvals.FIELD_GROUPS`).
+            model[name] = det[name] = value
+            out.decisions[where] = "pending_review:approved"
         elif disposition is Disposition.PENDING_REVIEW:
             # Pending a data-use decision: server-side computation only, never a model, and
             # its text is withheld from every model request.

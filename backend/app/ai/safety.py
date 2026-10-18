@@ -49,6 +49,8 @@ MDD = re.compile(
 DM = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({_MON})\b(?!\.?,?\s*\d{{4}})", re.I)
 # Evidence ids, record ids (PAT_00012, HCP_0042, CNT_014) and hyphenated codes.
 IDS = re.compile(r"\b(?:ctx:[a-z_]+:\d+|[A-Z]{2,}_\d+|[A-Z]{2,}(?:-[A-Z0-9]+)+)\b")
+# An evidence id, or a range of them, written into prose.
+EVIDENCE_REF = re.compile(r"\bctx:[a-z_]+:\d+(?:\s*[-–]\s*\d+)?")
 NUMBER = re.compile(r"(?<![\w.:])\d+(?:\.\d+)?")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 PHONE = re.compile(r"(?<!\d)(?:\+?\d[\d\s().-]{7,}\d)(?!\d)")
@@ -75,7 +77,8 @@ ADVICE = re.compile(
 )
 DIAGNOSIS = re.compile(
     r"\b(?:diagnos\w+|suffers? from|likely (?:has|have)|symptom\w*|side effects?"
-    r"|contraindicat\w+|interactions?|efficacy|effective(?:ness)?|clinically|prognosis|toxic\w*)\b",
+    r"|contraindicat\w+|(?:drug|medication|medicine)[- ]interactions?|interacts? with"
+    r"|efficacy|effective(?:ness)?|clinically|prognosis|toxic\w*)\b",
     re.I,
 )
 UNSAFE_MEDICATION = re.compile(
@@ -175,9 +178,9 @@ def check_text_fields(
     allowed = allowed_numbers(items, today)
     known_dates = ctx_dates | {today.isoformat()}
     vocab = sorted({t.lower() for t in [*DRUG_TERMS, *ctx.vocabulary] if t})
-    withheld = (
-        set().union(*(_fragments(t) for t in ctx.withheld_texts)) if ctx.withheld_texts else set()
-    )
+    # Withheld fragments that also occur in the model's own items prove no copying.
+    squashed_items = re.sub(r"\s+", " ", ctx_low)
+    withheld = {f for t in ctx.withheld_texts for f in _fragments(t) if f not in squashed_items}
     names = {n.lower() for n in ctx.identifiers if n}
     rec_categories = {"nba"} | {
         cat
@@ -198,8 +201,9 @@ def check_text_fields(
         for cid in cites:
             if cid not in item_text:
                 flag("invalid_citation", where)
-        # Fabricated facts.
-        dates, nums, ids = facts(text, today)
+        # Fabricated facts. Evidence references written into the prose ("(ctx:reason:1-8)")
+        # are not record facts: their numbers are neither counted nor grounded.
+        dates, nums, ids = facts(EVIDENCE_REF.sub(" ", text), today)
         if any(not _known_date(d, known_dates) for d in dates):
             flag("fabricated_date", where)
         if nums - allowed:
@@ -227,8 +231,12 @@ def check_text_fields(
                 if RECOMMENDATION.search(sentence) and not NEGATED.search(sentence):
                     flag("fabricated_recommendation", where)
                     break
-        # Consent and permissions are the server's to state.
-        if CONSENT_CLAIM.search(text):
+        # Consent and permissions are the server's to state. A recorded code repeated exactly
+        # as a cited item writes it ("consent_missing" from a gate result) restates the record;
+        # any wording of the model's own about consent is still a claim.
+        cited_codes = set(CODE.findall(" ".join(item_text.get(c, "") for c in cites)))
+        own_words = CODE.sub(lambda m, k=cited_codes: " " if m.group() in k else m.group(), text)
+        if CONSENT_CLAIM.search(own_words):
             flag("consent_claim", where)
         # The model describes; it never claims an action was taken.
         if ACTION_CLAIM.search(text):
@@ -367,6 +375,8 @@ def _category_terms(ctx: AuthorizedContext) -> dict[str, tuple[str, ...]]:
 # A negated fact an item itself states ("not yet filled", "no response"): its word supports an
 # absence claim about the same thing when the field cites that item.
 ITEM_NEGATION = re.compile(r"\b(?:not yet|not|no|never)\s+(\w+)", re.I)
+# "gate failures: none", "open work: none": the word before "none" is the negated fact.
+ITEM_NONE = re.compile(r"\b((?:\w+\s+)?\w+):\s*none\b", re.I)
 
 
 def _stem(word: str) -> str:
@@ -419,6 +429,7 @@ def _corroborated(
         if named and not named <= terms(item.text, vocab):
             continue
         negated = {_stem(m.group(1)) for m in ITEM_NEGATION.finditer(item.text)}
+        negated |= {_stem(w) for m in ITEM_NONE.finditer(item.text) for w in m.group(1).split()}
         if words & negated:
             return True
     return False
@@ -464,7 +475,9 @@ def check_absence(
             if not targets:
                 findings.append(GateFinding(kind="unverifiable_absence", where=where))
                 continue
-            phrase = sentence[start:end]
+            # The words that follow the phrase belong to it when its target is among them
+            # ("no recorded gate failures").
+            phrase = sentence[start : end + AFTER_WINDOW]
             for cat in targets:
                 state = states.get(cat)
                 if state in ABSENCE_SUPPORTED or _corroborated(ctx, cat, phrase, sentence, cites):

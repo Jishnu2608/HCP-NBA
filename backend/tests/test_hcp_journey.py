@@ -289,6 +289,9 @@ def test_specialty_change_returns_unsuitable_open_consultations(env):
     assert client.get("/api/me/attention", headers=h).json()["specialty_decisions"] == 1
     seen = client.get("/api/me/specialty-requests", headers=h).json()["requests"]
     assert seen[0]["new_decision"] is True
+    # Reading changes nothing (F-13); the page marks the shown decisions seen explicitly.
+    assert client.get("/api/me/attention", headers=h).json()["specialty_decisions"] == 1
+    assert client.post("/api/me/specialty-requests/seen", headers=h).json()["marked"] == 1
     assert client.get("/api/me/attention", headers=h).json()["specialty_decisions"] == 0
 
 

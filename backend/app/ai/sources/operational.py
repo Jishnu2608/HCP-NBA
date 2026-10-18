@@ -49,14 +49,27 @@ def read_telemetry(db: Session, user: User, request: ContextRequest, b: Builder)
     b.facts["active"] = t.active
 
 
+AUDIT_DAYS = 14
+
+
 def read_audit(db: Session, user: User, request: ContextRequest, b: Builder) -> None:
-    rows = audit.audit_activity(db, user, days=14)
+    rows = audit.audit_activity(db, user, days=AUDIT_DAYS)
     b.as_of = clock.get_today(db)
+    b.facts["window_days"] = AUDIT_DAYS
+    b.facts["totals"] = {}
+    for row in rows:
+        b.facts["totals"][row.action] = b.facts["totals"].get(row.action, 0) + row.count
     for row in rows:
         m = b.absorb(project("audit_activity_row", row.model_dump(mode="json"))).model
+        unit = "event" if m["count"] == 1 else "events"
         b.add(
-            "audit_event", f"{m['day']}: {_label(m['action'])} x{m['count']}.",
+            "audit_event", f"{m['day']}: {_label(m['action'])}, {m['count']} {unit}.",
             "audit.activity", f"{m['action']}:{m['day']}",
+        )  # fmt: skip
+    if rows:
+        b.add(
+            "audit_event", f"Window: the last {AUDIT_DAYS} days, up to {b.as_of}.",
+            "audit.activity", "window",
         )  # fmt: skip
     b.mark("audit_event", len(rows))
 

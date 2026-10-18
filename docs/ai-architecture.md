@@ -319,6 +319,24 @@ Registration refuses a permission held by the administrator alone (for example `
 
 The engine, sources, policy, shared checks, orchestrator, jobs, audit and API need no change. New operations are a product decision; none is approved beyond the Case Brief.
 
+## Operations and routes
+
+Approved operations (registry): `case_brief` (2026-10-16) and, since 2026-10-19, `decision_trace` (X1, care manager, a recommendation), `engagement_brief` (M1, medical rep, an assigned HCP), `queue_brief` (C1, care manager, own care-request queue), `compliance_summary` (R2, compliance, audit activity per action and day) and `cycle_time` (X2, care manager, cycle times computed in code). Each has its own `ai:*` permission (never the administrator's), template mode by default, its own checks, and a deterministic template.
+
+Routes are subject-agnostic: `GET /api/ai/{operation}/current[?subject_id=]` and `POST /api/ai/{operation}/generations` (body `{"subject_id": ...}`); the operation fixes the subject type, so a request cannot choose another. The Case Brief's patient routes remain.
+
+The five newer operations share `app/ai/operations/common.py`: one view (`statements` the model may word, `key_points` and `notes` the server writes, `not_recorded`), the common prompt rules (figures only as items state them, ids only in citation lists, describe never decide), `constrained_schema` citations and `literal_numbers` (`derived_number`). Their own checks:
+
+| Operation | Own checks |
+|---|---|
+| `decision_trace` | `uncited_decision`, `recommendation_change`, `miscited_code` |
+| `engagement_brief` | `commercial_claim`, `contact_window_violation` |
+| `queue_brief` | `uncited_counts`, `reordered_queue` (start with the server's first open request), `derived_number` |
+| `compliance_summary` | `inferred_misconduct`, `derived_number` |
+| `cycle_time` | `invented_cause`, `derived_number` (template states the figures fully; meant to stay in template mode) |
+
+Frontend: one panel (`frontend/src/pages/AiArtifact.tsx`) on the recommendation detail (X1), HCP 360 (M1), care requests (C1, X2) and audit (R2), each shown only with its permission.
+
 ## Case Brief
 
 Prompt v10, operation version 2 (`app/ai/operations/case_brief.py`).

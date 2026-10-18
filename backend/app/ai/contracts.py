@@ -402,4 +402,8 @@ class OperationSpec:
     # Freshness limit: categories whose newest fact is older than this many days (or whose
     # facts carry no date) are `stale`, so the context is incomplete. None: no limit.
     max_age_days: int | None = None
+    # For an operation on an approved audience-specific source (`app.ai.policy.approvals`):
+    # the consent purpose the subject must have in effect, and the evaluation evidence.
+    consent_purpose: str | None = None
+    evaluation_ref: str | None = None
     tags: dict[str, str] = field(default_factory=dict)

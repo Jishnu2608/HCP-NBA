@@ -80,21 +80,35 @@ def read_queue(db: Session, user: User, request: ContextRequest, b: Builder) -> 
     b.as_of = clock.get_today(db)
     start = request.cursor or 0
     page = queue.items[start : start + b.max_records]
+    first_open = None
     for n, raw in enumerate(page, start + 1):
         model = b.absorb(project("care_request", raw), prefix=f"queue[{n}].").model
         _notes_withheld(b, raw)
-        b.add(
+        cid = b.add(
             "queue_item", _request_text(model, f"Queue #{n}"), "care_requests.queue",
             b.ref(raw["id"]), _date(model.get("created_at")),
             field_path="care_request.type,status,due_date", subject=raw.get("patient_id"),
         )  # fmt: skip
+        if first_open is None and model.get("status") != "closed":
+            first_open = cid
+    # The server's most urgent open request on this page (the queue is ordered most urgent
+    # first; closed requests remain listed after the open ones).
+    b.facts["first_open_item"] = first_open
     b.mark("queue_item", queue.total)
     if start + len(page) < queue.total:
         b.truncated.add("queue_item")
     counts = ", ".join(f"{_label(k)} {v}" for k, v in sorted(queue.counts.items())) or "none"
-    b.add("queue_counts", f"Requests by status: {counts}.", "care_requests.queue", "counts")
+    # Counted by the server over the whole queue, so no reader of the context has to count.
+    overdue = sum(1 for raw in queue.items if raw.get("overdue"))
+    b.add(
+        "queue_counts",
+        f"Requests by status: {counts}. In the queue: {queue.total}; overdue: {overdue}.",
+        "care_requests.queue", "counts",
+    )  # fmt: skip
     b.mark("queue_counts", 1)
     b.facts["queue_total"] = queue.total
+    b.facts["overdue"] = overdue
+    b.facts["counts"] = dict(sorted(queue.counts.items()))
     b.facts["next_cursor"] = start + len(page) if start + len(page) < queue.total else None
 
 
@@ -222,6 +236,16 @@ def read_workflow(db: Session, user: User, request: ContextRequest, b: Builder) 
             "care_requests.request_times", f"{model['type']}:{model['metric']}",
             field_path="care_workflow_metric",
         )  # fmt: skip
+    if rows:
+        start = min(r.created_at for r in rows).date()
+        end = max(r.created_at for r in rows).date()
+        b.add(
+            "cycle_time",
+            f"Sample: {len(rows)} care requests opened {start} to {end} (newest first, at most "
+            f"{WORKFLOW_SAMPLE}).",
+            "care_requests.request_times", "sample", field_path="care_workflow_metric",
+        )  # fmt: skip
+        b.facts["window"] = [start.isoformat(), end.isoformat()]
     b.mark("cycle_time", len(rows))
     if truncated:
         b.truncated.add("cycle_time")

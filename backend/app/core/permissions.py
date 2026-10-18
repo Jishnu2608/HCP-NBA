@@ -91,6 +91,18 @@ class Permission(StrEnum):
     # AI Case Brief for an assigned patient: read the brief and request a generation
     # (app/ai). The record scope is the reader's patient scope; the AI layer adds no access.
     AI_CASE_BRIEF = "ai:case_brief"
+    # Further AI operations (owner approval 2026-10-19), each read-only wording over server
+    # facts, within the reader's existing scope; the AI layer adds no access:
+    # why a recommendation was chosen (care manager, assigned patients' recommendations);
+    AI_DECISION_TRACE = "ai:decision_trace"
+    # a brief before engaging an assigned HCP (medical representative);
+    AI_ENGAGEMENT_BRIEF = "ai:engagement_brief"
+    # a read-out of the care manager's own care-request queue;
+    AI_QUEUE_BRIEF = "ai:queue_brief"
+    # a summary of aggregate audit activity (compliance; counts per action and day only);
+    AI_COMPLIANCE_SUMMARY = "ai:compliance_summary"
+    # wording over the care-request cycle times computed in code (care manager).
+    AI_CYCLE_TIME = "ai:cycle_time"
     # AI context-layer diagnostics: inspect the shared context infrastructure, its policies and
     # AI telemetry, on synthetic fixtures or as a redacted preview read with the reader's own
     # access. Grants no access to any record and no way to act as another role.
@@ -141,6 +153,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
             P.SELF_ACCOUNT_RECOVERY,
+            P.AI_COMPLIANCE_SUMMARY,
         }
     ),
     Role.MEDICAL_REP: frozenset(
@@ -151,6 +164,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.CONTENT_READ_APPROVED_HCP,
             P.CONTENT_PROPOSE,
             P.HANDOFF_EXPORT,
+            P.AI_ENGAGEMENT_BRIEF,
             P.PRIVACY_SELF,
             P.PRIVACY_REQUEST,
             P.SELF_ACCOUNT_RECOVERY,
@@ -164,6 +178,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.CONTENT_READ_APPROVED_PATIENT,
             P.PATIENT_CARE_MANAGE,
             P.AI_CASE_BRIEF,
+            P.AI_DECISION_TRACE,
+            P.AI_QUEUE_BRIEF,
+            P.AI_CYCLE_TIME,
             # Clinic patients only, for a record this care manager is responsible for.
             P.INVITE_PATIENT,
             P.HANDOFF_EXPORT,

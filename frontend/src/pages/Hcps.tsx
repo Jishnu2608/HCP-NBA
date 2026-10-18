@@ -29,6 +29,7 @@ import type { Column } from "../ui";
 import { BentoCard, BentoCell, BentoGrid } from "../layout";
 import { ChannelTable, HistoryList, OpenNba } from "./Patients";
 import { specialtyText } from "./HealthForms";
+import { AiArtifactPanel } from "./AiArtifact";
 import { EngagePanel } from "./HcpWork";
 import { PanelAdherenceCard, SourcesCard } from "./HcpContext";
 import { useAuth } from "../auth";
@@ -232,6 +233,18 @@ export function HcpProfile() {
       {canEngage && (
         <div className="mb-6">
           <EngagePanel hcp={h} />
+        </div>
+      )}
+
+      {can(P.AI_ENGAGEMENT_BRIEF) && (
+        <div className="mb-6">
+          <AiArtifactPanel
+            id="engagement-brief"
+            operation="engagement_brief"
+            subjectId={h.hcp_id}
+            title="Engagement brief"
+            description="What to know before engaging this HCP, from the contact window, engagement history, open recommendation and open work. Commercial figures are never part of it."
+          />
         </div>
       )}
 

@@ -45,6 +45,9 @@ def read(db: Session, user: User, request: ContextRequest, b: Builder) -> None:
 
     w = model["contact_window"]
     allowed = "allowed now" if w["allowed_now"] else f"next allowed {w['next_allowed']}"
+    # For deterministic text and checks (a brief must never suggest contact the limits refuse).
+    b.facts["contact_allowed_now"] = bool(w["allowed_now"])
+    b.facts["next_allowed"] = str(w["next_allowed"]) if w.get("next_allowed") else None
     last = f"; last contact {w['last_contact']}" if w.get("last_contact") else ""
     b.add(
         "contact_window",
@@ -97,7 +100,29 @@ SOURCE_DEF = ContextSource(
     categories=(
         Category("hcp", "hcp_360", "Specialty codes and preferred channel", freshness="current"),
         Category("contact_window", "contact_window", "When the contact limits allow a touch"),
-        Category("hcp_touch", "interaction", "Latest engagement records"),
+        Category(
+            "hcp_touch",
+            "interaction",
+            "Latest engagement records",
+            terms=(
+                "engagement",
+                "engagements",
+                "interaction",
+                "interactions",
+                "contact",
+                "contacts",
+                "email",
+                "emails",
+                "visit",
+                "visits",
+                "message",
+                "messages",
+                "response",
+                "responses",
+                "reply",
+                "replies",
+            ),
+        ),
         Category(
             "hcp_nba",
             "recommendation_summary",
