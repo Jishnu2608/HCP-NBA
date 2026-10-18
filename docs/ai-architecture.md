@@ -313,7 +313,9 @@ The application never creates firewall rules. The exact rules, scope, verificati
    - compose and fallback.
 3. Add a permission to the role map.
 4. Register the spec.
-5. Evaluate it on synthetic data with fixed thresholds before any reader sees its wording. The Admin context evaluation shows whether the shared layer is ready; it does not evaluate or approve a consumer.
+5. Evaluate it on synthetic data with fixed thresholds before any reader sees its wording.
+
+Registration refuses a permission held by the administrator alone (for example `engine:operate`, `user:manage`, `patient:read:all`) or by no role: there is no admin-only AI operation (owner decision 2026-10-18). A permission the administrator shares with another role is allowed. The Admin context evaluation shows whether the shared layer is ready; it does not evaluate or approve a consumer.
 
 The engine, sources, policy, shared checks, orchestrator, jobs, audit and API need no change. New operations are a product decision; none is approved beyond the Case Brief.
 

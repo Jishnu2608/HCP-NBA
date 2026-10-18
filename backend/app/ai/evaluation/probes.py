@@ -253,6 +253,10 @@ REFUSED: dict[str, tuple[OperationSpec, str]] = {
         replace(SUMMARY, id="probe_diag", permission=Permission.AI_DIAGNOSTICS),
         "the Admin diagnostics permission as an operation permission",
     ),
+    "admin_only_permission": (
+        replace(SUMMARY, id="probe_admin", permission=Permission.ENGINE_OPERATE),
+        "a permission only the administrator holds (an admin-only AI operation)",
+    ),
     "over_cap_budget": (
         replace(SUMMARY, id="probe_caps", max_context_items=10_000),
         "a context budget above the global caps",

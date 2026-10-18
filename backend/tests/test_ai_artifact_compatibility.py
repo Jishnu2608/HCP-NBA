@@ -194,29 +194,31 @@ def test_h2_hcp_consultation_artifact_is_policy_blocked(db, world):
         registry.validate(spec)
 
 
-def test_a1_platform_health_brief_is_compatible_but_awaits_an_owner_decision(db, world):
-    # `ai:diagnostics` can never be an operation permission ...
+def test_a1_platform_health_brief_is_an_admin_only_operation_and_refused(db, world):
+    # `ai:diagnostics` can never be an operation permission, and neither can any permission
+    # only the administrator holds (owner decision 2026-10-18: no admin-only AI operation).
     spec = _spec("artifact_platform_health", "ai_telemetry", ("generation_outcome",),
                  P.AI_DIAGNOSTICS)  # fmt: skip
     with pytest.raises(ValueError, match="diagnostics"):
         registry.validate(spec)
-    # ... but with another permission the administrator holds, the minimised telemetry (counts,
-    # no subject ids) builds and reaches the model. Whether the administrator may use any AI
-    # operation is an owner decision (today: none), not something the layer decides.
-    other = dataclasses.replace(spec, permission=P.ENGINE_OPERATE)
-    registry.validate(other)
-    r, p = _run(db, world, other, ADMIN, "{}")
-    assert p.requests, r.trace
-    payload = json.dumps([m.model_dump() for m in p.requests[0].messages])
-    assert not any(c in payload for c in CANARIES) and "PAT_" not in payload
-    r, p = _run(db, world, other, MR, "{}")
+    for permission in (P.ENGINE_OPERATE, P.USER_MANAGE, P.PATIENT_READ_ALL):
+        with pytest.raises(ValueError, match="administrator alone"):
+            registry.validate(dataclasses.replace(spec, permission=permission))
+    # AI telemetry itself stays readable only with `ai:diagnostics`: a shared permission does
+    # not open it to a model consumer of another role.
+    shared = dataclasses.replace(spec, permission=P.AUDIT_READ)
+    registry.validate(shared)
+    r, p = _run(db, world, shared, COMP, "{}")
     assert r.failure is FailureCategory.ACCESS_LOST and not p.requests
 
 
 def test_a2_access_auditor_is_deterministic_only(db, world):
     spec = _spec("artifact_access_auditor", "access_scope", ("access",), P.USER_MANAGE)
-    with pytest.raises(ValueError, match="server text only"):
+    with pytest.raises(ValueError, match="administrator alone"):
         registry.validate(spec)
+    # Whatever the permission, its data is server-text-only.
+    with pytest.raises(ValueError, match="server text only"):
+        registry.validate(dataclasses.replace(spec, permission=P.AUDIT_READ))
 
 
 def test_m2_and_x3_question_answering_has_retrieval_but_no_generation_contract(db, world):

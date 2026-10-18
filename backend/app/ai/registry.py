@@ -17,6 +17,10 @@ Refused at registration:
 - an operation whose limits exceed the global caps;
 - an operation whose permission is unknown, or is the diagnostics permission (diagnostics never
   generate);
+- an operation only the administrator could run: its permission is held by the administrator
+  role alone, or by no role (the administrator uses no AI operation, owner decision
+  2026-10-18; a permission the administrator shares with another role is allowed, and the
+  administrator's own use of it is a product decision for that operation);
 - an operation whose output schema holds text the shared safety checks would not cover
   (`app.ai.output_contract`): every string must be cited text, uncited text or a Literal /
   Enum value, so no consumer can add an unchecked text field;
@@ -32,6 +36,23 @@ from app.ai.output_contract import OutputContractError, classify
 
 class UnknownOperation(LookupError):
     pass
+
+
+def holders_of(permission) -> frozenset[str]:
+    """The roles whose permission set includes `permission` (from the permission map)."""
+    from app.core.permissions import ROLE_PERMISSIONS
+
+    return frozenset(str(role) for role, perms in ROLE_PERMISSIONS.items() if permission in perms)
+
+
+def _admin_roles() -> frozenset[str]:
+    from app.models.enums import Role
+
+    return frozenset({str(Role.ADMIN)})
+
+
+# The administrator role: no AI operation may be runnable by it alone.
+ADMIN_ROLES = _admin_roles()
 
 
 _REGISTRY: dict[str, OperationSpec] = {}
@@ -57,6 +78,13 @@ def validate(spec: OperationSpec) -> dict[str, str]:
         raise ValueError(f"unknown permission {spec.permission!r}") from None
     if permission is Permission.AI_DIAGNOSTICS:
         raise ValueError("the diagnostics permission never authorises a model operation")
+    holders = holders_of(permission)
+    if not holders:
+        raise ValueError(f"{permission.value} is held by no role: nobody could run it")
+    if holders <= ADMIN_ROLES:
+        raise ValueError(
+            f"{permission.value} is held by the administrator alone: no admin-only AI operation"
+        )
     if spec.mode_setting is not None:
         from app.core.config import Settings
 
