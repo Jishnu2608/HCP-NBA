@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app import cycle
 from app.content import governance
+from app.core import clock
 from app.core.db import get_db
 from app.datagen.generate import GenConfig, generate
 from app.main import app
@@ -350,7 +351,9 @@ def test_withdrawal_propagates_and_mlr_sees_deliveries(env):
 def test_expired_and_rejected_are_not_reapproved_but_can_be_revised(env):
     _, db, _ = env
     expired = db.scalar(
-        select(Content).where(Content.mlr_status == "approved", Content.expiry_date <= date.today())
+        select(Content).where(
+            Content.mlr_status == "approved", Content.expiry_date <= clock.today()
+        )
     )
     if expired is not None:
         r = call(

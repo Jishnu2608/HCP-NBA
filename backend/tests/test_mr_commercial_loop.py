@@ -2,13 +2,14 @@
 representative proposes through the engine's gates, HCP intent reaching the assigned
 representative, follow-ups and meetings, richer outcomes, engine signals, reassignment."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 
 import pytest
 from conftest import ApiClient, cookie_header, engine_job, new_session, sign_in
 from sqlalchemy import select
 
 from app import cycle, pipeline
+from app.core import clock
 from app.core.db import get_db
 from app.datagen.generate import GenConfig, generate
 from app.features.population import load_population
@@ -175,7 +176,7 @@ def test_hcp_intent_reaches_the_assigned_rep_and_becomes_a_meeting(env):
     assert request["intent"] == "request_meeting" and request["from_hcp"]
     assert call(env, "rep", "GET", "/api/me/attention").json()["hcp_work"] >= 1
     # The HCP asked: a meeting is allowed even inside the contact gap.
-    when = (date.today() + timedelta(days=1)).isoformat() + "T10:00"
+    when = (clock.today() + timedelta(days=1)).isoformat() + "T10:00"
     meeting = call(
         env, "rep", "POST", "/api/hcp-work",
         json={"hcp_id": i.target_id, "kind": "meeting", "reason": "Requested by the HCP",
@@ -210,24 +211,24 @@ def test_follow_ups_and_rep_initiated_meetings_respect_dates_and_limits(env):
     past = call(
         env, "rep", "POST", "/api/hcp-work",
         json={"hcp_id": hcp_id, "kind": "follow_up", "reason": "Send evidence",
-              "due_date": (date.today() - timedelta(days=1)).isoformat()},
+              "due_date": (clock.today() - timedelta(days=1)).isoformat()},
     )  # fmt: skip
     assert past.status_code == 422
     fu = call(
         env, "rep", "POST", "/api/hcp-work",
         json={"hcp_id": hcp_id, "kind": "follow_up", "reason": "Send evidence",
-              "due_date": (date.today() + timedelta(days=3)).isoformat()},
+              "due_date": (clock.today() + timedelta(days=3)).isoformat()},
     ).json()  # fmt: skip
     assert fu["status"] == "open" and not fu["overdue"]
     moved = call(
         env, "rep", "PATCH", f"/api/hcp-work/{fu['id']}",
-        json={"action": "reschedule", "due_date": (date.today() + timedelta(days=5)).isoformat()},
+        json={"action": "reschedule", "due_date": (clock.today() + timedelta(days=5)).isoformat()},
     )  # fmt: skip
-    assert moved.json()["due_date"] == (date.today() + timedelta(days=5)).isoformat()
+    assert moved.json()["due_date"] == (clock.today() + timedelta(days=5)).isoformat()
     no_reason = call(env, "rep", "PATCH", f"/api/hcp-work/{fu['id']}", json={"action": "cancel"})
     assert no_reason.status_code == 422
     # Contacted today (the meeting above): a meeting the rep proposes must wait for the gap.
-    soon = (date.today() + timedelta(days=1)).isoformat() + "T09:00"
+    soon = (clock.today() + timedelta(days=1)).isoformat() + "T09:00"
     gap = call(
         env, "rep", "POST", "/api/hcp-work",
         json={"hcp_id": hcp_id, "kind": "meeting", "reason": "Detail visit",
