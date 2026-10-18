@@ -196,3 +196,35 @@ def _literal_path(parent_type, path: str) -> bool:
         return all(f.kind == "constrained" for f in _walk(info.annotation, name))
     except OutputContractError:
         return False
+
+
+EVIDENCE_ID = r"^ctx:[a-z_]+:\d+$"
+
+
+def constrained_schema(
+    model: type[BaseModel], cited_fields: tuple[tuple[str, str], ...], evidence_ids: list[str]
+) -> dict:
+    """The output model's JSON schema with every declared citation list limited to the
+    evidence ids of this model call (an enum), so a provider that enforces the schema cannot
+    write a malformed or foreign citation. With no evidence, citations must at least look like
+    evidence ids. The output gate still checks every citation (`invalid_citation`)."""
+    schema = model.model_json_schema()
+    defs = schema.get("$defs", {})
+    ids = sorted(set(evidence_ids))
+    item = {"type": "string", "enum": ids} if ids else {"type": "string", "pattern": EVIDENCE_ID}
+
+    def resolve(node: dict) -> dict:
+        ref = node.get("$ref")
+        return defs[ref.rsplit("/", 1)[-1]] if ref else node
+
+    for _, cite_path in cited_fields:
+        node = schema
+        parts = cite_path.split(".")
+        for i, part in enumerate(parts):
+            name, is_list = part.removesuffix("[]"), part.endswith("[]")
+            prop = resolve(node)["properties"][name]
+            if i == len(parts) - 1:
+                prop["items"] = dict(item)
+            else:
+                node = resolve(prop["items"] if is_list else prop)
+    return schema

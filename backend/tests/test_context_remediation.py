@@ -806,3 +806,44 @@ def test_savepoint_and_read_only_guard_on_the_configured_database():
     finally:
         db.rollback()
         db.close()
+
+
+# --- Citations constrained to the call's evidence ids in the output schema --------------------
+
+
+def test_constrained_schema_limits_citations_to_evidence_ids():
+    ids = ["ctx:patient:1", "ctx:touch:2"]
+    top = output_contract.constrained_schema(
+        probes.Summary, (("summary", "summary_citations"),), ids
+    )
+    assert top["properties"]["summary_citations"]["items"] == {"type": "string", "enum": ids}
+    nested = output_contract.constrained_schema(
+        probes.Nested, (("points[].text", "points[].citations"),), ids
+    )
+    point = nested["$defs"]["Point"]["properties"]["citations"]["items"]
+    assert point == {"type": "string", "enum": ids}
+    assert nested["properties"]["title"]["type"] == "string"  # other fields untouched
+    empty = output_contract.constrained_schema(
+        probes.Summary, (("summary", "summary_citations"),), []
+    )
+    assert empty["properties"]["summary_citations"]["items"]["pattern"] == (
+        output_contract.EVIDENCE_ID
+    )
+
+
+def test_probe_schemas_send_the_context_evidence_ids_and_the_gate_still_checks(db, world):
+    ctx = _patient(db, world)
+    ids = sorted(i.id for i in ctx.model_items)
+    for spec, path in ((probes.SUMMARY, ("summary_citations",)),
+                       (probes.NESTED, ("points", "citations"))):  # fmt: skip
+        schema = spec.output_schema(ctx)
+        node = schema["properties"][path[0]]
+        if len(path) == 2:
+            node = schema["$defs"]["Point"]["properties"][path[1]]
+        assert node["items"]["enum"] == ids
+    item = next(i for i in ctx.model_items if i.kind == "patient")
+    r, p = _execute(db, world, probes.SUMMARY, _summary(item.text, [item.id]))
+    assert p.requests[0].json_schema["properties"]["summary_citations"]["items"]["enum"] == ids
+    # A provider that ignored the schema still cannot slip a foreign citation past the gate.
+    r, _ = _execute(db, world, probes.SUMMARY, _summary(item.text, ["care_request:1"]))
+    assert r.status is GenerationStatus.FALLBACK and "invalid_citation" in r.outcome.reasons

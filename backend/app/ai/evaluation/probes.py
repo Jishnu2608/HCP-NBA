@@ -22,6 +22,7 @@ from app.ai.contracts import (
     GenerationResult,
     OperationSpec,
 )
+from app.ai.output_contract import constrained_schema
 from app.ai.providers import ProviderError
 from app.core.permissions import Permission
 
@@ -129,7 +130,7 @@ def _spec(id_: str, subject: str, kinds: tuple[str, ...], model, **kw) -> Operat
         mode_setting=None,
         build_messages=messages,
         output_model=model,
-        output_schema=lambda ctx, m=model: m.model_json_schema(),
+        output_schema=None,
         check=_no_checks,
         compose=_compose,
         fallback=_fallback,
@@ -137,6 +138,12 @@ def _spec(id_: str, subject: str, kinds: tuple[str, ...], model, **kw) -> Operat
         tags={"test_only": "true"},
     )
     base.update(kw)
+    if base["output_schema"] is None:
+        # Citations limited to the evidence ids each model call receives (as the Case Brief).
+        cited = tuple(base.get("cited_fields", ()))
+        base["output_schema"] = lambda ctx, m=model, c=cited: constrained_schema(
+            m, c, [i.id for i in ctx.model_items]
+        )
     return OperationSpec(**base)
 
 

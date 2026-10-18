@@ -307,7 +307,7 @@ The application never creates firewall rules. The exact rules, scope, verificati
 2. Write an `OperationSpec` with:
    - id, version and permission;
    - subject type and allowlist (and `max_age_days` if freshness matters);
-   - prompt builder (from `ctx.model_items` only);
+   - prompt builder (from `ctx.model_items` only), and an output schema built with `output_contract.constrained_schema` so citations can only be this call's evidence ids;
    - strict output model and schema, with every text field declared in `cited_fields` or `text_fields`;
    - operation checks;
    - compose and fallback.
